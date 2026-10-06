@@ -340,7 +340,7 @@ func (c *Catalog) fetchXEM(ctx context.Context, id int64, episodes []store.Episo
 		for lang, list := range byLang {
 			for _, name := range list {
 				t := t
-				t.Title, t.Language = name, lang
+				t.Title, t.Language = string(name), lang
 				titles = append(titles, t)
 			}
 		}

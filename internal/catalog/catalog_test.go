@@ -90,7 +90,8 @@ func TestRefresh(t *testing.T) {
 			{"scene":{"season":2,"episode":2,"absolute":4},"tvdb":{"season":2,"episode":2,"absolute":4}}]}`)
 	})
 	xem.HandleFunc("GET /map/names", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"result":"success","data":{"all":{"jp":["Show Original"]},"1":{"us":["Show II"]},"2":{"us":["Show S2"]}}}`)
+		// TheXEM sends a title made of digits as a number.
+		fmt.Fprint(w, `{"result":"success","data":{"all":{"jp":["Show Original",42]},"1":{"us":["Show II"]},"2":{"us":["Show S2"]}}}`)
 	})
 	xemSrv := httptest.NewServer(xem)
 	defer xemSrv.Close()
@@ -132,7 +133,7 @@ func TestRefresh(t *testing.T) {
 		t.Errorf("special numbers = %v", got)
 	}
 	titles := titleSeasons(d)
-	want := "Show II=2/garner Show Original=-/xem Show S2=2/xem Show!=-/tvdb The Show=-/tvdb"
+	want := "42=-/xem Show II=2/garner Show Original=-/xem Show S2=2/xem Show!=-/tvdb The Show=-/tvdb"
 	if titles != want {
 		t.Errorf("titles = %s\nwant     %s", titles, want)
 	}

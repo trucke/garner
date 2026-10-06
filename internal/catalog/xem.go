@@ -37,7 +37,25 @@ type xemMapping struct {
 
 // xemTitles are alternative titles keyed by scene season ("all" for the
 // whole show), then language.
-type xemTitles map[string]map[string][]string
+type xemTitles map[string]map[string][]xemName
+
+// xemName is a title. TheXEM sends titles made only of digits, such as
+// "86", as JSON numbers.
+type xemName string
+
+func (n *xemName) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		*n = xemName(s)
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(b, &num); err != nil {
+		return err
+	}
+	*n = xemName(num.String())
+	return nil
+}
 
 func (c *XEM) get(ctx context.Context, path string, q url.Values, out any) error {
 	q.Set("origin", "tvdb")
