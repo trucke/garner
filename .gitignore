@@ -25,3 +25,6 @@ coverage.*
 .idea/
 .vscode/
 *.swp
+
+# Local configuration; see garner.example.toml
+/garner.toml

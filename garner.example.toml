@@ -1,0 +1,34 @@
+# Garner configuration. Copy to garner.toml and adjust.
+# Secrets never go in this file. Set them as environment variables, or point
+# NAME_FILE at a file holding the value (systemd credentials, Infisical Agent):
+#   TVDB_API_KEY, TVDB_PIN (optional), PROWLARR_API_KEY, SABNZBD_API_KEY,
+#   JELLYFIN_API_KEY
+
+# Database, backups and Garner's own TLS key. Must be on local disk, not a
+# network share. Relative paths are relative to this file.
+data_dir = "data"
+
+[server]
+# Loopback serves plain HTTP for clients on the same machine.
+listen = "127.0.0.1:7979"
+
+# To serve other machines, listen beyond loopback and set the address clients
+# use. Garner then serves HTTPS with its own certificate; `garner token create`
+# prints a connection code that lets clients verify it.
+# listen = "0.0.0.0:7979"
+# url = "https://garner.home.lan:7979"
+
+# Or use your own certificate:
+# tls_cert = "/etc/garner/cert.pem"
+# tls_key = "/etc/garner/key.pem"
+
+[prowlarr]
+url = "http://prowlarr.home.lan:9696"
+# ca_file = "/etc/garner/home-ca.pem"   # for https:// with a private CA
+
+[sabnzbd]
+url = "http://sabnzbd.home.lan:8080"
+category = "tv"
+
+[jellyfin]
+url = "http://jellyfin.home.lan:8096"
