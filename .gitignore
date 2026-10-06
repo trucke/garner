@@ -1,0 +1,27 @@
+# Build output
+/garner
+/bin/
+/dist/
+
+# Go test and profiling output
+*.test
+*.out
+*.prof
+coverage.*
+
+# Local runtime data: database, backups, Turso library cache
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Local secrets; development secrets come from Infisical
+.env
+.env.*
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
