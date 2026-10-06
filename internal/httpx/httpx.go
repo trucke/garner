@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -46,6 +48,44 @@ func New(userAgent, caFile string, timeout time.Duration) (*http.Client, error) 
 			return nil
 		},
 	}, nil
+}
+
+// sensitiveParams carry credentials, or links that embed them, such as the
+// apikey and link parameters of Prowlarr download links.
+var sensitiveParams = map[string]bool{"apikey": true, "api_key": true, "key": true, "token": true, "link": true, "nzbkey": true, "r": true}
+
+// RedactURL hides credentials in a URL: sensitive query values and any
+// password. Unparsable input is hidden entirely.
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "[unparsable URL]"
+	}
+	if _, ok := u.User.Password(); ok {
+		u.User = url.UserPassword(u.User.Username(), "REDACTED")
+	}
+	q := u.Query()
+	changed := false
+	for k := range q {
+		if sensitiveParams[strings.ToLower(k)] {
+			q.Set(k, "REDACTED")
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
+// Redact hides credentials in the URL that net/http quotes in request
+// errors, so the error can be logged.
+func Redact(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return &url.Error{Op: ue.Op, URL: RedactURL(ue.URL), Err: ue.Err}
+	}
+	return err
 }
 
 type userAgentTransport struct {

@@ -2,12 +2,15 @@ package httpx
 
 import (
 	"encoding/pem"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -41,6 +44,18 @@ func TestCAFile(t *testing.T) {
 		t.Fatalf("ca_file not trusted: %v", err)
 	}
 	resp.Body.Close()
+}
+
+func TestRedact(t *testing.T) {
+	link := "http://user:pass@prowlarr:9696/1/download?apikey=SECRET&link=ENCRYPTED&file=Show.S01E01"
+	got := RedactURL(link)
+	if strings.Contains(got, "SECRET") || strings.Contains(got, "ENCRYPTED") || strings.Contains(got, "pass") || !strings.Contains(got, "file=Show.S01E01") {
+		t.Errorf("RedactURL = %s", got)
+	}
+	err := Redact(&url.Error{Op: "Get", URL: link, Err: errors.New("connection refused")})
+	if strings.Contains(err.Error(), "SECRET") || !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("Redact = %v", err)
+	}
 }
 
 func TestRedirects(t *testing.T) {
