@@ -12,22 +12,24 @@ import (
 
 // Series is a show in the catalogue.
 type Series struct {
-	ID               int64      `json:"id"`
-	Slug             string     `json:"slug"`
-	Name             string     `json:"name"`
-	NameEng          string     `json:"name_eng,omitempty"`
-	NameDeu          string     `json:"name_deu,omitempty"`
-	OriginalLanguage string     `json:"original_language"`
-	OriginalCountry  string     `json:"original_country"`
-	Status           string     `json:"status"`
-	Year             int        `json:"year,omitempty"`
-	FirstAired       string     `json:"first_aired,omitempty"`
-	AverageRuntime   int        `json:"average_runtime,omitempty"`
-	DefaultOrder     string     `json:"default_order"`
-	TVDBUpdated      string     `json:"tvdb_updated"`
-	Added            time.Time  `json:"added"`
-	Fetched          time.Time  `json:"fetched"`
-	XEMFetched       *time.Time `json:"xem_fetched,omitempty"`
+	ID               int64  `json:"id"`
+	Slug             string `json:"slug"`
+	Name             string `json:"name"`
+	NameEng          string `json:"name_eng,omitempty"`
+	NameDeu          string `json:"name_deu,omitempty"`
+	OriginalLanguage string `json:"original_language"`
+	OriginalCountry  string `json:"original_country"`
+	Status           string `json:"status"`
+	Year             int    `json:"year,omitempty"`
+	FirstAired       string `json:"first_aired,omitempty"`
+	AverageRuntime   int    `json:"average_runtime,omitempty"`
+	DefaultOrder     string `json:"default_order"`
+	// Profile is "tv" or "anime".
+	Profile     string     `json:"profile"`
+	TVDBUpdated string     `json:"tvdb_updated"`
+	Added       time.Time  `json:"added"`
+	Fetched     time.Time  `json:"fetched"`
+	XEMFetched  *time.Time `json:"xem_fetched,omitempty"`
 }
 
 // Order is an episode order TVDB offers, such as aired or Netflix.
@@ -103,6 +105,7 @@ func (s *Store) SaveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 		OriginalLanguage: sr.OriginalLanguage, OriginalCountry: sr.OriginalCountry, Status: sr.Status,
 		Year: nullInt(sr.Year), FirstAired: nullString(sr.FirstAired), AverageRuntime: nullInt(sr.AverageRuntime),
 		DefaultOrder: sr.DefaultOrder, TvdbUpdated: sr.TVDBUpdated, AddedAt: now.Unix(), FetchedAt: now.Unix(),
+		Profile: nullString(sr.Profile),
 	}); err != nil {
 		return fmt.Errorf("save series: %w", err)
 	}
@@ -299,7 +302,8 @@ func seriesFromRow(r query.Series) Series {
 		ID: r.ID, Slug: r.Slug, Name: r.Name, NameEng: r.NameEng.String, NameDeu: r.NameDeu.String,
 		OriginalLanguage: r.OriginalLanguage, OriginalCountry: r.OriginalCountry, Status: r.Status,
 		Year: int(r.Year.Int64), FirstAired: r.FirstAired.String, AverageRuntime: int(r.AverageRuntime.Int64),
-		DefaultOrder: r.DefaultOrder, TVDBUpdated: r.TvdbUpdated, Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
+		DefaultOrder: r.DefaultOrder, Profile: r.Profile.String, TVDBUpdated: r.TvdbUpdated,
+		Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
 	}
 	if r.XemFetchedAt.Valid {
 		t := time.Unix(r.XemFetchedAt.Int64, 0)

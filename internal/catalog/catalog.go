@@ -16,6 +16,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -44,6 +45,16 @@ type Catalog struct {
 
 type corrections struct {
 	Title []titleCorrection `toml:"title"`
+	Order []orderRule       `toml:"order"`
+}
+
+// orderRule says which TVDB episode order a streaming service's releases
+// of a show follow.
+type orderRule struct {
+	Series  int64           `toml:"series"`
+	Service release.Service `toml:"service"`
+	Order   string          `toml:"order"`
+	Reason  string          `toml:"reason"`
 }
 
 type titleCorrection struct {
@@ -67,6 +78,17 @@ func New(st *store.Store, tvdb *TVDB, xem *XEM, log *slog.Logger) (*Catalog, err
 		if t.Series == 0 || t.Title == "" || t.Season == nil || t.Reason == "" {
 			return nil, fmt.Errorf("corrections: title %q needs series, title, season and reason", t.Title)
 		}
+	}
+	seen := map[orderRule]bool{}
+	for _, o := range c.Order {
+		if o.Series == 0 || o.Service == "" || o.Order == "" || o.Reason == "" {
+			return nil, fmt.Errorf("corrections: order rule for series %d needs series, service, order and reason", o.Series)
+		}
+		key := orderRule{Series: o.Series, Service: o.Service}
+		if seen[key] {
+			return nil, fmt.Errorf("corrections: two order rules for series %d and %s", o.Series, o.Service)
+		}
+		seen[key] = true
 	}
 	return &Catalog{store: st, tvdb: tvdb, xem: xem, log: log, corrections: c}, nil
 }
@@ -162,7 +184,14 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 	d := store.SeriesData{Series: store.Series{
 		ID: s.ID, Slug: s.Slug, Name: s.Name, OriginalLanguage: s.OriginalLanguage, OriginalCountry: s.OriginalCountry,
 		Status: s.Status.Name, Year: year, FirstAired: s.FirstAired, AverageRuntime: s.AverageRuntime, TVDBUpdated: s.LastUpdated,
+		Profile: "tv",
 	}}
+	// The profile is only stored for new shows; a changed one stays.
+	for _, g := range s.Genres {
+		if g.Name == "Anime" {
+			d.Series.Profile = "anime"
+		}
+	}
 	for _, a := range s.Aliases {
 		d.Titles = append(d.Titles, store.Title{Title: a.Name, Language: a.Language, Source: "tvdb"})
 	}
@@ -338,6 +367,18 @@ func (c *Catalog) applyCorrections(id int64, titles []store.Title) []store.Title
 			continue
 		}
 		out = append(out, t)
+	}
+	return out
+}
+
+// ServiceOrders returns the reviewed rules for a show: which TVDB episode
+// order each streaming service's releases follow.
+func (c *Catalog) ServiceOrders(seriesID int64) map[release.Service]string {
+	out := map[release.Service]string{}
+	for _, o := range c.corrections.Order {
+		if o.Series == seriesID {
+			out[o.Service] = o.Order
+		}
 	}
 	return out
 }

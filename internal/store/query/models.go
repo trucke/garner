@@ -25,6 +25,23 @@ type Backup struct {
 	CreatedAt int64
 }
 
+type Candidate struct {
+	ID        int64
+	SearchID  int64
+	Rank      int64
+	Indexer   string
+	Title     string
+	Link      string
+	Size      int64
+	Published sql.NullInt64
+	Grabs     int64
+	Verdict   string
+	Tier      string
+	Audio     string
+	Reasons   string
+	Episodes  string
+}
+
 type Episode struct {
 	ID             int64
 	SeriesID       int64
@@ -56,6 +73,22 @@ type SceneNumber struct {
 	EpisodeID     sql.NullInt64
 }
 
+type Search struct {
+	ID          int64
+	EpisodeID   int64
+	SearchedAt  int64
+	Outcome     string
+	Summary     string
+	NextRetryAt sql.NullInt64
+}
+
+type SearchIndexer struct {
+	SearchID int64
+	Indexer  string
+	Results  int64
+	Error    sql.NullString
+}
+
 type Series struct {
 	ID               int64
 	Slug             string
@@ -73,6 +106,7 @@ type Series struct {
 	AddedAt          int64
 	FetchedAt        int64
 	XemFetchedAt     sql.NullInt64
+	Profile          sql.NullString
 }
 
 type SeriesOrder struct {

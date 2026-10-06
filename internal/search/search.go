@@ -1,0 +1,208 @@
+// Package search finds releases for an episode: it queries every indexer
+// through Prowlarr, matches each result to the catalogue, judges it against
+// the show's profile and stores the ranked outcome.
+package search
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/trucke/garner/internal/match"
+	"github.com/trucke/garner/internal/prowlarr"
+	"github.com/trucke/garner/internal/release"
+	"github.com/trucke/garner/internal/selection"
+	"github.com/trucke/garner/internal/store"
+)
+
+// Retry delays when a search found nothing to accept. Recent episodes get
+// new releases often; older ones rarely.
+const (
+	retryRecent = 6 * time.Hour
+	retryOld    = 24 * time.Hour
+	retryFailed = time.Hour
+	recent      = 14 * 24 * time.Hour
+)
+
+// Service runs searches.
+type Service struct {
+	store    *store.Store
+	prowlarr *prowlarr.Client
+	// rules returns a show's reviewed streaming-service order rules.
+	rules func(seriesID int64) map[release.Service]string
+	log   *slog.Logger
+	now   func() time.Time
+	// OnDone is called after a search was stored.
+	OnDone func(store.Search)
+}
+
+// New returns a search service. rules may be nil.
+func New(st *store.Store, p *prowlarr.Client, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
+	if rules == nil {
+		rules = func(int64) map[release.Service]string { return nil }
+	}
+	return &Service{store: st, prowlarr: p, rules: rules, log: log, now: time.Now}
+}
+
+// Episode searches for an episode and stores the outcome, replacing the
+// previous search.
+func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, error) {
+	seriesID, err := s.store.SeriesOfEpisode(ctx, episodeID)
+	if err != nil {
+		return store.Search{}, err
+	}
+	d, err := s.store.LoadSeries(ctx, seriesID)
+	if err != nil {
+		return store.Search{}, err
+	}
+	i := slices.IndexFunc(d.Episodes, func(e store.Episode) bool { return e.ID == episodeID })
+	if i < 0 {
+		return store.Search{}, fmt.Errorf("episode %d: %w", episodeID, store.ErrNotFound)
+	}
+	ep := d.Episodes[i]
+	pos, ok := ep.Numbers["official"]
+	if !ok {
+		return store.Search{}, fmt.Errorf("episode %d has no aired-order position to search for", episodeID)
+	}
+
+	profile := selection.ProfileNamed(d.Series.Profile)
+	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: s.rules(seriesID)})
+	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+	judge := selection.Context{Profile: profile, Show: show, Want: episodeID, Original: original}
+
+	start := s.now()
+	sr := store.Search{EpisodeID: episodeID, Searched: start, Indexers: []store.SearchIndexer{}}
+	var hits []hit
+	indexers, err := s.prowlarr.Indexers(ctx)
+	if err != nil {
+		sr.Indexers = append(sr.Indexers, store.SearchIndexer{Name: "Prowlarr", Error: err.Error()})
+	}
+	for _, ix := range indexers {
+		results, err := s.prowlarr.Search(ctx, ix.ID, prowlarr.Query{TVDBID: seriesID, Season: pos.Season, Episode: pos.Number})
+		if ctx.Err() != nil {
+			return store.Search{}, ctx.Err()
+		}
+		res := store.SearchIndexer{Name: ix.Name, Results: len(results)}
+		if err != nil {
+			res.Error = err.Error()
+			s.log.Warn("indexer search failed", "indexer", ix.Name, "episode", episodeID, "err", err)
+		}
+		sr.Indexers = append(sr.Indexers, res)
+		for _, r := range results {
+			claims := release.Parse(r.Title)
+			m := show.Match(claims, r.Published)
+			eval := selection.Evaluate(judge, selection.Release{
+				Claims: claims, Match: m, IndexerLanguages: selection.IndexerLanguages(r.Languages),
+				OtherShow: r.TVDBID != 0 && r.TVDBID != seriesID, Grabs: r.Grabs, Published: r.Published,
+			})
+			hits = append(hits, hit{indexer: ix.Name, result: r, eval: eval, episodes: m.Episodes})
+		}
+	}
+
+	evals := make([]selection.Evaluation, len(hits))
+	for i, h := range hits {
+		evals[i] = h.eval
+	}
+	sr.Candidates = []store.Candidate{}
+	for _, i := range selection.Rank(evals) {
+		sr.Candidates = append(sr.Candidates, hits[i].candidate())
+	}
+	sr.Outcome, sr.Summary = outcome(profile, evals, sr.Indexers)
+	if sr.Outcome != "found" {
+		retry := start.Add(retryDelay(sr.Outcome, ep.Aired, start))
+		sr.NextRetry = &retry
+	}
+	if err := s.store.SaveSearch(ctx, sr); err != nil {
+		return store.Search{}, err
+	}
+	saved, err := s.store.LoadSearch(ctx, episodeID)
+	if err != nil {
+		return store.Search{}, err
+	}
+	s.log.Info("searched", "series", seriesID, "episode", show.Label(episodeID), "outcome", saved.Outcome,
+		"candidates", len(saved.Candidates), "duration", s.now().Sub(start).Round(time.Millisecond))
+	if s.OnDone != nil {
+		s.OnDone(saved)
+	}
+	return saved, nil
+}
+
+// hit is one search result with its verdict.
+type hit struct {
+	indexer  string
+	result   prowlarr.Result
+	eval     selection.Evaluation
+	episodes []int64
+}
+
+func (h hit) candidate() store.Candidate {
+	c := store.Candidate{
+		Indexer: h.indexer, Title: h.result.Title, Link: h.result.Link, Size: h.result.Size, Grabs: h.result.Grabs,
+		Verdict: string(h.eval.Verdict), Tier: h.eval.Tier, Reasons: h.eval.Reasons, Episodes: h.episodes,
+	}
+	if !h.result.Published.IsZero() {
+		p := h.result.Published
+		c.Published = &p
+	}
+	for _, l := range h.eval.Audio {
+		c.Audio = append(c.Audio, string(l))
+	}
+	if c.Episodes == nil {
+		c.Episodes = []int64{}
+	}
+	return c
+}
+
+// outcome sums up a search: found when a release is accepted, fallback
+// when only last resorts are left, failed when every indexer failed
+// without returning anything. An indexer that failed on a later page still
+// delivered the results before it.
+func outcome(p selection.Profile, evals []selection.Evaluation, indexers []store.SearchIndexer) (string, string) {
+	var failed []string
+	for _, ix := range indexers {
+		if ix.Error != "" {
+			failed = append(failed, ix.Name)
+		}
+	}
+	if len(failed) == len(indexers) && len(evals) == 0 {
+		if len(indexers) == 0 {
+			return "failed", "Search failed: Prowlarr has no enabled Usenet indexers"
+		}
+		return "failed", "Search failed: " + indexers[0].Error
+	}
+	summary := selection.Summary(p, evals)
+	if len(failed) > 0 {
+		summary += fmt.Sprintf(" (%s failed)", strings.Join(failed, ", "))
+	}
+	result := "nothing"
+	for _, e := range evals {
+		switch {
+		case e.Verdict == selection.Accept:
+			return "found", summary
+		case e.Verdict == selection.Fallback:
+			result = "fallback"
+		}
+	}
+	return result, summary
+}
+
+// retryDelay is when to search again. An episode that has not aired yet
+// waits for its air date.
+func retryDelay(outcome, aired string, now time.Time) time.Duration {
+	if outcome == "failed" {
+		return retryFailed
+	}
+	d, err := time.Parse(time.DateOnly, aired)
+	switch {
+	case err != nil:
+		return retryRecent
+	case d.After(now):
+		return d.Sub(now)
+	case now.Sub(d) < recent:
+		return retryRecent
+	}
+	return retryOld
+}

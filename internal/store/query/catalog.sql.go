@@ -56,7 +56,7 @@ func (q *Queries) DeleteSeriesTitles(ctx context.Context, seriesID int64) error 
 }
 
 const getSeries = `-- name: GetSeries :one
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at FROM series WHERE id = ?
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile FROM series WHERE id = ?
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
@@ -79,6 +79,7 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 		&i.AddedAt,
 		&i.FetchedAt,
 		&i.XemFetchedAt,
+		&i.Profile,
 	)
 	return i, err
 }
@@ -345,7 +346,7 @@ func (q *Queries) ListSceneNumbers(ctx context.Context, seriesID int64) ([]ListS
 }
 
 const listSeries = `-- name: ListSeries :many
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at FROM series ORDER BY coalesce(name_eng, name)
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile FROM series ORDER BY coalesce(name_eng, name)
 `
 
 func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
@@ -374,6 +375,7 @@ func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
 			&i.AddedAt,
 			&i.FetchedAt,
 			&i.XemFetchedAt,
+			&i.Profile,
 		); err != nil {
 			return nil, err
 		}
@@ -568,9 +570,10 @@ func (q *Queries) UpsertEpisode(ctx context.Context, arg UpsertEpisodeParams) er
 
 const upsertSeries = `-- name: UpsertSeries :exec
 INSERT INTO series (id, slug, name, name_eng, name_deu, original_language, original_country, status, year,
-    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
+    profile = coalesce(series.profile, excluded.profile),
     slug = excluded.slug, name = excluded.name, name_eng = excluded.name_eng, name_deu = excluded.name_deu,
     original_language = excluded.original_language, original_country = excluded.original_country,
     status = excluded.status, year = excluded.year, first_aired = excluded.first_aired,
@@ -594,6 +597,7 @@ type UpsertSeriesParams struct {
 	TvdbUpdated      string
 	AddedAt          int64
 	FetchedAt        int64
+	Profile          sql.NullString
 }
 
 func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) error {
@@ -613,6 +617,7 @@ func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) erro
 		arg.TvdbUpdated,
 		arg.AddedAt,
 		arg.FetchedAt,
+		arg.Profile,
 	)
 	return err
 }

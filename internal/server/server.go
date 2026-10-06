@@ -18,6 +18,7 @@ import (
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/httpx"
+	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
 )
@@ -34,6 +35,7 @@ type Server struct {
 	cfg     *config.Config
 	store   *store.Store
 	catalog *catalog.Catalog // nil without TVDB access
+	search  *search.Service  // nil without Prowlarr
 	log     *slog.Logger
 	version string
 	events  *broker
@@ -52,6 +54,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 
 	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), started: time.Now()}
 	if err := s.setupCatalog(); err != nil {
+		return err
+	}
+	if err := s.setupSearch(); err != nil {
 		return err
 	}
 	tlsConf, err := s.tlsConfig()

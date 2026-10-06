@@ -174,6 +174,9 @@ type tvdbSeries struct {
 		Name     string `json:"name"`
 	} `json:"aliases"`
 	SeasonTypes []tvdbSeasonType `json:"seasonTypes"`
+	Genres      []struct {
+		Name string `json:"name"`
+	} `json:"genres"`
 }
 
 func (c *TVDB) series(ctx context.Context, id int64) (tvdbSeries, error) {

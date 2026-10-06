@@ -89,7 +89,7 @@ func (s *Show) Match(c release.Claims, published time.Time) Match {
 		for _, r := range got[1:] {
 			if !slices.Equal(r.ids, got[0].ids) {
 				failure = fmt.Sprintf("the name's numbers disagree: %s is %s, but %s is %s",
-					got[0].label, s.describe(got[0].ids), r.label, s.describe(r.ids))
+					got[0].label, s.Describe(got[0].ids), r.label, s.Describe(r.ids))
 				break
 			}
 		}
@@ -175,7 +175,7 @@ func (m *matcher) readGroup(alts []release.Numbering) reading {
 			if m.s.airedBy(r.ids, m.published) {
 				out = append(out, r)
 			} else {
-				m.note("%s is ruled out: %s had not aired when the release was posted", r.label, m.s.describe(r.ids))
+				m.note("%s is ruled out: %s had not aired when the release was posted", r.label, m.s.Describe(r.ids))
 			}
 		}
 		if len(out) == 0 {
@@ -195,12 +195,12 @@ func (m *matcher) readGroup(alts []release.Numbering) reading {
 			if m.s.opts.Anime {
 				kind = "anime reads an absolute number first"
 			}
-			m.note("%q could mean %s or %s; %s", raw(alts[0], m.c.Name), m.s.describe(ok[0].ids), m.s.describe(ok[1].ids), kind)
+			m.note("%q could mean %s or %s; %s", raw(alts[0], m.c.Name), m.s.Describe(ok[0].ids), m.s.Describe(ok[1].ids), kind)
 			ok = preferred
 		}
 	}
 	if len(ok) > 1 {
-		return reading{err: fmt.Sprintf("%q could mean %s or %s", raw(alts[0], m.c.Name), m.s.describe(ok[0].ids), m.s.describe(ok[1].ids))}
+		return reading{err: fmt.Sprintf("%q could mean %s or %s", raw(alts[0], m.c.Name), m.s.Describe(ok[0].ids), m.s.Describe(ok[1].ids))}
 	}
 	return ok[0]
 }
@@ -228,7 +228,7 @@ func (m *matcher) readAlt(n release.Numbering) reading {
 		return alt
 	}
 	return reading{label: r.label, err: fmt.Sprintf("%s is %s in aired order but %s in the %s order, and no reviewed rule says which one %s releases follow",
-		r.label, m.s.describe(r.ids), m.s.describe(alt.ids), name, name)}
+		r.label, m.s.Describe(r.ids), m.s.Describe(alt.ids), name, name)}
 }
 
 func (m *matcher) readAired(n release.Numbering) reading {

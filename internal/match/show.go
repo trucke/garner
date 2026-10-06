@@ -120,8 +120,8 @@ func (s *Show) Label(id int64) string {
 	return fmt.Sprintf("TVDB episode %d", id)
 }
 
-// describe names a set of episodes: one label, or the first and last.
-func (s *Show) describe(ids []int64) string {
+// Describe names a set of episodes: one label, or the first and last.
+func (s *Show) Describe(ids []int64) string {
 	switch len(ids) {
 	case 0:
 		return "no episodes"

@@ -10,3 +10,13 @@ series = 371310 # Mushoku Tensei: Jobless Reincarnation
 title = "Mushoku Tensei II - Isekai Ittara Honki Dasu"
 season = 2
 reason = "Season 2 aired as \"Mushoku Tensei II\". TheXEM lists this title under scene season 1, which equals TVDB season 1 for this show."
+
+# [[order]] says which TVDB episode order (season type) a streaming
+# service's releases of a show follow. Matching uses it when a release names
+# the service and the orders disagree.
+
+[[order]]
+series = 284131 # The Seven Deadly Sins
+service = "netflix"
+order = "alternate"
+reason = "TVDB's Netflix order has the four \"Signs of Holy War\" specials as season 2, aired S00E04-E07. The Netflix \"S02\" pack is 1.7 GB, which fits four episodes, not the 24 of aired season 2. Approved by the maintainer on 2026-10-06."

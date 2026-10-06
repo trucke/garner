@@ -147,6 +147,35 @@ var languageCodes = map[string]Language{
 	"hi": "hi", "ko": "ko", "zh": "zh", "ru": "ru", "pt": "pt", "pl": "pl", "nl": "nl",
 }
 
+// LanguageNamed reads a language as indexers and TVDB write it: an English
+// name ("German", "Japanese (Japan)"), an ISO 639 code ("deu", "de") or a
+// locale ("en-US").
+func LanguageNamed(s string) (Language, bool) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.IndexAny(s, " (-_"); i > 0 {
+		s = s[:i]
+	}
+	if l, ok := languages[s]; ok {
+		return l, true
+	}
+	l, ok := languageCodes[s]
+	return l, ok
+}
+
+var languageNames = map[Language]string{
+	"de": "German", "en": "English", "ja": "Japanese", "es": "Spanish", "it": "Italian", "fr": "French",
+	"tr": "Turkish", "hi": "Hindi", "ko": "Korean", "zh": "Chinese", "ru": "Russian", "pt": "Portuguese",
+	"pl": "Polish", "nl": "Dutch",
+}
+
+// Name is the language's English name, such as "German".
+func (l Language) Name() string {
+	if n, ok := languageNames[l]; ok {
+		return n
+	}
+	return string(l)
+}
+
 var subtitleLanguages = map[string]Language{
 	"esub": "en", "esubs": "en", "engsub": "en", "engsubs": "en", "gersub": "de", "gersubs": "de", "vostfr": "fr",
 	"uksub": "en", "uksubs": "en", "nlsub": "nl", "nlsubs": "nl", "subfrench": "fr",
