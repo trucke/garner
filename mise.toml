@@ -1,0 +1,18 @@
+[tools]
+go = "1.27.1"
+sqlc = "1.31.1"
+
+[tasks.build]
+description = "Build bin/garner"
+run = "go build -o bin/garner ./cmd/garner"
+
+# Runs the built binary rather than `go run`: `go run` exits with status 1
+# after Ctrl+C even when the program shuts down cleanly.
+[tasks.dev]
+description = "Run the server with development secrets from Infisical"
+depends = ["build"]
+run = "infisical run --env=dev --silent -- ./bin/garner serve"
+
+[tasks.generate]
+description = "Regenerate database code with sqlc"
+run = "go generate ./..."
