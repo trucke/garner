@@ -42,6 +42,29 @@ type Candidate struct {
 	Episodes  string
 }
 
+type Download struct {
+	ID        int64
+	EpisodeID int64
+	Title     string
+	Indexer   string
+	Link      string
+	Size      int64
+	Verdict   string
+	Tier      string
+	Manual    int64
+	State     string
+	Detail    string
+	JobID     sql.NullString
+	Progress  float64
+	TimeLeft  string
+	Storage   string
+	Failure   string
+	Retryable int64
+	Stages    string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
 type Episode struct {
 	ID             int64
 	SeriesID       int64

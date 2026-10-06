@@ -17,6 +17,7 @@ import (
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
@@ -32,16 +33,17 @@ const (
 
 // Server serves the client API and the admin socket.
 type Server struct {
-	cfg     *config.Config
-	store   *store.Store
-	catalog *catalog.Catalog // nil without TVDB access
-	search  *search.Service  // nil without Prowlarr
-	log     *slog.Logger
-	version string
-	events  *broker
-	tlsMode string
-	pin     string // set for TLSOwn
-	started time.Time
+	cfg       *config.Config
+	store     *store.Store
+	catalog   *catalog.Catalog  // nil without TVDB access
+	search    *search.Service   // nil without Prowlarr
+	downloads *download.Service // nil without SABnzbd
+	log       *slog.Logger
+	version   string
+	events    *broker
+	tlsMode   string
+	pin       string // set for TLSOwn
+	started   time.Time
 }
 
 // Run opens the database and serves until ctx is cancelled.
@@ -57,6 +59,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 		return err
 	}
 	if err := s.setupSearch(); err != nil {
+		return err
+	}
+	if err := s.setupDownloads(); err != nil {
 		return err
 	}
 	tlsConf, err := s.tlsConfig()
@@ -106,6 +111,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 
 	if s.catalog != nil {
 		go s.catalog.Run(ctx)
+	}
+	if s.downloads != nil {
+		go s.downloads.Run(ctx)
 	}
 	errc := make(chan error, 2)
 	go func() { errc <- public.Serve(ln) }()

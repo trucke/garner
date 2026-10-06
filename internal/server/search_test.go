@@ -12,15 +12,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/prowlarr"
+	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
 )
 
-// TestSearchEpisode searches through the API against a fake Prowlarr: the
-// results are ranked, a failing indexer is reported, and download links,
-// which hold Prowlarr's API key, never reach the client.
-func TestSearchEpisode(t *testing.T) {
+// TestSearchAndDownload searches through the API against a fake Prowlarr
+// and sends a result to a fake SABnzbd: the results are ranked, a failing
+// indexer is reported, and download links, which hold Prowlarr's API key,
+// never reach the client.
+func TestSearchAndDownload(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.DiscardHandler)
 	st, err := store.Open(ctx, t.TempDir(), log)
@@ -94,6 +97,29 @@ func TestSearchEpisode(t *testing.T) {
 			t.Errorf("%s search = %+v", method, sr)
 		}
 	}
+	sab := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.PostFormValue("mode") == "addurl" {
+			fmt.Fprint(w, `{"status":true,"nzo_ids":["job-1"]}`)
+			return
+		}
+		fmt.Fprint(w, `{"queue":{"slots":[]},"history":{"slots":[]}}`)
+	}))
+	defer sab.Close()
+	s.downloads = download.New(st, sabnzbd.New(sab.URL, "key", sab.Client()), "tv", log)
+	_, body := call(http.MethodGet, "/api/v1/episodes/101/search", "")
+	var sr store.Search
+	json.Unmarshal([]byte(body), &sr)
+	for _, path := range []string{fmt.Sprintf("/api/v1/candidates/%d/download", sr.Candidates[0].ID), "/api/v1/downloads"} {
+		method := http.MethodPost
+		if path == "/api/v1/downloads" {
+			method = http.MethodGet
+		}
+		code, body := call(method, path, "")
+		if code >= 300 || strings.Contains(body, "SECRET") || !strings.Contains(body, `"job_id":"job-1"`) {
+			t.Errorf("%s %s: %d %s", method, path, code, body)
+		}
+	}
+
 	if code, _ := call(http.MethodPost, "/api/v1/episodes/999/search", ""); code != http.StatusNotFound {
 		t.Errorf("unknown episode: %d", code)
 	}

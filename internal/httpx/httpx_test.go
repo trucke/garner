@@ -52,6 +52,9 @@ func TestRedact(t *testing.T) {
 	if strings.Contains(got, "SECRET") || strings.Contains(got, "ENCRYPTED") || strings.Contains(got, "pass") || !strings.Contains(got, "file=Show.S01E01") {
 		t.Errorf("RedactURL = %s", got)
 	}
+	if got := RedactText("Fetched " + link + "<br/>in 2 seconds"); strings.Contains(got, "SECRET") || !strings.HasSuffix(got, "<br/>in 2 seconds") {
+		t.Errorf("RedactText = %s", got)
+	}
 	err := Redact(&url.Error{Op: "Get", URL: link, Err: errors.New("connection refused")})
 	if strings.Contains(err.Error(), "SECRET") || !strings.Contains(err.Error(), "connection refused") {
 		t.Errorf("Redact = %v", err)

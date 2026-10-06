@@ -21,6 +21,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/v1/events", s.auth(http.HandlerFunc(s.handleEvents)))
 	s.catalogRoutes(mux)
 	s.searchRoutes(mux)
+	s.downloadRoutes(mux)
 	return mux
 }
 

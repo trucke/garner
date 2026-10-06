@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -76,6 +77,14 @@ func RedactURL(raw string) string {
 		u.RawQuery = q.Encode()
 	}
 	return u.String()
+}
+
+var urlInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// RedactText hides credentials in every URL inside free text, such as
+// SABnzbd's processing log, which quotes the download link it fetched.
+func RedactText(s string) string {
+	return urlInText.ReplaceAllStringFunc(s, RedactURL)
 }
 
 // Redact hides credentials in the URL that net/http quotes in request
