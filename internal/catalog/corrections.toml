@@ -1,0 +1,12 @@
+# Reviewed corrections to imported catalogue data. They take priority over
+# TheXEM and survive refreshes. Every entry needs a reason that explains the
+# evidence, so it can be checked again later.
+#
+# [[title]] assigns a release title to a TVDB season (aired order). It
+# replaces a TheXEM title with the same text.
+
+[[title]]
+series = 371310 # Mushoku Tensei: Jobless Reincarnation
+title = "Mushoku Tensei II - Isekai Ittara Honki Dasu"
+season = 2
+reason = "Season 2 aired as \"Mushoku Tensei II\". TheXEM lists this title under scene season 1, which equals TVDB season 1 for this show."

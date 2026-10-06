@@ -15,7 +15,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
 )
@@ -31,6 +33,7 @@ const (
 type Server struct {
 	cfg     *config.Config
 	store   *store.Store
+	catalog *catalog.Catalog // nil without TVDB access
 	log     *slog.Logger
 	version string
 	events  *broker
@@ -48,6 +51,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	defer st.Close()
 
 	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), started: time.Now()}
+	if err := s.setupCatalog(); err != nil {
+		return err
+	}
 	tlsConf, err := s.tlsConfig()
 	if err != nil {
 		return err
@@ -93,6 +99,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	}
 	log.Info("Garner is running", attrs...)
 
+	if s.catalog != nil {
+		go s.catalog.Run(ctx)
+	}
 	errc := make(chan error, 2)
 	go func() { errc <- public.Serve(ln) }()
 	go func() { errc <- admin.Serve(adminLn) }()
@@ -111,6 +120,25 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	}
 	log.Info("Garner stopped")
 	return err
+}
+
+func (s *Server) setupCatalog() error {
+	if s.cfg.TVDB.APIKey == "" {
+		s.log.Warn("TVDB_API_KEY is not set; the catalogue is unavailable")
+		return nil
+	}
+	client, err := httpx.New("Garner/"+s.version, "", 30*time.Second)
+	if err != nil {
+		return err
+	}
+	tvdb := catalog.NewTVDB(catalog.TVDBBaseURL, s.cfg.TVDB.APIKey.Value(), s.cfg.TVDB.PIN.Value(), client)
+	c, err := catalog.New(s.store, tvdb, catalog.NewXEM(catalog.XEMBaseURL, client), s.log)
+	if err != nil {
+		return err
+	}
+	c.OnChange = func(id int64) { s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}}) }
+	s.catalog = c
+	return nil
 }
 
 func (s *Server) tlsConfig() (*tls.Config, error) {

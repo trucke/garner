@@ -24,3 +24,76 @@ type Backup struct {
 	Reason    string
 	CreatedAt int64
 }
+
+type Episode struct {
+	ID             int64
+	SeriesID       int64
+	Aired          sql.NullString
+	Runtime        sql.NullInt64
+	AbsoluteNumber sql.NullInt64
+	IsMovie        int64
+	Name           sql.NullString
+	NameEng        sql.NullString
+	NameDeu        sql.NullString
+}
+
+type EpisodeNumber struct {
+	EpisodeID int64
+	SeriesID  int64
+	OrderType string
+	Season    int64
+	Number    int64
+}
+
+type SceneNumber struct {
+	SeriesID      int64
+	TvdbSeason    int64
+	TvdbEpisode   int64
+	TvdbAbsolute  sql.NullInt64
+	SceneSeason   int64
+	SceneEpisode  int64
+	SceneAbsolute sql.NullInt64
+	EpisodeID     sql.NullInt64
+}
+
+type Series struct {
+	ID               int64
+	Slug             string
+	Name             string
+	NameEng          sql.NullString
+	NameDeu          sql.NullString
+	OriginalLanguage string
+	OriginalCountry  string
+	Status           string
+	Year             sql.NullInt64
+	FirstAired       sql.NullString
+	AverageRuntime   sql.NullInt64
+	DefaultOrder     string
+	TvdbUpdated      string
+	AddedAt          int64
+	FetchedAt        int64
+	XemFetchedAt     sql.NullInt64
+}
+
+type SeriesOrder struct {
+	SeriesID      int64
+	Type          string
+	Name          string
+	AlternateName sql.NullString
+}
+
+type SeriesTitle struct {
+	ID          int64
+	SeriesID    int64
+	Title       string
+	Language    sql.NullString
+	Season      sql.NullInt64
+	Source      string
+	SceneSeason sql.NullInt64
+	Note        sql.NullString
+}
+
+type SyncState struct {
+	Key   string
+	Value string
+}

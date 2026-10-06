@@ -2,7 +2,7 @@ version: "2"
 sql:
   - engine: sqlite
     schema: migrations
-    queries: queries.sql
+    queries: [queries.sql, catalog.sql]
     gen:
       go:
         package: query

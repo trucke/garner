@@ -1,0 +1,335 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/trucke/garner/internal/store/query"
+)
+
+// Series is a show in the catalogue.
+type Series struct {
+	ID               int64      `json:"id"`
+	Slug             string     `json:"slug"`
+	Name             string     `json:"name"`
+	NameEng          string     `json:"name_eng,omitempty"`
+	NameDeu          string     `json:"name_deu,omitempty"`
+	OriginalLanguage string     `json:"original_language"`
+	OriginalCountry  string     `json:"original_country"`
+	Status           string     `json:"status"`
+	Year             int        `json:"year,omitempty"`
+	FirstAired       string     `json:"first_aired,omitempty"`
+	AverageRuntime   int        `json:"average_runtime,omitempty"`
+	DefaultOrder     string     `json:"default_order"`
+	TVDBUpdated      string     `json:"tvdb_updated"`
+	Added            time.Time  `json:"added"`
+	Fetched          time.Time  `json:"fetched"`
+	XEMFetched       *time.Time `json:"xem_fetched,omitempty"`
+}
+
+// Order is an episode order TVDB offers, such as aired or Netflix.
+type Order struct {
+	Type          string `json:"type"`
+	Name          string `json:"name"`
+	AlternateName string `json:"alternate_name,omitempty"`
+}
+
+// Title is a name releases may use for a show.
+type Title struct {
+	Title    string `json:"title"`
+	Language string `json:"language,omitempty"`
+	// Season is the TVDB season the title stands for; nil means the whole show.
+	Season *int `json:"season,omitempty"`
+	// Source is tvdb, xem or garner (a reviewed correction).
+	Source      string `json:"source"`
+	SceneSeason *int   `json:"scene_season,omitempty"`
+	Note        string `json:"note,omitempty"`
+}
+
+// Position is a season and episode number in one order.
+type Position struct {
+	Season int `json:"season"`
+	Number int `json:"number"`
+}
+
+// Episode is a TVDB episode with its position in every order.
+type Episode struct {
+	ID       int64  `json:"id"`
+	Aired    string `json:"aired,omitempty"`
+	Runtime  int    `json:"runtime,omitempty"`
+	Absolute int    `json:"absolute,omitempty"`
+	IsMovie  bool   `json:"is_movie,omitempty"`
+	Name     string `json:"name,omitempty"`
+	NameEng  string `json:"name_eng,omitempty"`
+	NameDeu  string `json:"name_deu,omitempty"`
+	// Numbers maps an order type to the episode's position in it.
+	Numbers map[string]Position `json:"numbers"`
+}
+
+// SceneNumber maps a TVDB aired-order position to scene numbering.
+type SceneNumber struct {
+	TVDB          Position `json:"tvdb"`
+	TVDBAbsolute  int      `json:"tvdb_absolute,omitempty"`
+	Scene         Position `json:"scene"`
+	SceneAbsolute int      `json:"scene_absolute,omitempty"`
+	// EpisodeID is nil when TVDB has no episode at the mapped position.
+	EpisodeID *int64 `json:"episode_id,omitempty"`
+}
+
+// SeriesData is a show with everything Garner knows about it.
+type SeriesData struct {
+	Series   Series        `json:"series"`
+	Orders   []Order       `json:"orders"`
+	Titles   []Title       `json:"titles"`
+	Episodes []Episode     `json:"episodes"`
+	Scene    []SceneNumber `json:"scene_numbers"`
+}
+
+// SaveSeries stores a show, replacing its orders, titles, numbering and
+// episodes. When scene is false, existing scene numbering is kept.
+func (s *Store) SaveSeries(ctx context.Context, d SeriesData, scene bool, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := s.q.WithTx(tx)
+	sr := d.Series
+	if err := q.UpsertSeries(ctx, query.UpsertSeriesParams{
+		ID: sr.ID, Slug: sr.Slug, Name: sr.Name, NameEng: nullString(sr.NameEng), NameDeu: nullString(sr.NameDeu),
+		OriginalLanguage: sr.OriginalLanguage, OriginalCountry: sr.OriginalCountry, Status: sr.Status,
+		Year: nullInt(sr.Year), FirstAired: nullString(sr.FirstAired), AverageRuntime: nullInt(sr.AverageRuntime),
+		DefaultOrder: sr.DefaultOrder, TvdbUpdated: sr.TVDBUpdated, AddedAt: now.Unix(), FetchedAt: now.Unix(),
+	}); err != nil {
+		return fmt.Errorf("save series: %w", err)
+	}
+
+	if err := q.DeleteSeriesOrders(ctx, sr.ID); err != nil {
+		return err
+	}
+	for _, o := range d.Orders {
+		if err := q.InsertSeriesOrder(ctx, query.InsertSeriesOrderParams{SeriesID: sr.ID, Type: o.Type, Name: o.Name, AlternateName: nullString(o.AlternateName)}); err != nil {
+			return fmt.Errorf("save order %s: %w", o.Type, err)
+		}
+	}
+
+	if err := q.DeleteSeriesTitles(ctx, sr.ID); err != nil {
+		return err
+	}
+	for _, t := range d.Titles {
+		if err := q.InsertSeriesTitle(ctx, query.InsertSeriesTitleParams{
+			SeriesID: sr.ID, Title: t.Title, Language: nullString(t.Language), Season: nullIntPtr(t.Season),
+			Source: t.Source, SceneSeason: nullIntPtr(t.SceneSeason), Note: nullString(t.Note),
+		}); err != nil {
+			return fmt.Errorf("save title %q: %w", t.Title, err)
+		}
+	}
+
+	// Numbering references episodes, so clear it before episodes change.
+	if err := q.DeleteEpisodeNumbers(ctx, sr.ID); err != nil {
+		return err
+	}
+	keep := make(map[int64]bool, len(d.Episodes))
+	for _, e := range d.Episodes {
+		keep[e.ID] = true
+		if err := q.UpsertEpisode(ctx, query.UpsertEpisodeParams{
+			ID: e.ID, SeriesID: sr.ID, Aired: nullString(e.Aired), Runtime: nullInt(e.Runtime),
+			AbsoluteNumber: nullInt(e.Absolute), IsMovie: boolInt(e.IsMovie),
+			Name: nullString(e.Name), NameEng: nullString(e.NameEng), NameDeu: nullString(e.NameDeu),
+		}); err != nil {
+			return fmt.Errorf("save episode %d: %w", e.ID, err)
+		}
+		for orderType, p := range e.Numbers {
+			if err := q.InsertEpisodeNumber(ctx, query.InsertEpisodeNumberParams{
+				EpisodeID: e.ID, SeriesID: sr.ID, OrderType: orderType, Season: int64(p.Season), Number: int64(p.Number),
+			}); err != nil {
+				return fmt.Errorf("save episode %d in %s order: %w", e.ID, orderType, err)
+			}
+		}
+	}
+	existing, err := q.ListEpisodeIDs(ctx, sr.ID)
+	if err != nil {
+		return err
+	}
+	for _, id := range existing {
+		if !keep[id] {
+			if err := q.DeleteEpisode(ctx, id); err != nil {
+				return err
+			}
+		}
+	}
+
+	if scene {
+		if err := q.DeleteSceneNumbers(ctx, sr.ID); err != nil {
+			return err
+		}
+		for _, n := range d.Scene {
+			var episode sql.NullInt64
+			if n.EpisodeID != nil {
+				episode = sql.NullInt64{Int64: *n.EpisodeID, Valid: true}
+			}
+			if err := q.InsertSceneNumber(ctx, query.InsertSceneNumberParams{
+				SeriesID: sr.ID, TvdbSeason: int64(n.TVDB.Season), TvdbEpisode: int64(n.TVDB.Number), TvdbAbsolute: nullInt(n.TVDBAbsolute),
+				SceneSeason: int64(n.Scene.Season), SceneEpisode: int64(n.Scene.Number), SceneAbsolute: nullInt(n.SceneAbsolute), EpisodeID: episode,
+			}); err != nil {
+				return fmt.Errorf("save scene numbering: %w", err)
+			}
+		}
+		if err := q.SetXEMFetched(ctx, query.SetXEMFetchedParams{XemFetchedAt: sql.NullInt64{Int64: now.Unix(), Valid: true}, ID: sr.ID}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// HasSeries reports whether the show is in the catalogue.
+func (s *Store) HasSeries(ctx context.Context, id int64) (bool, error) {
+	n, err := s.q.SeriesExists(ctx, id)
+	return n > 0, err
+}
+
+// ListSeries lists the catalogue.
+func (s *Store) ListSeries(ctx context.Context) ([]Series, error) {
+	rows, err := s.q.ListSeries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Series, len(rows))
+	for i, r := range rows {
+		out[i] = seriesFromRow(r)
+	}
+	return out, nil
+}
+
+// SeriesIDs lists the IDs of all shows in the catalogue.
+func (s *Store) SeriesIDs(ctx context.Context) ([]int64, error) {
+	return s.q.ListSeriesIDs(ctx)
+}
+
+// LoadSeries returns a show with everything Garner knows about it.
+func (s *Store) LoadSeries(ctx context.Context, id int64) (SeriesData, error) {
+	row, err := s.q.GetSeries(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SeriesData{}, fmt.Errorf("series %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return SeriesData{}, err
+	}
+	d := SeriesData{Series: seriesFromRow(row), Orders: []Order{}, Titles: []Title{}, Episodes: []Episode{}, Scene: []SceneNumber{}}
+
+	orders, err := s.q.ListSeriesOrders(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	for _, o := range orders {
+		d.Orders = append(d.Orders, Order{Type: o.Type, Name: o.Name, AlternateName: o.AlternateName.String})
+	}
+
+	titles, err := s.q.ListSeriesTitles(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	for _, t := range titles {
+		d.Titles = append(d.Titles, Title{
+			Title: t.Title, Language: t.Language.String, Season: intPtr(t.Season), Source: t.Source,
+			SceneSeason: intPtr(t.SceneSeason), Note: t.Note.String,
+		})
+	}
+
+	episodes, err := s.q.ListEpisodes(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	index := make(map[int64]int, len(episodes))
+	for i, e := range episodes {
+		index[e.ID] = i
+		d.Episodes = append(d.Episodes, Episode{
+			ID: e.ID, Aired: e.Aired.String, Runtime: int(e.Runtime.Int64), Absolute: int(e.AbsoluteNumber.Int64),
+			IsMovie: e.IsMovie != 0, Name: e.Name.String, NameEng: e.NameEng.String, NameDeu: e.NameDeu.String,
+			Numbers: map[string]Position{},
+		})
+	}
+	numbers, err := s.q.ListEpisodeNumbers(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	for _, n := range numbers {
+		if i, ok := index[n.EpisodeID]; ok {
+			d.Episodes[i].Numbers[n.OrderType] = Position{Season: int(n.Season), Number: int(n.Number)}
+		}
+	}
+
+	scene, err := s.q.ListSceneNumbers(ctx, id)
+	if err != nil {
+		return d, err
+	}
+	for _, n := range scene {
+		sn := SceneNumber{
+			TVDB: Position{Season: int(n.TvdbSeason), Number: int(n.TvdbEpisode)}, TVDBAbsolute: int(n.TvdbAbsolute.Int64),
+			Scene: Position{Season: int(n.SceneSeason), Number: int(n.SceneEpisode)}, SceneAbsolute: int(n.SceneAbsolute.Int64),
+		}
+		if n.EpisodeID.Valid {
+			id := n.EpisodeID.Int64
+			sn.EpisodeID = &id
+		}
+		d.Scene = append(d.Scene, sn)
+	}
+	return d, nil
+}
+
+// SyncState returns a stored value, or "" when unset.
+func (s *Store) SyncState(ctx context.Context, key string) (string, error) {
+	v, err := s.q.GetSyncState(ctx, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetSyncState stores a value.
+func (s *Store) SetSyncState(ctx context.Context, key, value string) error {
+	return s.q.SetSyncState(ctx, query.SetSyncStateParams{Key: key, Value: value})
+}
+
+func seriesFromRow(r query.Series) Series {
+	s := Series{
+		ID: r.ID, Slug: r.Slug, Name: r.Name, NameEng: r.NameEng.String, NameDeu: r.NameDeu.String,
+		OriginalLanguage: r.OriginalLanguage, OriginalCountry: r.OriginalCountry, Status: r.Status,
+		Year: int(r.Year.Int64), FirstAired: r.FirstAired.String, AverageRuntime: int(r.AverageRuntime.Int64),
+		DefaultOrder: r.DefaultOrder, TVDBUpdated: r.TvdbUpdated, Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
+	}
+	if r.XemFetchedAt.Valid {
+		t := time.Unix(r.XemFetchedAt.Int64, 0)
+		s.XEMFetched = &t
+	}
+	return s
+}
+
+func nullString(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }
+
+func nullInt(n int) sql.NullInt64 { return sql.NullInt64{Int64: int64(n), Valid: n != 0} }
+
+func nullIntPtr(p *int) sql.NullInt64 {
+	if p == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*p), Valid: true}
+}
+
+func intPtr(n sql.NullInt64) *int {
+	if !n.Valid {
+		return nil
+	}
+	v := int(n.Int64)
+	return &v
+}
+
+func boolInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
+}
