@@ -147,6 +147,8 @@ func setup(t *testing.T, probe inspect.Probe) (*env, store.Download) {
 	return e, d
 }
 
+const jobDir = "usenet/complete/tv/Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP"
+
 const target = "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01/Harbor.Precinct.Night.Shift.2013.S01E01.Pilot.WEB-1080p.DE.EN-GRP.mkv"
 
 func TestImport(t *testing.T) {
@@ -239,6 +241,9 @@ func TestImportRejectsWrongAudio(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.share, target)); !os.IsNotExist(err) {
 		t.Error("a rejected file reached the library")
 	}
+	if _, err := os.Stat(filepath.Join(e.share, jobDir)); !os.IsNotExist(err) {
+		t.Error("the rejected release's files are still in SABnzbd's folder")
+	}
 }
 
 // TestImportFailsAndRetries covers a missing library folder, such as an
@@ -256,6 +261,9 @@ func TestImportFailsAndRetries(t *testing.T) {
 	}
 	if _, err := os.Stat(lib); !os.IsNotExist(err) {
 		t.Error("Garner created the library folder")
+	}
+	if _, err := os.Stat(filepath.Join(e.share, jobDir, "x7f3a.mkv")); err != nil {
+		t.Error("a failed import lost the downloaded file")
 	}
 
 	os.Mkdir(lib, 0o755)
@@ -292,6 +300,8 @@ func TestImportReplacesOldVersion(t *testing.T) {
 	old := filepath.Join(e.share, "library/tv/old/Harbor Precinct - S01E01.avi")
 	os.MkdirAll(filepath.Dir(old), 0o755)
 	os.WriteFile(old, []byte("old"), 0o644)
+	oldSub := strings.TrimSuffix(old, ".avi") + ".de.srt"
+	os.WriteFile(oldSub, []byte("sub"), 0o644)
 	e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: old, Size: 3}, 0, time.Now())
 	e.svc.work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
@@ -299,6 +309,129 @@ func TestImportReplacesOldVersion(t *testing.T) {
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Error("the previous version is still there")
+	}
+	if _, err := os.Stat(oldSub); !os.IsNotExist(err) {
+		t.Error("the previous version's subtitle is still there")
+	}
+}
+
+// TestImportTidies moves a release's subtitle files next to the video, with
+// the language and forced mark Jellyfin reads, and removes the rest of
+// SABnzbd's folder.
+func TestImportTidies(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	job := filepath.Join(e.share, jobDir)
+	os.WriteFile(filepath.Join(job, "x7f3a.ger.srt"), []byte("1"), 0o644)
+	os.WriteFile(filepath.Join(job, "x7f3a.eng.forced.srt"), []byte("2"), 0o644)
+	os.MkdirAll(filepath.Join(job, "Subs"), 0o755)
+	os.WriteFile(filepath.Join(job, "Subs", "2_English.srt"), []byte("3"), 0o644)
+	e.svc.work(ctx)
+
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || got.Import.Notes[0] != "moved 3 subtitle files next to the video" {
+		t.Fatalf("import = %+v", got.Import)
+	}
+	video := strings.TrimSuffix(filepath.Join(e.share, target), ".mkv")
+	for _, name := range []string{video + ".de.srt", video + ".en.forced.srt", video + ".en.srt"} {
+		if _, err := os.Stat(name); err != nil {
+			t.Errorf("missing %s", filepath.Base(name))
+		}
+	}
+	if _, err := os.Stat(job); !os.IsNotExist(err) {
+		t.Error("SABnzbd's folder is still there")
+	}
+}
+
+// TestImportKeepsUnassignedVideos leaves SABnzbd's folder in place when it
+// holds a video no episode could be matched to.
+func TestImportKeepsUnassignedVideos(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	job := filepath.Join(e.share, jobDir)
+	os.Remove(filepath.Join(job, "x7f3a.mkv"))
+	os.WriteFile(filepath.Join(job, "Harbor.Precinct.Night.Shift.S01E01.mkv"), make([]byte, 1000), 0o644)
+	os.WriteFile(filepath.Join(job, "Harbor.Precinct.Night.Shift.Making.Of.mkv"), make([]byte, 900), 0o644)
+	e.svc.work(ctx)
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || !strings.Contains(got.Import.Notes[0], "holds 1 video file that could not be assigned") {
+		t.Fatalf("import = %+v", got.Import)
+	}
+	if _, err := os.Stat(filepath.Join(job, "Harbor.Precinct.Night.Shift.Making.Of.mkv")); err != nil {
+		t.Error("the unassigned video was removed")
+	}
+}
+
+// TestSubtitleOwner assigns subtitles by the video's full name, with the
+// longest match winning, and keeps SABnzbd's folder when subtitles remain.
+func TestSubtitleOwner(t *testing.T) {
+	dir := t.TempDir()
+	lib := t.TempDir()
+	files := []store.ImportFile{
+		{Source: filepath.Join(dir, "Episode1.mkv"), Target: filepath.Join(lib, "Show.S01E01.mkv")},
+		{Source: filepath.Join(dir, "Episode10.mkv"), Target: filepath.Join(lib, "Show.S01E10.mkv")},
+	}
+	for _, name := range []string{"Episode10.en.srt", "Episode1.de.srt", "Unrelated.srt"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
+	}
+	s := &Service{}
+	s.moveSubtitles(dir, files)
+	for _, want := range []string{"Show.S01E10.en.srt", "Show.S01E01.de.srt"} {
+		if _, err := os.Stat(filepath.Join(lib, want)); err != nil {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if n := subtitleFiles(dir); n != 1 {
+		t.Errorf("%d subtitle files left; want the unrelated one", n)
+	}
+}
+
+func TestVideoFilesSingleSample(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "show.sample.mkv")
+	os.WriteFile(f, []byte("x"), 0o644)
+	if got, err := videoFiles(f); err != nil || len(got) != 0 {
+		t.Errorf("videoFiles(sample file) = %v, %v", got, err)
+	}
+}
+
+// TestJobFolder deletes only a folder named after the release, inside the
+// SABnzbd folders and apart from the library.
+func TestJobFolder(t *testing.T) {
+	share := t.TempDir()
+	for _, dir := range []string{"usenet/complete/tv/Show.S01E01-GRP", "usenet/complete/tv/Show.S01E01-GRP.1", "usenet/complete/tv/tv", "library/tv", "other/Show.S01E01-GRP"} {
+		os.MkdirAll(filepath.Join(share, dir), 0o755)
+	}
+	s := &Service{opts: Options{
+		SABnzbdPaths: config.PathMap{"/data/usenet": filepath.Join(share, "usenet")},
+		Library:      config.Library{TV: filepath.Join(share, "library", "tv")},
+	}}
+	for _, tc := range []struct {
+		storage, title string
+		ok             bool
+	}{
+		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Show.S01E01-GRP", true},
+		{"/data/usenet/complete/tv/Show.S01E01-GRP.1", "Show.S01E01-GRP", true},
+		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Other.S01E01-GRP", false}, // named after another release
+		{"/data/usenet/complete/tv", "Show.S01E01-GRP", false},                  // a category folder is not named after the release
+		{"/data/usenet", "usenet", false},                                       // the mapped root itself
+		{"/data/other/Show.S01E01-GRP", "Show.S01E01-GRP", false},               // no mapping covers it
+		{"", "Show.S01E01-GRP", false},
+	} {
+		dir, why := s.jobFolder(&store.Download{Storage: tc.storage, Title: tc.title})
+		if (why == "") != tc.ok {
+			t.Errorf("jobFolder(%q, %q) = %q, %q; want ok=%v", tc.storage, tc.title, dir, why, tc.ok)
+		}
+	}
+	// A symbolic link on the way into the library does not make it deletable.
+	os.Symlink(filepath.Join(share, "library"), filepath.Join(share, "usenet", "linked"))
+	os.MkdirAll(filepath.Join(share, "library", "Show.S01E01-GRP"), 0o755)
+	if _, why := s.jobFolder(&store.Download{Storage: "/data/usenet/linked/Show.S01E01-GRP", Title: "Show.S01E01-GRP"}); why == "" {
+		t.Error("a folder reached through a link into the library qualified for deletion")
+	}
+	// A library folder inside SABnzbd's job folder is never deleted with it.
+	s.opts.Library.TV = filepath.Join(share, "usenet/complete/tv/Show.S01E01-GRP/library")
+	if _, why := s.jobFolder(&store.Download{Storage: "/data/usenet/complete/tv/Show.S01E01-GRP", Title: "Show.S01E01-GRP"}); why == "" {
+		t.Error("a folder holding the library qualified for deletion")
 	}
 }
 

@@ -310,9 +310,13 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 		s.log.Info("imported file", "download", d.ID, "target", f.Target)
 	}
 	s.recordFiles(ctx, d, files)
+	notes := s.tidy(d, files)
+	if notes == nil {
+		notes = []string{}
+	}
 
 	if s.jellyfin == nil {
-		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: files})
+		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: files, Notes: notes})
 		return
 	}
 	var paths []string
@@ -323,13 +327,13 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 	}
 	if len(paths) < len(files) {
 		s.save(ctx, d, store.Import{State: store.ImportUnverified, Detail: "moved into the library, but jellyfin.paths does not cover the library folder",
-			Recovery: "Add the library folder to jellyfin.paths in garner.toml, restart Garner and retry the import.", Files: files})
+			Recovery: "Add the library folder to jellyfin.paths in garner.toml, restart Garner and retry the import.", Files: files, Notes: notes})
 		return
 	}
 	if err := s.jellyfin.Created(ctx, paths); err != nil {
 		s.log.Warn("could not ask Jellyfin to scan; waiting for its own scan", "err", err)
 	}
-	s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailWaiting, Files: files})
+	s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailWaiting, Files: files, Notes: notes})
 	s.verify(ctx, d)
 }
 
@@ -358,6 +362,7 @@ func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []st
 			s.log.Warn("could not remove the previous version", "path", p, "err", err)
 			continue
 		}
+		removeSubtitles(p)
 		s.log.Info("removed the previous version", "path", p)
 	}
 }
@@ -438,9 +443,13 @@ func (s *Service) verify(ctx context.Context, d *store.Download) {
 	}
 }
 
-// save stores an import's progress. Callers in the loop may ignore the
-// error: it is logged, and the step runs again on the next round.
+// save stores an import's progress, keeping earlier notes unless im brings
+// its own. Callers in the loop may ignore the error: it is logged, and the
+// step runs again on the next round.
 func (s *Service) save(ctx context.Context, d *store.Download, im store.Import) error {
+	if im.Notes == nil {
+		im.Notes = d.Import.Notes
+	}
 	if err := s.store.UpdateImport(ctx, d.ID, im, s.now()); err != nil {
 		s.log.Error("save import", "download", d.ID, "err", err)
 		return err
@@ -458,8 +467,11 @@ func (s *Service) fail(ctx context.Context, d *store.Download, files []store.Imp
 	s.save(ctx, d, store.Import{State: store.ImportFailed, Detail: detail, Recovery: recovery, Files: files})
 }
 
+// reject marks the release bad, removes its files from SABnzbd's folder and
+// lets the download service try the next release.
 func (s *Service) reject(ctx context.Context, d *store.Download, files []store.ImportFile, reason string) {
 	s.save(ctx, d, store.Import{State: store.ImportRejected, Detail: reason, Files: files})
+	s.discard(d)
 	if s.OnRejected != nil {
 		s.OnRejected(ctx, *d, reason)
 	}
@@ -545,8 +557,13 @@ func videoFiles(dir string) ([]store.ImportFile, error) {
 		return nil, err
 	}
 	var files []store.ImportFile
+	// A sample's file name or folder name says "sample".
 	add := func(p string, size int64) {
-		if videoExtensions[strings.ToLower(filepath.Ext(p))] && !sampleName.MatchString(filepath.Base(p)) {
+		rel := filepath.Base(p)
+		if st.IsDir() {
+			rel, _ = filepath.Rel(dir, p)
+		}
+		if videoExtensions[strings.ToLower(filepath.Ext(p))] && !sampleName.MatchString(rel) {
 			files = append(files, store.ImportFile{Source: p, Size: size})
 		}
 	}

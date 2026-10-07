@@ -201,12 +201,15 @@ func downloadFromRow(r query.Download) (Download, error) {
 	if d.Stages == nil {
 		d.Stages = []Stage{}
 	}
-	d.Import = Import{State: r.ImportState, Detail: r.ImportDetail, Recovery: r.ImportRecovery, Files: []ImportFile{}}
+	d.Import = Import{State: r.ImportState, Detail: r.ImportDetail, Recovery: r.ImportRecovery, Files: []ImportFile{}, Notes: []string{}}
 	if r.ImportUpdatedAt > 0 {
 		d.Import.Updated = time.Unix(r.ImportUpdatedAt, 0)
 	}
 	if err := json.Unmarshal([]byte(r.ImportFiles), &d.Import.Files); err != nil {
 		return d, fmt.Errorf("download %d import files: %w", r.ID, err)
+	}
+	if err := json.Unmarshal([]byte(r.ImportNotes), &d.Import.Notes); err != nil {
+		return d, fmt.Errorf("download %d import notes: %w", r.ID, err)
 	}
 	return d, nil
 }

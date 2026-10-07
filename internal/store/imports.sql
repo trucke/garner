@@ -2,7 +2,8 @@
 UPDATE downloads SET import_state = 'pending', import_updated_at = ? WHERE id = ? AND import_state = '';
 
 -- name: UpdateImport :exec
-UPDATE downloads SET import_state = ?, import_detail = ?, import_recovery = ?, import_files = ?, import_updated_at = ?
+UPDATE downloads SET import_state = ?, import_detail = ?, import_recovery = ?, import_files = ?, import_notes = ?,
+    import_updated_at = ?
 WHERE id = ?;
 
 -- name: ListDueImports :many

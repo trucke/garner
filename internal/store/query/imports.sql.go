@@ -39,7 +39,7 @@ func (q *Queries) GetEpisodeFile(ctx context.Context, episodeID int64) (EpisodeF
 }
 
 const listDueImports = `-- name: ListDueImports :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at FROM downloads WHERE import_state IN ('pending', 'moving', 'scanning') ORDER BY id
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes FROM downloads WHERE import_state IN ('pending', 'moving', 'scanning') ORDER BY id
 `
 
 func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
@@ -77,6 +77,7 @@ func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
 			&i.ImportRecovery,
 			&i.ImportFiles,
 			&i.ImportUpdatedAt,
+			&i.ImportNotes,
 		); err != nil {
 			return nil, err
 		}
@@ -106,7 +107,8 @@ func (q *Queries) MarkImportPending(ctx context.Context, arg MarkImportPendingPa
 }
 
 const updateImport = `-- name: UpdateImport :exec
-UPDATE downloads SET import_state = ?, import_detail = ?, import_recovery = ?, import_files = ?, import_updated_at = ?
+UPDATE downloads SET import_state = ?, import_detail = ?, import_recovery = ?, import_files = ?, import_notes = ?,
+    import_updated_at = ?
 WHERE id = ?
 `
 
@@ -115,6 +117,7 @@ type UpdateImportParams struct {
 	ImportDetail    string
 	ImportRecovery  string
 	ImportFiles     string
+	ImportNotes     string
 	ImportUpdatedAt int64
 	ID              int64
 }
@@ -125,6 +128,7 @@ func (q *Queries) UpdateImport(ctx context.Context, arg UpdateImportParams) erro
 		arg.ImportDetail,
 		arg.ImportRecovery,
 		arg.ImportFiles,
+		arg.ImportNotes,
 		arg.ImportUpdatedAt,
 		arg.ID,
 	)

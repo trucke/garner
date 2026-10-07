@@ -68,6 +68,7 @@ type Download struct {
 	ImportRecovery  string
 	ImportFiles     string
 	ImportUpdatedAt int64
+	ImportNotes     string
 }
 
 type Episode struct {

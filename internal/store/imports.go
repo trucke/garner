@@ -28,7 +28,10 @@ type Import struct {
 	// Recovery says what to do when the import failed.
 	Recovery string       `json:"recovery,omitempty"`
 	Files    []ImportFile `json:"files"`
-	Updated  time.Time    `json:"updated,omitzero"`
+	// Notes are worth showing, such as subtitle files moved or files left
+	// in SABnzbd's folder.
+	Notes   []string  `json:"notes"`
+	Updated time.Time `json:"updated,omitzero"`
 }
 
 // ImportFile is one video file of a download.
@@ -55,13 +58,20 @@ func (s *Store) UpdateImport(ctx context.Context, downloadID int64, im Import, n
 	if im.Files == nil {
 		im.Files = []ImportFile{}
 	}
+	if im.Notes == nil {
+		im.Notes = []string{}
+	}
 	files, err := json.Marshal(im.Files)
+	if err != nil {
+		return err
+	}
+	notes, err := json.Marshal(im.Notes)
 	if err != nil {
 		return err
 	}
 	return s.q.UpdateImport(ctx, query.UpdateImportParams{
 		ImportState: im.State, ImportDetail: im.Detail, ImportRecovery: im.Recovery, ImportFiles: string(files),
-		ImportUpdatedAt: now.Unix(), ID: downloadID,
+		ImportNotes: string(notes), ImportUpdatedAt: now.Unix(), ID: downloadID,
 	})
 }
 
