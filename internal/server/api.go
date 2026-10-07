@@ -22,6 +22,7 @@ func (s *Server) Routes() http.Handler {
 	s.catalogRoutes(mux)
 	s.searchRoutes(mux)
 	s.downloadRoutes(mux)
+	s.importRoutes(mux)
 	return mux
 }
 

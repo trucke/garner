@@ -8,6 +8,9 @@
 # network share. Relative paths are relative to this file.
 data_dir = "data"
 
+# FFprobe checks every downloaded file. A name found in PATH, or a path.
+# ffprobe = "/usr/bin/ffprobe"
+
 [server]
 # Loopback serves plain HTTP for clients on the same machine.
 listen = "127.0.0.1:7979"
@@ -22,6 +25,15 @@ listen = "127.0.0.1:7979"
 # tls_cert = "/etc/garner/cert.pem"
 # tls_key = "/etc/garner/key.pem"
 
+# Library folders, as Garner reaches them. Garner moves downloads here
+# with a rename, so they must be on the same share or filesystem as
+# SABnzbd's completed folder. Garner creates the show and season folders
+# below them, never these folders themselves, so an unmounted share fails
+# instead of filling the local disk.
+[library]
+tv = "/srv/media/library/tv"
+anime = "/srv/media/library/anime"
+
 [prowlarr]
 url = "http://prowlarr.home.lan:9696"
 # ca_file = "/etc/garner/home-ca.pem"   # for https:// with a private CA
@@ -29,6 +41,11 @@ url = "http://prowlarr.home.lan:9696"
 [sabnzbd]
 url = "http://sabnzbd.home.lan:8080"
 category = "tv"
+# When SABnzbd runs on another host or in a container, map the folders it
+# reports to where Garner reaches them, such as an NFS or SMB mount.
+paths = { "/data/usenet" = "/srv/media/usenet" }
 
 [jellyfin]
 url = "http://jellyfin.home.lan:8096"
+# The same for Jellyfin's library folders.
+paths = { "/data/library" = "/srv/media/library" }

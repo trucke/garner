@@ -43,26 +43,31 @@ type Candidate struct {
 }
 
 type Download struct {
-	ID        int64
-	EpisodeID int64
-	Title     string
-	Indexer   string
-	Link      string
-	Size      int64
-	Verdict   string
-	Tier      string
-	Manual    int64
-	State     string
-	Detail    string
-	JobID     sql.NullString
-	Progress  float64
-	TimeLeft  string
-	Storage   string
-	Failure   string
-	Retryable int64
-	Stages    string
-	CreatedAt int64
-	UpdatedAt int64
+	ID              int64
+	EpisodeID       int64
+	Title           string
+	Indexer         string
+	Link            string
+	Size            int64
+	Verdict         string
+	Tier            string
+	Manual          int64
+	State           string
+	Detail          string
+	JobID           sql.NullString
+	Progress        float64
+	TimeLeft        string
+	Storage         string
+	Failure         string
+	Retryable       int64
+	Stages          string
+	CreatedAt       int64
+	UpdatedAt       int64
+	ImportState     string
+	ImportDetail    string
+	ImportRecovery  string
+	ImportFiles     string
+	ImportUpdatedAt int64
 }
 
 type Episode struct {
@@ -75,6 +80,14 @@ type Episode struct {
 	Name           sql.NullString
 	NameEng        sql.NullString
 	NameDeu        sql.NullString
+}
+
+type EpisodeFile struct {
+	EpisodeID  int64
+	Path       string
+	Size       int64
+	DownloadID sql.NullInt64
+	ImportedAt int64
 }
 
 type EpisodeNumber struct {

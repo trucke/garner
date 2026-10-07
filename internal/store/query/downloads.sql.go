@@ -72,7 +72,7 @@ func (q *Queries) GetCandidateLink(ctx context.Context, id int64) (GetCandidateL
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at FROM downloads WHERE id = ?
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -99,6 +99,11 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.Stages,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ImportState,
+		&i.ImportDetail,
+		&i.ImportRecovery,
+		&i.ImportFiles,
+		&i.ImportUpdatedAt,
 	)
 	return i, err
 }
@@ -142,7 +147,7 @@ func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) 
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at FROM downloads WHERE state IN ('submitting', 'queued', 'downloading', 'processing') ORDER BY id
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at FROM downloads WHERE state IN ('submitting', 'queued', 'downloading', 'processing') ORDER BY id
 `
 
 func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
@@ -175,6 +180,11 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.Stages,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ImportState,
+			&i.ImportDetail,
+			&i.ImportRecovery,
+			&i.ImportFiles,
+			&i.ImportUpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -240,7 +250,7 @@ func (q *Queries) ListCandidateLinks(ctx context.Context, episodeID int64) ([]Li
 }
 
 const listDownloads = `-- name: ListDownloads :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at FROM downloads
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at FROM downloads
 ORDER BY state IN ('submitting', 'queued', 'downloading', 'processing') DESC, id DESC
 LIMIT ?
 `
@@ -276,6 +286,11 @@ func (q *Queries) ListDownloads(ctx context.Context, limit int64) ([]Download, e
 			&i.Stages,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ImportState,
+			&i.ImportDetail,
+			&i.ImportRecovery,
+			&i.ImportFiles,
+			&i.ImportUpdatedAt,
 		); err != nil {
 			return nil, err
 		}

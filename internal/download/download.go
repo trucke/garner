@@ -49,6 +49,9 @@ type Service struct {
 	missing  map[int64]int // polls a job was not found, by download
 	// OnChange is called whenever a download changes.
 	OnChange func(store.Download)
+	// OnCompleted is called once a download finished and its import was
+	// queued.
+	OnCompleted func(store.Download)
 }
 
 // New returns a download service using the SABnzbd category.
@@ -225,6 +228,11 @@ func (s *Service) poll(ctx context.Context) bool {
 				}
 			} else if d.State == store.Completed {
 				s.log.Info("download completed", "download", d.ID, "title", d.Title, "storage", d.Storage)
+				if err := s.store.MarkImportPending(ctx, d.ID, s.now()); err != nil {
+					s.log.Error("queue import", "download", d.ID, "err", err)
+				} else if s.OnCompleted != nil {
+					s.OnCompleted(d)
+				}
 			}
 		}
 		running = running || d.Active()
@@ -263,6 +271,19 @@ func (s *Service) confirm(ctx context.Context, d *store.Download) {
 		d.State, d.Retryable = store.Failed, true
 		d.Failure = "SABnzbd has no job for this release; Garner stopped or lost the connection before SABnzbd confirmed it"
 	}
+}
+
+// Reject marks a completed download's release bad, for example after the
+// file check found other contents than the name claimed, and starts the
+// next release.
+func (s *Service) Reject(ctx context.Context, d store.Download, reason string) {
+	d.State, d.Failure, d.Retryable = store.Failed, reason, true
+	if err := s.save(ctx, d); err != nil {
+		s.log.Error("reject download", "download", d.ID, "err", err)
+		return
+	}
+	s.log.Warn("release rejected after download", "download", d.ID, "title", d.Title, "reason", reason)
+	s.replace(ctx, d)
 }
 
 // replace starts the next release after a failure another release may fix.

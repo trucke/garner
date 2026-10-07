@@ -19,6 +19,7 @@ import (
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/httpx"
+	"github.com/trucke/garner/internal/importer"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
@@ -38,6 +39,7 @@ type Server struct {
 	catalog   *catalog.Catalog  // nil without TVDB access
 	search    *search.Service   // nil without Prowlarr
 	downloads *download.Service // nil without SABnzbd
+	imports   *importer.Service // nil without library folders or ffprobe
 	log       *slog.Logger
 	version   string
 	events    *broker
@@ -62,6 +64,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 		return err
 	}
 	if err := s.setupDownloads(); err != nil {
+		return err
+	}
+	if err := s.setupImports(); err != nil {
 		return err
 	}
 	tlsConf, err := s.tlsConfig()
@@ -114,6 +119,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	}
 	if s.downloads != nil {
 		go s.downloads.Run(ctx)
+	}
+	if s.imports != nil {
+		go s.imports.Run(ctx)
 	}
 	errc := make(chan error, 2)
 	go func() { errc <- public.Serve(ln) }()

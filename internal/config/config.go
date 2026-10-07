@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -20,8 +21,11 @@ const DefaultPath = "garner.toml"
 
 // Config holds all settings. Secrets never come from the file.
 type Config struct {
-	DataDir  string  `toml:"data_dir"`
+	DataDir string `toml:"data_dir"`
+	// FFprobe is the ffprobe program that checks downloaded files.
+	FFprobe  string  `toml:"ffprobe"`
 	Server   Server  `toml:"server"`
+	Library  Library `toml:"library"`
 	TVDB     TVDB    `toml:"tvdb"`
 	Prowlarr Service `toml:"prowlarr"`
 	SABnzbd  SABnzbd `toml:"sabnzbd"`
@@ -40,6 +44,14 @@ type Server struct {
 	TLSKey  string `toml:"tls_key"`
 }
 
+// Library names the folders shows are imported into, as Garner reaches
+// them. Garner creates folders below them but never the folders themselves,
+// so an unmounted share fails instead of filling the local disk.
+type Library struct {
+	TV    string `toml:"tv"`
+	Anime string `toml:"anime"`
+}
+
 // TVDB holds catalogue access. Secrets: TVDB_API_KEY, TVDB_PIN (optional).
 type TVDB struct {
 	APIKey Secret `toml:"-"`
@@ -51,7 +63,42 @@ type Service struct {
 	URL string `toml:"url"`
 	// CAFile trusts an extra certificate authority for an https:// URL.
 	CAFile string `toml:"ca_file"`
-	APIKey Secret `toml:"-"`
+	// Paths translates folders as the service reports them to where Garner
+	// reaches them, such as "/data/usenet" to "/Volumes/media/usenet".
+	Paths  PathMap `toml:"paths"`
+	APIKey Secret  `toml:"-"`
+}
+
+// PathMap maps folders as another host sees them (keys) to where Garner
+// reaches them (values), like Sonarr's remote path mappings. An empty map
+// means both see the same paths.
+type PathMap map[string]string
+
+// Local translates a path the service reported to Garner's view.
+func (m PathMap) Local(p string) (string, bool) { return m.translate(p, false) }
+
+// Remote translates a path in Garner's view to the service's view.
+func (m PathMap) Remote(p string) (string, bool) { return m.translate(p, true) }
+
+func (m PathMap) translate(p string, reverse bool) (string, bool) {
+	p = path.Clean(p)
+	if len(m) == 0 {
+		return p, true
+	}
+	best, bestTo := "", ""
+	for remote, local := range m {
+		from, to := path.Clean(remote), path.Clean(local)
+		if reverse {
+			from, to = to, from
+		}
+		if (p == from || strings.HasPrefix(p, from+"/")) && len(from) > len(best) {
+			best, bestTo = from, to
+		}
+	}
+	if best == "" {
+		return p, false
+	}
+	return bestTo + strings.TrimPrefix(p, best), true
 }
 
 // SABnzbd is the download client.
@@ -83,6 +130,7 @@ func redacted(s Secret) string {
 func Load(path string, explicit bool) (*Config, error) {
 	cfg := &Config{
 		DataDir: "data",
+		FFprobe: "ffprobe",
 		Server:  Server{Listen: "127.0.0.1:7979"},
 		SABnzbd: SABnzbd{Category: "tv"},
 	}
@@ -172,7 +220,17 @@ func (c *Config) validate() error {
 	if u.Scheme == "https" && IsLoopback(host) && c.Server.TLSCert == "" {
 		return errors.New("server.url uses https://, but Garner listens on loopback without a certificate; set server.tls_cert and server.tls_key or use http://")
 	}
+	for name, dir := range map[string]string{"library.tv": c.Library.TV, "library.anime": c.Library.Anime} {
+		if dir != "" && !filepath.IsAbs(dir) {
+			return fmt.Errorf("%s %q must be an absolute path", name, dir)
+		}
+	}
 	for name, svc := range c.services() {
+		for remote, local := range svc.Paths {
+			if !path.IsAbs(remote) || !filepath.IsAbs(local) {
+				return fmt.Errorf("%s.paths: %q = %q must map an absolute path to an absolute path", name, remote, local)
+			}
+		}
 		if svc.URL == "" {
 			continue
 		}

@@ -1,0 +1,592 @@
+// Package importer moves finished downloads into the library. It first
+// checks that the files hold what the release promised, then moves them on
+// the share without copying, and confirms that Jellyfin identified them as
+// the intended episodes.
+package importer
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/inspect"
+	"github.com/trucke/garner/internal/jellyfin"
+	"github.com/trucke/garner/internal/match"
+	"github.com/trucke/garner/internal/release"
+	"github.com/trucke/garner/internal/selection"
+	"github.com/trucke/garner/internal/store"
+)
+
+const (
+	pollInterval = 10 * time.Second
+	// fullScanAfter is how long Garner waits for Jellyfin to act on its
+	// hint before asking for a scan of all libraries. Jellyfin delays its
+	// own reaction to file changes by 60 seconds.
+	fullScanAfter = 90 * time.Second
+	// scanTimeout is how long Garner waits for Jellyfin to list a moved
+	// file without progress before it reports the import as unconfirmed.
+	scanTimeout = 3 * time.Minute
+
+	detailWaiting  = "moved into the library; waiting for Jellyfin"
+	detailFullScan = "moved into the library; Jellyfin did not pick the files up, so Garner asked it to scan all libraries"
+)
+
+// ErrNotRetryable means the import has no failed step to repeat.
+var ErrNotRetryable = errors.New("only failed or unconfirmed imports can be retried")
+
+var videoExtensions = map[string]bool{
+	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".ts": true, ".m2ts": true, ".webm": true, ".wmv": true,
+}
+
+var sampleName = regexp.MustCompile(`(?i)(^|[^a-z])sample([^a-z]|$)`)
+
+// Prober reads what a file holds.
+type Prober interface {
+	Probe(ctx context.Context, file string) (inspect.Probe, error)
+}
+
+// Options configures the importer.
+type Options struct {
+	// SABnzbdPaths translates SABnzbd's folders to Garner's view.
+	SABnzbdPaths config.PathMap
+	// JellyfinPaths translates Jellyfin's folders to Garner's view.
+	JellyfinPaths config.PathMap
+	Library       config.Library
+	// Rules returns a show's reviewed streaming-service order rules.
+	Rules func(seriesID int64) map[release.Service]string
+}
+
+// Service imports completed downloads.
+type Service struct {
+	store    *store.Store
+	probe    Prober
+	jellyfin *jellyfin.Client // nil: imports are not confirmed
+	opts     Options
+	log      *slog.Logger
+	now      func() time.Time
+	wake     chan struct{}
+	// OnChange is called whenever an import changes.
+	OnChange func(store.Download)
+	// OnRejected marks a download's release bad, so another one is tried.
+	OnRejected func(ctx context.Context, d store.Download, reason string)
+}
+
+// New returns an importer. jf may be nil.
+func New(st *store.Store, probe Prober, jf *jellyfin.Client, opts Options, log *slog.Logger) *Service {
+	if opts.Rules == nil {
+		opts.Rules = func(int64) map[release.Service]string { return nil }
+	}
+	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, log: log, now: time.Now, wake: make(chan struct{}, 1)}
+}
+
+// Wake makes Run look for work now, such as after a download completed.
+func (s *Service) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Run imports completed downloads until ctx is cancelled.
+func (s *Service) Run(ctx context.Context) {
+	for {
+		s.work(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.wake:
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+func (s *Service) work(ctx context.Context) {
+	due, err := s.store.DueImports(ctx)
+	if err != nil {
+		s.log.Error("list due imports", "err", err)
+		return
+	}
+	for _, d := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		switch d.Import.State {
+		case store.ImportPending:
+			s.check(ctx, &d)
+		case store.ImportMoving:
+			s.move(ctx, &d)
+		case store.ImportScanning:
+			s.verify(ctx, &d)
+		}
+	}
+}
+
+// Retry repeats the step that failed, after the problem was fixed.
+func (s *Service) Retry(ctx context.Context, downloadID int64) (store.Download, error) {
+	d, err := s.store.GetDownload(ctx, downloadID)
+	if err != nil {
+		return d, err
+	}
+	im := d.Import
+	switch {
+	case im.State == store.ImportFailed && planned(im.Files):
+		im.State = store.ImportMoving
+	case im.State == store.ImportFailed:
+		im.State = store.ImportPending
+	case im.State == store.ImportUnverified:
+		im.State = store.ImportScanning
+	default:
+		return d, ErrNotRetryable
+	}
+	im.Detail, im.Recovery = "retrying", ""
+	if im.State == store.ImportScanning {
+		im.Detail = detailWaiting
+	}
+	if err := s.save(ctx, &d, im); err != nil {
+		return d, err
+	}
+	s.Wake()
+	return d, nil
+}
+
+// check finds the video files, assigns them to episodes and checks that
+// they hold what the release promised.
+func (s *Service) check(ctx context.Context, d *store.Download) {
+	if d.Storage == "" {
+		s.fail(ctx, d, nil, "SABnzbd did not say where it put the files", "Check the job in SABnzbd's history, then retry the import.")
+		return
+	}
+	local, ok := s.opts.SABnzbdPaths.Local(d.Storage)
+	if !ok {
+		s.fail(ctx, d, nil, fmt.Sprintf("SABnzbd put the files in %s, which no sabnzbd.paths entry covers", d.Storage),
+			"Add the folder to sabnzbd.paths in garner.toml, restart Garner and retry the import.")
+		return
+	}
+	files, err := videoFiles(local)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		s.fail(ctx, d, nil, fmt.Sprintf("Garner cannot see %s", local),
+			"Check that the media share is mounted and that sabnzbd.paths points at it, then retry the import.")
+		return
+	case errors.Is(err, fs.ErrPermission):
+		s.fail(ctx, d, nil, fmt.Sprintf("Garner may not read %s", local),
+			"Give the account Garner uses read access to SABnzbd's completed folder, then retry the import.")
+		return
+	case err != nil:
+		s.fail(ctx, d, nil, err.Error(), "Check the folder, then retry the import.")
+		return
+	case len(files) == 0:
+		s.reject(ctx, d, nil, "the download holds no video file")
+		return
+	}
+
+	c, err := s.context(ctx, d.EpisodeID)
+	if err != nil {
+		s.fail(ctx, d, nil, err.Error(), "Retry the import; if this persists, refresh the show.")
+		return
+	}
+	if len(files) == 1 {
+		files[0].Episodes = c.releaseEpisodes(d)
+	} else {
+		var matched []store.ImportFile
+		for _, f := range files {
+			name := strings.TrimSuffix(filepath.Base(f.Source), filepath.Ext(f.Source))
+			if m := c.show.Match(release.Parse(name), time.Time{}); m.Kind == match.Episodes {
+				f.Episodes = m.Episodes
+				matched = append(matched, f)
+			} else {
+				s.log.Info("leaving a file it cannot assign", "download", d.ID, "file", f.Source, "reason", m.Reason)
+			}
+		}
+		files = matched
+	}
+	if !slices.ContainsFunc(files, func(f store.ImportFile) bool { return slices.Contains(f.Episodes, d.EpisodeID) }) {
+		s.reject(ctx, d, files, "the download does not hold "+c.show.Label(d.EpisodeID))
+		return
+	}
+
+	var problems []string
+	for i := range files {
+		f := &files[i]
+		if fh, err := os.Open(f.Source); err != nil {
+			s.fail(ctx, d, files, fmt.Sprintf("Garner may not read %s: %v", filepath.Base(f.Source), unwrapPath(err)),
+				"Give the account Garner uses read access to SABnzbd's completed folder, then retry the import.")
+			return
+		} else {
+			fh.Close()
+		}
+		p, err := s.probe.Probe(ctx, f.Source)
+		if errors.Is(err, inspect.ErrUnreadable) {
+			problems = append(problems, fmt.Sprintf("%s: %v", filepath.Base(f.Source), err))
+			continue
+		}
+		if err != nil {
+			s.fail(ctx, d, files, err.Error(), "Check that ffprobe runs (the ffprobe setting in garner.toml), then retry the import.")
+			return
+		}
+		res := inspect.Check(p, c.expect(d, f.Episodes))
+		f.Check, _ = json.Marshal(res)
+		for _, pr := range res.Problems {
+			if len(files) > 1 {
+				pr = filepath.Base(f.Source) + ": " + pr
+			}
+			problems = append(problems, pr)
+		}
+		f.Target, err = c.target(s.opts.Library, f.Episodes, releaseTags(d, p), filepath.Ext(f.Source))
+		if err != nil {
+			s.fail(ctx, d, files, err.Error(), "Set library.tv and library.anime in garner.toml, restart Garner and retry the import.")
+			return
+		}
+	}
+	if len(problems) > 0 {
+		s.reject(ctx, d, files, "file check: "+strings.Join(problems, "; "))
+		return
+	}
+	s.save(ctx, d, store.Import{State: store.ImportMoving, Detail: "the file check passed", Files: files})
+	s.move(ctx, d)
+}
+
+// move renames the files into the library. A rename moves the file on the
+// share without copying it; a rename that would cross filesystems fails
+// instead of copying.
+func (s *Service) move(ctx context.Context, d *store.Download) {
+	files := d.Import.Files
+	for _, f := range files {
+		root := s.rootOf(f.Target)
+		if root == "" {
+			s.fail(ctx, d, files, f.Target+" is outside the library folders", "Check library.tv and library.anime in garner.toml, then retry the import.")
+			return
+		}
+		if st, err := os.Stat(root); err != nil || !st.IsDir() {
+			s.fail(ctx, d, files, fmt.Sprintf("the library folder %s is missing", root),
+				"Mount the media share and check library.tv and library.anime in garner.toml, then retry the import. Garner never creates the library folders themselves.")
+			return
+		}
+		if _, err := os.Stat(f.Source); errors.Is(err, fs.ErrNotExist) {
+			// Moved already, before a restart.
+			if st, err := os.Stat(f.Target); err == nil && st.Size() == f.Size {
+				continue
+			}
+			s.fail(ctx, d, files, f.Source+" is gone and not in the library", "Check SABnzbd's completed folder; download the episode again if the file was deleted.")
+			return
+		}
+		if _, err := os.Lstat(f.Target); err == nil {
+			ours, err := s.store.FileInUse(ctx, f.Target)
+			if err != nil || !ours {
+				s.fail(ctx, d, files, f.Target+" already exists and was not imported by Garner",
+					"Move or delete that file, then retry the import. Garner never overwrites files it did not import.")
+				return
+			}
+		}
+		if err := os.MkdirAll(filepath.Dir(f.Target), 0o775); err != nil {
+			s.fail(ctx, d, files, fmt.Sprintf("cannot create %s: %v", filepath.Dir(f.Target), unwrapPath(err)), permissionFix)
+			return
+		}
+		if err := os.Rename(f.Source, f.Target); err != nil {
+			switch {
+			case errors.Is(err, syscall.EXDEV):
+				s.fail(ctx, d, files, "the download and the library are on different filesystems, so the file would have to be copied",
+					"Keep SABnzbd's completed folder and the library on the same share and dataset, then retry the import. Garner moves files; it does not copy them.")
+			case errors.Is(err, fs.ErrPermission):
+				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s", filepath.Base(f.Source)), permissionFix)
+			default:
+				s.fail(ctx, d, files, fmt.Sprintf("moving %s failed: %v", filepath.Base(f.Source), unwrapPath(err)), "Check both folders, then retry the import.")
+			}
+			return
+		}
+		s.log.Info("imported file", "download", d.ID, "target", f.Target)
+	}
+	s.recordFiles(ctx, d, files)
+
+	if s.jellyfin == nil {
+		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: files})
+		return
+	}
+	var paths []string
+	for _, f := range files {
+		if p, ok := s.opts.JellyfinPaths.Remote(f.Target); ok {
+			paths = append(paths, p)
+		}
+	}
+	if len(paths) < len(files) {
+		s.save(ctx, d, store.Import{State: store.ImportUnverified, Detail: "moved into the library, but jellyfin.paths does not cover the library folder",
+			Recovery: "Add the library folder to jellyfin.paths in garner.toml, restart Garner and retry the import.", Files: files})
+		return
+	}
+	if err := s.jellyfin.Created(ctx, paths); err != nil {
+		s.log.Warn("could not ask Jellyfin to scan; waiting for its own scan", "err", err)
+	}
+	s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailWaiting, Files: files})
+	s.verify(ctx, d)
+}
+
+const permissionFix = "On the NAS, give the account Garner uses write access to SABnzbd's completed folder and the library (UID 1000 in this setup), then retry the import."
+
+// recordFiles remembers each episode's file and removes the version Garner
+// imported before: one version per episode.
+func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) {
+	var old []string
+	for _, f := range files {
+		for _, ep := range f.Episodes {
+			prev, found, err := s.store.EpisodeFile(ctx, ep)
+			if err == nil && found && prev.Path != f.Target {
+				old = append(old, prev.Path)
+			}
+			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size}, d.ID, s.now()); err != nil {
+				s.log.Error("record imported file", "episode", ep, "err", err)
+			}
+		}
+	}
+	for _, p := range old {
+		if used, err := s.store.FileInUse(ctx, p); err != nil || used {
+			continue
+		}
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.log.Warn("could not remove the previous version", "path", p, "err", err)
+			continue
+		}
+		s.log.Info("removed the previous version", "path", p)
+	}
+}
+
+// verify checks that Jellyfin lists each file as the intended episode.
+func (s *Service) verify(ctx context.Context, d *store.Download) {
+	if s.jellyfin == nil {
+		// Jellyfin was configured when the files were moved, but no longer is.
+		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: d.Import.Files})
+		return
+	}
+	c, err := s.context(ctx, d.EpisodeID)
+	if err != nil {
+		s.log.Warn("verify import", "download", d.ID, "err", err)
+		return
+	}
+	files := slices.Clone(d.Import.Files)
+	progress, done, listed := false, true, false
+	for i := range files {
+		f := &files[i]
+		if f.Verified {
+			continue
+		}
+		jfFile, _ := s.opts.JellyfinPaths.Remote(f.Target)
+		jfShow, _ := s.opts.JellyfinPaths.Remote(filepath.Dir(filepath.Dir(f.Target)))
+		ep, found, err := s.jellyfin.EpisodeAt(ctx, jfShow, jfFile)
+		if err != nil {
+			s.log.Warn("Jellyfin lookup failed", "download", d.ID, "err", err)
+			done = false
+			continue
+		}
+		if !found {
+			done = false
+			continue
+		}
+		listed = true
+		if ep.TVDB == "" {
+			// Jellyfin lists a file before its metadata provider has
+			// identified it; wait for the TVDB ID.
+			done = false
+			continue
+		}
+		progress = true
+		want := c.episodes[f.Episodes[0]]
+		f.Jellyfin = fmt.Sprintf("S%02dE%02d %q, TVDB episode %s", ep.Season, ep.Number, ep.Name, cmp.Or(ep.TVDB, "none"))
+		if ep.TVDB != strconv.FormatInt(want.ID, 10) || ep.SeriesTVDB != strconv.FormatInt(c.data.Series.ID, 10) {
+			s.save(ctx, d, store.Import{State: store.ImportUnverified, Files: files,
+				Detail: fmt.Sprintf("Jellyfin identified %s as %s (show TVDB %s), not %s (TVDB episode %d)",
+					filepath.Base(f.Target), f.Jellyfin, cmp.Or(ep.SeriesTVDB, "none"), c.show.Label(want.ID), want.ID),
+				Recovery: "Correct the match in Jellyfin (Identify on the show or episode), then retry the import so Garner checks again."})
+			return
+		}
+		f.Verified = true
+	}
+	switch {
+	case done:
+		labels := make([]string, len(files))
+		for i, f := range files {
+			labels[i] = f.Jellyfin
+		}
+		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "Jellyfin lists it as " + strings.Join(labels, "; "), Files: files})
+	case progress:
+		s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: d.Import.Detail, Files: files})
+	case !listed && d.Import.Detail == detailWaiting && s.now().Sub(d.Import.Updated) > fullScanAfter:
+		if err := s.jellyfin.RefreshLibrary(ctx); err != nil {
+			s.log.Warn("could not ask Jellyfin to scan all libraries", "err", err)
+			return
+		}
+		s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailFullScan, Files: files})
+	case s.now().Sub(d.Import.Updated) > scanTimeout && listed:
+		s.save(ctx, d, store.Import{State: store.ImportUnverified, Files: files,
+			Detail:   fmt.Sprintf("Jellyfin lists the files but has not identified them through TVDB after %s", scanTimeout),
+			Recovery: "Check that the TheTVDB plugin comes first for this library in Jellyfin, refresh the show's metadata, then retry the import."})
+	case s.now().Sub(d.Import.Updated) > scanTimeout:
+		s.save(ctx, d, store.Import{State: store.ImportUnverified, Files: files,
+			Detail:   fmt.Sprintf("the files are in the library, but Jellyfin has not listed them after %s", scanTimeout),
+			Recovery: "Scan the library in Jellyfin, then retry the import so Garner checks again."})
+	}
+}
+
+// save stores an import's progress. Callers in the loop may ignore the
+// error: it is logged, and the step runs again on the next round.
+func (s *Service) save(ctx context.Context, d *store.Download, im store.Import) error {
+	if err := s.store.UpdateImport(ctx, d.ID, im, s.now()); err != nil {
+		s.log.Error("save import", "download", d.ID, "err", err)
+		return err
+	}
+	im.Updated = s.now()
+	d.Import = im
+	s.log.Info("import", "download", d.ID, "state", im.State, "detail", im.Detail)
+	if s.OnChange != nil {
+		s.OnChange(*d)
+	}
+	return nil
+}
+
+func (s *Service) fail(ctx context.Context, d *store.Download, files []store.ImportFile, detail, recovery string) {
+	s.save(ctx, d, store.Import{State: store.ImportFailed, Detail: detail, Recovery: recovery, Files: files})
+}
+
+func (s *Service) reject(ctx context.Context, d *store.Download, files []store.ImportFile, reason string) {
+	s.save(ctx, d, store.Import{State: store.ImportRejected, Detail: reason, Files: files})
+	if s.OnRejected != nil {
+		s.OnRejected(ctx, *d, reason)
+	}
+}
+
+func (s *Service) rootOf(target string) string {
+	for _, root := range []string{s.opts.Library.TV, s.opts.Library.Anime} {
+		if root != "" && strings.HasPrefix(target, filepath.Clean(root)+string(filepath.Separator)) {
+			return filepath.Clean(root)
+		}
+	}
+	return ""
+}
+
+// showContext is a show prepared for one import.
+type showContext struct {
+	data     store.SeriesData
+	show     *match.Show
+	profile  selection.Profile
+	episodes map[int64]store.Episode
+}
+
+func (s *Service) context(ctx context.Context, episodeID int64) (showContext, error) {
+	seriesID, err := s.store.SeriesOfEpisode(ctx, episodeID)
+	if err != nil {
+		return showContext{}, err
+	}
+	data, err := s.store.LoadSeries(ctx, seriesID)
+	if err != nil {
+		return showContext{}, err
+	}
+	profile := selection.ProfileNamed(data.Series.Profile)
+	c := showContext{
+		data: data, profile: profile, episodes: map[int64]store.Episode{},
+		show: match.NewShow(data, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: s.opts.Rules(seriesID)}),
+	}
+	for _, e := range data.Episodes {
+		c.episodes[e.ID] = e
+	}
+	return c, nil
+}
+
+// releaseEpisodes are the episodes the release name claims, or the wanted
+// episode when the name says nothing usable.
+func (c showContext) releaseEpisodes(d *store.Download) []int64 {
+	if m := c.show.Match(release.Parse(d.Title), time.Time{}); m.Kind == match.Episodes {
+		return m.Episodes
+	}
+	return []int64{d.EpisodeID}
+}
+
+// expect states what one file must hold: the tier's language, or any of
+// the profile's for a last resort; for a release chosen by hand, a missing
+// language is only noted.
+func (c showContext) expect(d *store.Download, episodes []int64) inspect.Expect {
+	e := inspect.Expect{Strict: !d.Manual}
+	if f := strings.Fields(d.Tier); len(f) == 2 {
+		if l, ok := release.LanguageNamed(f[0]); ok {
+			e.Languages = []release.Language{l}
+		}
+		if r, err := strconv.Atoi(strings.TrimSuffix(f[1], "p")); err == nil {
+			e.Resolution = release.Resolution(r)
+		}
+	}
+	if len(e.Languages) == 0 {
+		for _, t := range c.profile.Tiers {
+			if !slices.Contains(e.Languages, t.Language) {
+				e.Languages = append(e.Languages, t.Language)
+			}
+		}
+	}
+	for _, id := range episodes {
+		e.Runtime += time.Duration(cmp.Or(c.episodes[id].Runtime, c.data.Series.AverageRuntime)) * time.Minute
+	}
+	return e
+}
+
+// videoFiles lists the video files of a download folder, without samples
+// and extras far smaller than the main file.
+func videoFiles(dir string) ([]store.ImportFile, error) {
+	st, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []store.ImportFile
+	add := func(p string, size int64) {
+		if videoExtensions[strings.ToLower(filepath.Ext(p))] && !sampleName.MatchString(filepath.Base(p)) {
+			files = append(files, store.ImportFile{Source: p, Size: size})
+		}
+	}
+	if !st.IsDir() {
+		add(dir, st.Size())
+	} else if err := filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() {
+			return err
+		}
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		add(p, info.Size())
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	var largest int64
+	for _, f := range files {
+		largest = max(largest, f.Size)
+	}
+	files = slices.DeleteFunc(files, func(f store.ImportFile) bool { return f.Size < largest/10 })
+	slices.SortFunc(files, func(a, b store.ImportFile) int { return strings.Compare(a.Source, b.Source) })
+	return files, nil
+}
+
+func planned(files []store.ImportFile) bool {
+	return len(files) > 0 && !slices.ContainsFunc(files, func(f store.ImportFile) bool { return f.Target == "" })
+}
+
+// unwrapPath drops the path from an *fs.PathError; the message names it.
+func unwrapPath(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	var le *os.LinkError
+	if errors.As(err, &le) {
+		return le.Err
+	}
+	return err
+}

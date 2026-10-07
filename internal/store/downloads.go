@@ -50,6 +50,8 @@ type Download struct {
 	Stages    []Stage   `json:"stages"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+	// Import is the move of the finished files into the library.
+	Import Import `json:"import"`
 }
 
 // Stage is one of SABnzbd's post-processing steps and what happened in it.
@@ -198,6 +200,13 @@ func downloadFromRow(r query.Download) (Download, error) {
 	}
 	if d.Stages == nil {
 		d.Stages = []Stage{}
+	}
+	d.Import = Import{State: r.ImportState, Detail: r.ImportDetail, Recovery: r.ImportRecovery, Files: []ImportFile{}}
+	if r.ImportUpdatedAt > 0 {
+		d.Import.Updated = time.Unix(r.ImportUpdatedAt, 0)
+	}
+	if err := json.Unmarshal([]byte(r.ImportFiles), &d.Import.Files); err != nil {
+		return d, fmt.Errorf("download %d import files: %w", r.ID, err)
 	}
 	return d, nil
 }
