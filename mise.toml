@@ -16,3 +16,7 @@ run = "infisical run --env=dev --silent -- ./bin/garner serve"
 [tasks.generate]
 description = "Regenerate database code with sqlc"
 run = "go generate ./..."
+
+[tasks.image]
+description = "Build the container image localhost/garner:dev with Podman"
+run = 'podman build --build-arg VERSION="dev-$(git rev-parse --short=12 HEAD)" -t localhost/garner:dev .'
