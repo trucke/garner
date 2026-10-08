@@ -28,6 +28,8 @@ Infisical (env `dev`) supplies only external credentials: `TVDB_API_KEY`, `USENE
 
 The development stack shares the Usenet account with production and uses 4 of its connections. Download only from home: some providers watch for simultaneous use from different IP addresses.
 
+The second indexer allows API use from two devices: production Prowlarr and the development stack's Prowlarr. Never set up a third Prowlarr with it.
+
 `mise run build` builds without starting the server. `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
 
 ## Container image
