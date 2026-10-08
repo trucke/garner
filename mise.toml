@@ -7,11 +7,18 @@ description = "Build bin/garner"
 run = "go build -o bin/garner ./cmd/garner"
 
 # Runs the built binary rather than `go run`: `go run` exits with status 1
-# after Ctrl+C even when the program shuts down cleanly.
+# after Ctrl+C even when the program shuts down cleanly. Garner uses the
+# garner.toml that devstack writes; the stack's API keys come from its
+# secrets folder, the TVDB key from Infisical.
 [tasks.dev]
-description = "Run the server with development secrets from Infisical"
+description = "Run Garner against the local dev stack (start it with mise run devstack up)"
 depends = ["build"]
+env = { SABNZBD_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/sabnzbd_api_key", PROWLARR_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/prowlarr_api_key", JELLYFIN_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/jellyfin_api_key" }
 run = "infisical run --env=dev --silent -- ./bin/garner serve"
+
+[tasks.devstack]
+description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"
+run = "infisical run --env=dev --silent -- go run ./tools/devstack"
 
 [tasks.generate]
 description = "Regenerate database code with sqlc"

@@ -6,11 +6,27 @@ Garner is in early development and not ready for use.
 
 ## Run it locally
 
-You need [mise](https://mise.jdx.dev) and the [Infisical CLI](https://infisical.com/docs/cli/overview) with access to the `media-manager` project.
+Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io) and the [Infisical CLI](https://infisical.com/docs/cli/overview) with access to the `media-manager` project.
 
-1. Copy `garner.example.toml` to `garner.toml` and set the service URLs.
-2. Run `mise run dev`. The task builds `bin/garner` and starts the server with development secrets from Infisical.
+1. Run `mise run devstack up`. It creates the stack in `~/garner-dev` and sets it up: SABnzbd with your Usenet server, Prowlarr with the indexers, and Jellyfin with the TVDB plugin and the TV and Anime libraries. It also writes `garner.toml` for the stack. The first run downloads the images; later runs only bring the setup up to date.
+2. Run `mise run dev`. The task builds `bin/garner` and starts Garner against the stack.
 3. In a second terminal, run `./bin/garner token create <name>` to create an API token.
+
+| Service | Address | Sign-in |
+| --- | --- | --- |
+| SABnzbd | <http://127.0.0.1:8080> | None |
+| Prowlarr | <http://127.0.0.1:9696> | Set up on first visit |
+| Jellyfin | <http://127.0.0.1:8096> | User `garner-dev`, password in `~/garner-dev/secrets/jellyfin_admin_password` |
+
+The stack listens on `127.0.0.1` only. Downloads, the library, the settings and Garner's development database all live in `~/garner-dev`.
+
+* `mise run devstack status` shows the containers.
+* `mise run devstack down` stops them and keeps the data.
+* `mise run devstack reset` deletes everything in `~/garner-dev` and builds the stack again. Stop Garner first.
+
+Infisical (env `dev`) supplies only external credentials: `TVDB_API_KEY`, `USENET_USERNAME`, `USENET_PASSWORD`, `INDEXER_API_KEY` and `SECOND_INDEXER_API_KEY`. The stack's own API keys stay in `~/garner-dev/secrets`.
+
+The development stack shares the Usenet account with production and uses 4 of its connections. Download only from home: some providers watch for simultaneous use from different IP addresses.
 
 `mise run build` builds without starting the server. `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
 
