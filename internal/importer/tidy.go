@@ -77,9 +77,12 @@ func (s *Service) jobFolder(d *store.Download) (dir, why string) {
 		return "", "no sabnzbd.paths entry covers " + d.Storage
 	}
 	dir = filepath.Clean(dir)
-	name := filepath.Base(dir)
-	suffix, found := cutPrefixFold(name, d.Title)
-	if !found || suffix != "" && !repeatedJob.MatchString(suffix) {
+	// For a job with a single file, SABnzbd reports the file, which lies in
+	// the job folder.
+	if !isJobName(filepath.Base(dir), d.Title) && isJobName(filepath.Base(filepath.Dir(dir)), d.Title) {
+		dir = filepath.Dir(dir)
+	}
+	if name := filepath.Base(dir); !isJobName(name, d.Title) {
 		return "", fmt.Sprintf("its name %q is not the release's", name)
 	}
 	if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
@@ -112,6 +115,13 @@ func (s *Service) jobFolder(d *store.Download) (dir, why string) {
 		}
 	}
 	return real, ""
+}
+
+// isJobName reports whether a folder name is SABnzbd's job name for the
+// release: its title, or its title with ".1" and so on for a repeat.
+func isJobName(name, title string) bool {
+	suffix, found := cutPrefixFold(name, title)
+	return found && (suffix == "" || repeatedJob.MatchString(suffix))
 }
 
 // realPath resolves symbolic links in the part of p that exists, such as

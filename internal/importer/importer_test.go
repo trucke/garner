@@ -411,13 +411,18 @@ func TestJobFolder(t *testing.T) {
 	}{
 		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Show.S01E01-GRP", true},
 		{"/data/usenet/complete/tv/Show.S01E01-GRP.1", "Show.S01E01-GRP", true},
-		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Other.S01E01-GRP", false}, // named after another release
-		{"/data/usenet/complete/tv", "Show.S01E01-GRP", false},                  // a category folder is not named after the release
-		{"/data/usenet", "usenet", false},                                       // the mapped root itself
-		{"/data/other/Show.S01E01-GRP", "Show.S01E01-GRP", false},               // no mapping covers it
+		{"/data/usenet/complete/tv/Show.S01E01-GRP/Show.S01E01-GRP.mkv", "Show.S01E01-GRP", true}, // a single-file job names the file
+		{"/data/usenet/complete/tv/Show.S01E01-GRP.mkv", "Show.S01E01-GRP", false},                // a file directly in the category folder
+		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Other.S01E01-GRP", false},                   // named after another release
+		{"/data/usenet/complete/tv", "Show.S01E01-GRP", false},                                    // a category folder is not named after the release
+		{"/data/usenet", "usenet", false},                                                         // the mapped root itself
+		{"/data/other/Show.S01E01-GRP", "Show.S01E01-GRP", false},                                 // no mapping covers it
 		{"", "Show.S01E01-GRP", false},
 	} {
 		dir, why := s.jobFolder(&store.Download{Storage: tc.storage, Title: tc.title})
+		if why == "" && !strings.HasPrefix(filepath.Base(dir), tc.title) {
+			t.Errorf("jobFolder(%q) = %q; want the job folder", tc.storage, dir)
+		}
 		if (why == "") != tc.ok {
 			t.Errorf("jobFolder(%q, %q) = %q, %q; want ok=%v", tc.storage, tc.title, dir, why, tc.ok)
 		}
