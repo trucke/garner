@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"errors"
+	"net"
+	"testing"
+)
 
 func TestPathMap(t *testing.T) {
 	m := PathMap{"/data/usenet": "/Volumes/media/usenet", "/data": "/Volumes/media"}
@@ -24,5 +28,31 @@ func TestPathMap(t *testing.T) {
 	}
 	if got, ok := (PathMap{}).Local("/data/x/../y"); !ok || got != "/data/y" {
 		t.Errorf("empty map: %q, %v; want the path itself", got, ok)
+	}
+}
+
+func TestStaysOnHost(t *testing.T) {
+	own := func() ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+			&net.IPNet{IP: net.ParseIP("192.168.1.20"), Mask: net.CIDRMask(24, 32)},
+			&net.IPNet{IP: net.ParseIP("fd00::32"), Mask: net.CIDRMask(64, 128)},
+		}, nil
+	}
+	for host, want := range map[string]bool{
+		"localhost":    true,
+		"127.0.0.1":    true,
+		"192.168.1.20": true, // this machine's LAN address
+		"fd00::32":     true,
+		"192.168.1.30": false, // another machine on the same network
+		"server.lan":   false, // names are not resolved
+	} {
+		if got := staysOnHost(host, own); got != want {
+			t.Errorf("staysOnHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+	failing := func() ([]net.Addr, error) { return nil, errors.New("no interfaces") }
+	if staysOnHost("192.168.1.20", failing) {
+		t.Error("an unknown interface list must count as remote")
 	}
 }

@@ -256,12 +256,36 @@ func (c *Config) Warnings() []string {
 	for _, name := range []string{"prowlarr", "sabnzbd", "jellyfin"} {
 		svc := c.services()[name]
 		u, err := url.Parse(svc.URL)
-		if err != nil || u.Scheme != "http" || IsLoopback(u.Hostname()) {
+		if err != nil || u.Scheme != "http" || staysOnHost(u.Hostname(), net.InterfaceAddrs) {
 			continue
 		}
 		out = append(out, fmt.Sprintf("%s is reached over plain HTTP at %s; its API key crosses the network unencrypted", name, u.Host))
 	}
 	return out
+}
+
+// staysOnHost reports whether traffic to host stays on this machine: a
+// loopback name or address, or an address of one of its own network
+// interfaces, as when Garner shares the host's network with the service.
+// Other host names are not resolved, so they count as remote.
+func staysOnHost(host string, own func() ([]net.Addr, error)) bool {
+	if IsLoopback(host) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	addrs, err := own()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsLoopback reports whether host is a loopback name or address.
