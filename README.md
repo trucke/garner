@@ -6,7 +6,7 @@ Garner is in early development and not ready for use.
 
 ## Run it locally
 
-Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io) and the [Infisical CLI](https://infisical.com/docs/cli/overview) with access to the `media-manager` project.
+Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io) and the [Infisical CLI](https://infisical.com/docs/cli/overview) with access to the `garner` project.
 
 1. Run `mise run devstack up`. It creates the stack in `~/garner-dev` and sets it up: SABnzbd with your Usenet server, Prowlarr with the indexers, and Jellyfin with the TVDB plugin and the TV and Anime libraries. It also writes `garner.toml` for the stack. The first run downloads the images; later runs only bring the setup up to date.
 2. Run `mise run dev`. The task builds `bin/garner` and starts Garner against the stack.

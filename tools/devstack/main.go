@@ -98,7 +98,7 @@ func readCredentials() (credentials, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return c, fmt.Errorf("set %s in Infisical (project media-manager, env dev) and run through `mise run devstack`", strings.Join(missing, ", "))
+		return c, fmt.Errorf("set %s in Infisical (project garner, env dev) and run through `mise run devstack`", strings.Join(missing, ", "))
 	}
 	return c, nil
 }
