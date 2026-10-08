@@ -26,7 +26,7 @@ The stack listens on `127.0.0.1` only. Downloads, the library, the settings and 
 
 Infisical (env `dev`) supplies only external credentials: `TVDB_API_KEY`, `USENET_USERNAME`, `USENET_PASSWORD`, `INDEXER_API_KEY` and `SECOND_INDEXER_API_KEY`. The stack's own API keys stay in `~/garner-dev/secrets`.
 
-The development stack shares the Usenet account with production and uses 4 of its connections. Download only from home: some providers watch for simultaneous use from different IP addresses.
+The development stack downloads from its own Usenet account with 8 connections. Use an account that nothing else uses: some providers block accounts that are used from several places at once.
 
 The second indexer allows API use from two devices: production Prowlarr and the development stack's Prowlarr. Never set up a third Prowlarr with it.
 

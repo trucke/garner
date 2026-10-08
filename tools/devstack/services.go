@@ -13,12 +13,20 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
 
-// setupSABnzbd points SABnzbd at the media folder, the Usenet server and the
-// tv category Garner uses. It returns SABnzbd's API key.
+// The stack downloads only from its own Usenet account, which nothing else uses.
+const (
+	usenetServer      = "news.example.net"
+	usenetConnections = 8
+)
+
+// setupSABnzbd points SABnzbd at the media folder, the Usenet server and
+// the tv category Garner uses, and removes any other server. It returns
+// SABnzbd's API key.
 func setupSABnzbd(c credentials) (string, error) {
 	var key string
 	if err := waitFor("SABnzbd writing its settings", 2*time.Minute, func() bool {
@@ -52,9 +60,9 @@ func setupSABnzbd(c credentials) (string, error) {
 		{"mode": {"set_config"}, "section": {"misc"}, "keyword": {"download_dir"}, "value": {"/data/usenet/incomplete"}},
 		{"mode": {"set_config"}, "section": {"misc"}, "keyword": {"complete_dir"}, "value": {"/data/usenet/complete"}},
 		{"mode": {"set_config"}, "section": {"categories"}, "name": {"tv"}, "dir": {"tv"}},
-		// Few connections: other machines use the same account.
-		{"mode": {"set_config"}, "section": {"servers"}, "name": {"news.example.net"}, "displayname": {"Usenet"},
-			"host": {"news.example.net"}, "port": {"563"}, "ssl": {"1"}, "ssl_verify": {"3"}, "connections": {"4"}, "enable": {"1"},
+		{"mode": {"set_config"}, "section": {"servers"}, "name": {usenetServer}, "displayname": {"Usenet"},
+			"host": {usenetServer}, "port": {"563"}, "ssl": {"1"}, "ssl_verify": {"3"},
+			"connections": {strconv.Itoa(usenetConnections)}, "enable": {"1"},
 			"username": {c.usenetUser}, "password": {c.usenetPassword}},
 	}
 	// SABnzbd accepts settings while it is still starting and may then lose
@@ -65,42 +73,54 @@ func setupSABnzbd(c credentials) (string, error) {
 				return false
 			}
 		}
+		cfg, err := readSABConfig(sab, key)
+		if err != nil {
+			return false
+		}
+		for _, s := range cfg.Servers {
+			if s.Name != usenetServer && call(url.Values{"mode": {"del_config"}, "section": {"servers"}, "keyword": {s.Name}}) != nil {
+				return false
+			}
+		}
 		time.Sleep(2 * time.Second)
 		return sabSettled(sab, key)
 	})
 	return key, err
 }
 
+type sabConfig struct {
+	Misc struct {
+		DownloadDir string `json:"download_dir"`
+		CompleteDir string `json:"complete_dir"`
+	} `json:"misc"`
+	Categories []struct{ Name, Dir string } `json:"categories"`
+	Servers    []sabServer                  `json:"servers"`
+}
+
+type sabServer struct {
+	Name        string `json:"name"`
+	Connections int    `json:"connections"`
+	Enable      int    `json:"enable"`
+}
+
+func readSABConfig(sab *client, key string) (sabConfig, error) {
+	var res struct {
+		Config sabConfig `json:"config"`
+	}
+	err := sab.form("/api", url.Values{"mode": {"get_config"}, "output": {"json"}, "apikey": {key}}, &res)
+	return res.Config, err
+}
+
 // sabSettled reports whether SABnzbd's settings are the ones setupSABnzbd
 // applies.
 func sabSettled(sab *client, key string) bool {
-	var res struct {
-		Config struct {
-			Misc struct {
-				DownloadDir string `json:"download_dir"`
-				CompleteDir string `json:"complete_dir"`
-			} `json:"misc"`
-			Categories []struct{ Name, Dir string } `json:"categories"`
-			Servers    []struct {
-				Name        string `json:"name"`
-				Connections int    `json:"connections"`
-				Enable      int    `json:"enable"`
-			} `json:"servers"`
-		} `json:"config"`
-	}
-	if sab.form("/api", url.Values{"mode": {"get_config"}, "output": {"json"}, "apikey": {key}}, &res) != nil {
+	c, err := readSABConfig(sab, key)
+	if err != nil {
 		return false
 	}
-	c := res.Config
 	return c.Misc.DownloadDir == "/data/usenet/incomplete" && c.Misc.CompleteDir == "/data/usenet/complete" &&
 		slices.ContainsFunc(c.Categories, func(x struct{ Name, Dir string }) bool { return x.Name == "tv" && x.Dir == "tv" }) &&
-		slices.ContainsFunc(c.Servers, func(x struct {
-			Name        string `json:"name"`
-			Connections int    `json:"connections"`
-			Enable      int    `json:"enable"`
-		}) bool {
-			return x.Name == "news.example.net" && x.Connections == 4 && x.Enable == 1
-		})
+		slices.Equal(c.Servers, []sabServer{{Name: usenetServer, Connections: usenetConnections, Enable: 1}})
 }
 
 // setupProwlarr adds the indexers as Newznab entries with redirect on, so
