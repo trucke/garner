@@ -122,9 +122,11 @@ func setupProwlarr(c credentials) (string, error) {
 		return "", err
 	}
 	type indexer struct{ name, baseURL, apiKey string }
-	wanted := []indexer{{"Indexer One", "https://indexer-one.example.com", c.firstIndexer}}
-	if useSecondIndexer {
-		wanted = append(wanted, indexer{"Indexer Two", "https://indexer-two.example.com", c.secondIndexer})
+	// Indexer Two allows API use from two devices: production Prowlarr
+	// and this stack. Never run a third Prowlarr with it.
+	wanted := []indexer{
+		{"Indexer One", "https://indexer-one.example.com", c.firstIndexer},
+		{"Indexer Two", "https://indexer-two.example.com", c.secondIndexer},
 	}
 	var existing []map[string]any
 	if err := p.json(http.MethodGet, "/api/v1/indexer", nil, &existing); err != nil {
