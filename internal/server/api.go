@@ -50,7 +50,8 @@ func (s *Server) auth(next http.Handler) http.Handler {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": s.version})
+	tok := r.Context().Value(tokenKey{}).(store.Token)
+	writeJSON(w, http.StatusOK, map[string]string{"version": s.version, "token": tok.Name})
 }
 
 // handleEvents streams server-sent events. Clients reload state after

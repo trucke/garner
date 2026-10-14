@@ -15,10 +15,13 @@ import (
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	charmlog "charm.land/log/v2"
+	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/connect"
 	"github.com/trucke/garner/internal/server"
+	"github.com/trucke/garner/internal/tui"
 )
 
 // Execute runs the command line and returns the exit code.
@@ -62,11 +65,24 @@ type app struct {
 func newRoot(version string) *cobra.Command {
 	a := &app{version: version}
 	root := &cobra.Command{
-		Use:           "garner",
-		Short:         "Self-hosted TV and anime manager",
+		Use:   "garner",
+		Short: "Self-hosted TV and anime manager",
+		Long: "Self-hosted TV and anime manager.\n\nRun garner without a command to open the terminal interface. It keeps\n" +
+			"its connection in $GARNER_CONNECTION or ~/.config/garner/connection.",
 		Version:       version,
+		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
+				return errors.New("garner opens a terminal interface; run it in a terminal, or see garner --help")
+			}
+			path, err := connect.DefaultPath()
+			if err != nil {
+				return err
+			}
+			return tui.Run(cmd.Context(), path)
+		},
 	}
 	root.PersistentFlags().StringVarP(&a.configPath, "config", "c", "", "config file (default $GARNER_CONFIG or "+config.DefaultPath+")")
 	root.AddCommand(a.serveCmd(), a.tokenCmd(), a.backupCmd(), a.statusCmd())

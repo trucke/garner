@@ -16,6 +16,12 @@ depends = ["build"]
 env = { SABNZBD_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/sabnzbd_api_key", PROWLARR_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/prowlarr_api_key", JELLYFIN_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/jellyfin_api_key" }
 run = "infisical run --env=dev --silent -- ./bin/garner serve"
 
+[tasks.tui]
+description = "Build bin/garner and open the terminal interface"
+depends = ["build"]
+raw = true
+run = "./bin/garner"
+
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"
 run = "infisical run --env=dev --silent -- go run ./tools/devstack"

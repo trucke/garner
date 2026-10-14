@@ -201,6 +201,14 @@ func pinOf(spki []byte) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
+// PinMismatchError means the server presented a different key than the pinned
+// one. Server is the pin of the key it presented.
+type PinMismatchError struct{ Server string }
+
+func (e *PinMismatchError) Error() string {
+	return "server key does not match the pinned fingerprint"
+}
+
 // ClientConfig verifies a server by pin. It still checks that the certificate
 // covers host (from the server URL) and is within its validity dates; only
 // the certificate authority is replaced by the pin. host is passed in because
@@ -219,8 +227,8 @@ func ClientConfig(pin, host string) *tls.Config {
 			if err != nil {
 				return err
 			}
-			if pinOf(pub) != pin {
-				return errors.New("server key does not match the pinned fingerprint")
+			if got := pinOf(pub); got != pin {
+				return &PinMismatchError{Server: got}
 			}
 			now := time.Now()
 			if now.Before(leaf.NotBefore) || now.After(leaf.NotAfter) {
