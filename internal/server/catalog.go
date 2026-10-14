@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/store"
@@ -49,14 +50,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, results)
 }
 
+// handleListSeries lists the shows with a summary of each: episode counts,
+// size, next air date and the most urgent episode.
 func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListSeries(r.Context())
+	list, err := s.store.Library(r.Context(), time.Now())
 	if err != nil {
 		s.internalError(w, "list series", err)
 		return
 	}
 	if list == nil {
-		list = []store.Series{}
+		list = []store.Show{}
 	}
 	writeJSON(w, http.StatusOK, list)
 }
