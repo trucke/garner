@@ -1,0 +1,34 @@
+# Air rebuilds and restarts Garner when its code changes. Run it through
+# `mise run dev`, which supplies the dev stack's secrets.
+root = "."
+tmp_dir = "bin/air"
+
+[build]
+cmd = "go build -o ./bin/garner ./cmd/garner"
+entrypoint = ["./bin/garner", "serve"]
+# SQL migrations and corrections.toml are embedded, so they need a rebuild
+# too. After changing a query, run `mise run generate`; the generated Go
+# code then triggers the rebuild.
+include_dir = ["cmd", "internal"]
+include_ext = ["go", "sql", "toml"]
+include_file = ["garner.toml"]
+exclude_regex = ["_test\\.go$"]
+# Edits often touch several files at once; build once for all of them.
+delay = 500
+# A failed build stops the server, so the TUI shows it offline instead of
+# quietly running the previous code.
+stop_on_error = true
+# Garner closes the database on an interrupt and takes up to 5 seconds;
+# the next build may only start once the lock is free.
+send_interrupt = true
+kill_delay = "10s"
+
+[log]
+# Garner's own log lines carry the time.
+time = false
+
+[screen]
+clear_on_rebuild = false
+
+[misc]
+clean_on_exit = true

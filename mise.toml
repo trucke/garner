@@ -1,20 +1,20 @@
 [tools]
 go = "1.27.1"
 sqlc = "1.31.1"
+air = "1.67.4"
 
 [tasks.build]
 description = "Build bin/garner"
 run = "go build -o bin/garner ./cmd/garner"
 
-# Runs the built binary rather than `go run`: `go run` exits with status 1
-# after Ctrl+C even when the program shuts down cleanly. Garner uses the
-# garner.toml that devstack writes; the stack's API keys come from its
-# secrets folder, the TVDB key from Infisical.
+# Air (.air.toml) builds bin/garner, runs it and rebuilds and restarts it
+# on every code change. Garner uses the garner.toml that devstack writes;
+# the stack's API keys come from its secrets folder, the TVDB key from
+# Infisical.
 [tasks.dev]
-description = "Run Garner against the local dev stack (start it with mise run devstack up)"
-depends = ["build"]
+description = "Run Garner against the local dev stack and rebuild it on code changes (start the stack with mise run devstack up)"
 env = { SABNZBD_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/sabnzbd_api_key", PROWLARR_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/prowlarr_api_key", JELLYFIN_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/jellyfin_api_key" }
-run = "infisical run --env=dev --silent -- ./bin/garner serve"
+run = "infisical run --env=dev --silent -- air"
 
 [tasks.tui]
 description = "Build bin/garner and open the terminal interface"
