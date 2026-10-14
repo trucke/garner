@@ -50,6 +50,29 @@ func ProfileNamed(name string) Profile {
 	return TV
 }
 
+// Describe states the profile's tiers in order, such as "German 1080p →
+// German 720p · dual audio preferred".
+func (p Profile) Describe() string {
+	tiers := make([]string, len(p.Tiers))
+	for i, t := range p.Tiers {
+		tiers[i] = t.String()
+	}
+	s := strings.Join(tiers, " → ")
+	if p.PreferDual {
+		s += " · dual audio preferred"
+	}
+	return s
+}
+
+// OriginalNote says what a show's original language means for its
+// releases' audio.
+func OriginalNote(original release.Language) string {
+	if original == "de" {
+		return "Releases that name no language are assumed German and checked after download."
+	}
+	return "German audio only comes from a dub."
+}
+
 // Wanted names the profile's audio languages, such as "German or English".
 func (p Profile) Wanted() string {
 	var names []string

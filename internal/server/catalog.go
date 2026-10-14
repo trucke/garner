@@ -20,6 +20,7 @@ type SeriesDetail struct {
 
 func (s *Server) catalogRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/search", s.auth(s.needCatalog(s.handleSearch)))
+	mux.Handle("GET /api/v1/search/{tvdb_id}", s.auth(s.needCatalog(s.handlePreview)))
 	mux.Handle("GET /api/v1/series", s.auth(s.needCatalog(s.handleListSeries)))
 	mux.Handle("POST /api/v1/series", s.auth(s.needCatalog(s.handleAddSeries)))
 	mux.Handle("GET /api/v1/series/{id}", s.auth(s.needCatalog(s.handleGetSeries)))
@@ -48,6 +49,24 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+// handlePreview describes a show on TVDB before it is added.
+func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("tvdb_id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "expected a TVDB series ID")
+		return
+	}
+	p, err := s.catalog.Preview(r.Context(), id)
+	switch {
+	case errors.Is(err, catalog.ErrUnknownSeries):
+		writeError(w, http.StatusNotFound, err.Error())
+	case err != nil:
+		s.upstreamError(w, "describe a TVDB series", err)
+	default:
+		writeJSON(w, http.StatusOK, p)
+	}
 }
 
 // handleListSeries lists the shows with a summary of each: episode counts,

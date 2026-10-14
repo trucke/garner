@@ -96,6 +96,7 @@ func New(st *store.Store, tvdb *TVDB, xem *XEM, log *slog.Logger) (*Catalog, err
 // SearchResult is a show TVDB found.
 type SearchResult struct {
 	ID       int64  `json:"id"`
+	Slug     string `json:"slug,omitempty"`
 	Name     string `json:"name"`
 	NameEng  string `json:"name_eng,omitempty"`
 	NameDeu  string `json:"name_deu,omitempty"`
@@ -104,31 +105,6 @@ type SearchResult struct {
 	Language string `json:"language,omitempty"`
 	Network  string `json:"network,omitempty"`
 	Added    bool   `json:"added"`
-}
-
-// Search finds shows on TVDB and marks those already in the catalogue.
-func (c *Catalog) Search(ctx context.Context, q string) ([]SearchResult, error) {
-	results, err := c.tvdb.search(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SearchResult, 0, len(results))
-	for _, r := range results {
-		id, err := strconv.ParseInt(r.TVDBID, 10, 64)
-		if err != nil {
-			continue
-		}
-		year, _ := strconv.Atoi(r.Year)
-		added, err := c.store.HasSeries(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, SearchResult{
-			ID: id, Name: r.Name, NameEng: r.Translations["eng"], NameDeu: r.Translations["deu"], Year: year,
-			Status: r.Status, Language: r.PrimaryLanguage, Network: r.Network, Added: added,
-		})
-	}
-	return out, nil
 }
 
 // Add loads a show into the catalogue.
@@ -184,14 +160,9 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 	d := store.SeriesData{Series: store.Series{
 		ID: s.ID, Slug: s.Slug, Name: s.Name, OriginalLanguage: s.OriginalLanguage, OriginalCountry: s.OriginalCountry,
 		Status: s.Status.Name, Year: year, FirstAired: s.FirstAired, AverageRuntime: s.AverageRuntime, TVDBUpdated: s.LastUpdated,
-		Profile: "tv",
 	}}
 	// The profile is only stored for new shows; a changed one stays.
-	for _, g := range s.Genres {
-		if g.Name == "Anime" {
-			d.Series.Profile = "anime"
-		}
-	}
+	d.Series.Profile = profileFor(s)
 	for _, a := range s.Aliases {
 		d.Titles = append(d.Titles, store.Title{Title: a.Name, Language: a.Language, Source: "tvdb"})
 	}

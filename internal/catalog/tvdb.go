@@ -44,7 +44,8 @@ type envelope struct {
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data"`
 	Links   struct {
-		Next *string `json:"next"`
+		Next       *string `json:"next"`
+		TotalItems int     `json:"total_items"`
 	} `json:"links"`
 }
 
@@ -133,6 +134,7 @@ func (c *TVDB) get(ctx context.Context, path string, out any) (*envelope, error)
 // tvdbSearchResult is one series from /search.
 type tvdbSearchResult struct {
 	TVDBID          string            `json:"tvdb_id"`
+	Slug            string            `json:"slug"`
 	Name            string            `json:"name"`
 	Year            string            `json:"year"`
 	Status          string            `json:"status"`
@@ -141,11 +143,26 @@ type tvdbSearchResult struct {
 	Translations    map[string]string `json:"translations"`
 }
 
-func (c *TVDB) search(ctx context.Context, query string) ([]tvdbSearchResult, error) {
-	q := url.Values{"query": {query}, "type": {"series"}, "limit": {"20"}}
+// search returns up to searchLimit series and how many TVDB found in all.
+func (c *TVDB) search(ctx context.Context, query string) ([]tvdbSearchResult, int, error) {
+	q := url.Values{"query": {query}, "type": {"series"}, "limit": {strconv.Itoa(searchLimit)}}
 	var out []tvdbSearchResult
-	_, err := c.get(ctx, "/search?"+q.Encode(), &out)
-	return out, err
+	env, err := c.get(ctx, "/search?"+q.Encode(), &out)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, max(env.Links.TotalItems, len(out)), nil
+}
+
+const searchLimit = 50
+
+// seriesIDBySlug resolves a slug from a thetvdb.com link.
+func (c *TVDB) seriesIDBySlug(ctx context.Context, slug string) (int64, error) {
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	_, err := c.get(ctx, "/series/slug/"+url.PathEscape(slug), &out)
+	return out.ID, err
 }
 
 type tvdbSeasonType struct {
@@ -163,10 +180,15 @@ type tvdbSeries struct {
 	OriginalCountry  string `json:"originalCountry"`
 	Year             string `json:"year"`
 	FirstAired       string `json:"firstAired"`
+	LastAired        string `json:"lastAired"`
+	Overview         string `json:"overview"`
 	AverageRuntime   int    `json:"averageRuntime"`
-	DefaultSeason    int    `json:"defaultSeasonType"`
-	LastUpdated      string `json:"lastUpdated"`
-	Status           struct {
+	OriginalNetwork  *struct {
+		Name string `json:"name"`
+	} `json:"originalNetwork"`
+	DefaultSeason int    `json:"defaultSeasonType"`
+	LastUpdated   string `json:"lastUpdated"`
+	Status        struct {
 		Name string `json:"name"`
 	} `json:"status"`
 	Aliases []struct {
@@ -186,8 +208,9 @@ func (c *TVDB) series(ctx context.Context, id int64) (tvdbSeries, error) {
 }
 
 type tvdbTranslation struct {
-	Name    string   `json:"name"`
-	Aliases []string `json:"aliases"`
+	Name     string   `json:"name"`
+	Overview string   `json:"overview"`
+	Aliases  []string `json:"aliases"`
 }
 
 // translation returns the series' name in lang, or found=false.
