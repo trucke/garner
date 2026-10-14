@@ -6,19 +6,34 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strconv"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/trucke/garner/internal/client"
 	"github.com/trucke/garner/internal/connect"
+	"github.com/trucke/garner/internal/store"
 )
 
-// screen is one full screen. The app owns the terminal size and the keys
-// that work everywhere; screens own the rest.
+// screen is one full screen. The app owns the terminal size, the session
+// and the keys that work everywhere; screens own the rest.
 type screen interface {
 	init() tea.Cmd
 	update(tea.Msg) (screen, tea.Cmd)
 	view(width, height int) string
+}
+
+// session is one connection to the server, shared by all screens.
+type session struct {
+	client  *client.Client
+	status  client.Status
+	events  <-chan client.Event
+	stop    context.CancelFunc
+	offline bool
+	// shows is the library as last loaded, for the activity on every screen.
+	shows []store.Show
 }
 
 // connectedMsg opens the library once Connect has stored a working code.
@@ -31,10 +46,20 @@ type connectedMsg struct {
 // token was revoked.
 type disconnectedMsg struct{ reason string }
 
+// eventMsg carries one event from a session's stream.
+type eventMsg struct {
+	client.Event
+	from <-chan client.Event
+}
+
+var errRevoked = "The stored token no longer works: " + client.ErrUnauthorized.Error() + "."
+
 type app struct {
 	path          string
 	width, height int
+	sess          *session
 	screen        screen
+	stored        *client.Client // a stored connection to open on start
 }
 
 // Run opens the interface. path is where the connection code is stored.
@@ -51,17 +76,46 @@ func Run(ctx context.Context, path string) error {
 		if err != nil {
 			a.screen = newConnect(path, "The stored connection can't be used: "+clean(err.Error()))
 		} else {
-			a.screen = newLibrary(cl, client.Status{})
+			a.stored = cl
 		}
 	}
 	_, err = tea.NewProgram(a, tea.WithContext(ctx)).Run()
+	if a.sess != nil {
+		a.sess.stop()
+	}
 	if ctx.Err() != nil || errors.Is(err, tea.ErrInterrupted) {
 		return nil
 	}
 	return err
 }
 
-func (a *app) Init() tea.Cmd { return a.screen.init() }
+func (a *app) Init() tea.Cmd {
+	if a.stored != nil {
+		return a.open(a.stored, client.Status{})
+	}
+	return a.screen.init()
+}
+
+// open starts a session and shows the library.
+func (a *app) open(cl *client.Client, st client.Status) tea.Cmd {
+	if a.sess != nil {
+		a.sess.stop()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.sess = &session{client: cl, status: st, stop: cancel, events: cl.Watch(ctx)}
+	a.screen = newLibrary(a.sess)
+	return tea.Batch(a.screen.init(), waitEvent(a.sess.events))
+}
+
+func waitEvent(ch <-chan client.Event) tea.Cmd {
+	return func() tea.Msg {
+		e, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return eventMsg{e, ch}
+	}
+}
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -73,11 +127,29 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 	case connectedMsg:
-		a.screen = newLibrary(msg.client, msg.status)
-		return a, a.screen.init()
+		return a, a.open(msg.client, msg.status)
 	case disconnectedMsg:
+		if a.sess != nil {
+			a.sess.stop()
+			a.sess = nil
+		}
 		a.screen = newConnect(a.path, msg.reason)
 		return a, a.screen.init()
+	case eventMsg:
+		if a.sess == nil || msg.from != a.sess.events {
+			return a, nil // from a closed session
+		}
+		switch msg.Type {
+		case client.EventUnauthorized:
+			return a, func() tea.Msg { return disconnectedMsg{errRevoked} }
+		case client.EventConnected:
+			a.sess.offline = false
+		case client.EventDisconnected:
+			a.sess.offline = true
+		}
+		var cmd tea.Cmd
+		a.screen, cmd = a.screen.update(msg)
+		return a, tea.Batch(cmd, waitEvent(a.sess.events))
 	}
 	var cmd tea.Cmd
 	a.screen, cmd = a.screen.update(msg)
@@ -92,4 +164,44 @@ func (a *app) View() tea.View {
 		v.Content = a.screen.view(a.width, a.height)
 	}
 	return v
+}
+
+// header renders the first row: the breadcrumb on the left, the activity
+// or the offline notice on the right.
+func header(width int, sess *session, crumbs ...string) string {
+	left := " " + breadcrumb(crumbs...)
+	right := activity(sess)
+	gap := width - 1 - lipgloss.Width(left) - lipgloss.Width(right)
+	if right == "" || gap < 2 {
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+// activity sums the library's running work: only non-zero counts, nothing
+// when all are zero.
+func activity(sess *session) string {
+	if sess == nil {
+		return ""
+	}
+	if sess.offline {
+		return sRed.Render("✗ offline · reconnecting")
+	}
+	counts := map[string]int{}
+	for _, sh := range sess.shows {
+		for state, n := range sh.Counts {
+			counts[state] += n
+		}
+	}
+	var parts []string
+	add := func(n int, glyph, label string, style lipgloss.Style) {
+		if n > 0 {
+			parts = append(parts, style.Render(glyph+" "+strconv.Itoa(n)+" "+label))
+		}
+	}
+	add(counts[store.EpisodeDownloading]+counts[store.EpisodeProcessing], "◐", "downloading", sAmber)
+	add(counts[store.EpisodeImporting], "●", "confirming", sAmber)
+	add(counts[store.EpisodeAttention], "▲", "needs you", sAmber)
+	add(counts[store.EpisodeFailed], "✗", "failed", sRed)
+	return strings.Join(parts, sMuted.Render(" · "))
 }

@@ -103,8 +103,8 @@ func breadcrumb(parts ...string) string {
 	return strings.Join(out, sSubtle.Render(" › "))
 }
 
-// screenLayout places body at the top and bottom on the last row, cutting
-// the body when the terminal is too short.
+// screenLayout places body at the top and bottom on the last row, one cell
+// in, cutting the body when the terminal is too short.
 func screenLayout(width, height int, body, bottom string) string {
 	lines := strings.Split(body, "\n")
 	if len(lines) > height-1 {
@@ -116,7 +116,7 @@ func screenLayout(width, height int, body, bottom string) string {
 	for i, l := range lines {
 		lines[i] = ansi.Truncate(l, width, "")
 	}
-	return strings.Join(append(lines, ansi.Truncate(bottom, width, "")), "\n")
+	return strings.Join(append(lines, ansi.Truncate(" "+bottom, width, "")), "\n")
 }
 
 // indent shifts every line of s right by n cells.
