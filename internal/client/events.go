@@ -9,15 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/trucke/garner/internal/store"
 )
-
-// Library lists the shows with a summary of each.
-func (c *Client) Library(ctx context.Context) ([]store.Show, error) {
-	var shows []store.Show
-	return shows, c.do(ctx, http.MethodGet, "/api/v1/series", nil, &shows)
-}
 
 // Event is something the server reported, or a change of the stream itself.
 type Event struct {

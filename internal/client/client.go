@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"syscall"
 	"time"
 
@@ -213,7 +214,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base.JoinPath(path).String(), r)
+	// JoinPath would escape the query's "?" into the path.
+	p, query, _ := strings.Cut(path, "?")
+	u := c.base.JoinPath(p)
+	u.RawQuery = query
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), r)
 	if err != nil {
 		return err
 	}

@@ -42,7 +42,9 @@ const (
 	sortKeys
 )
 
+// libraryMsg answers one library's reload; from tells the app which.
 type libraryMsg struct {
+	from  *libraryScreen
 	shows []store.Show
 	err   error
 }
@@ -68,9 +70,24 @@ func newLibrary(sess *session) *libraryScreen {
 	return &libraryScreen{sess: sess, page: 20}
 }
 
-// init waits for the event stream: it reports connected, and that loads
-// the library.
-func (s *libraryScreen) init() tea.Cmd { return nil }
+// init loads the library when returning from another screen. On the
+// first start it waits for the event stream: connecting loads it.
+func (s *libraryScreen) init() tea.Cmd {
+	if !s.loaded {
+		return nil
+	}
+	return s.reload()
+}
+
+// showAdded selects a show just added, wherever the filter and tabs were.
+func (s *libraryScreen) showAdded(msg addedMsg) tea.Cmd {
+	s.cat, s.filter, s.typing, s.selected = catAll, "", false, msg.id
+	s.message = gDone + " " + sNormal.Render("Added "+msg.name)
+	if msg.already {
+		s.message = gDone + " " + sNormal.Render(msg.name+" is already in the library")
+	}
+	return s.reload()
+}
 
 func (s *libraryScreen) reload() tea.Cmd {
 	if s.loading {
@@ -83,7 +100,7 @@ func (s *libraryScreen) reload() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		shows, err := cl.Library(ctx)
-		return libraryMsg{shows, err}
+		return libraryMsg{s, shows, err}
 	}
 }
 
@@ -205,7 +222,8 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 			s.message = sMuted.Render("The show screen is not available yet.")
 		}
 	case "a":
-		s.message = sMuted.Render("Adding a show is not available yet.")
+		next := newAddShow(s.sess, s)
+		return func() tea.Msg { return switchMsg{next} }
 	case "A":
 		s.message = sMuted.Render("Activity is not available yet.")
 	case "?":

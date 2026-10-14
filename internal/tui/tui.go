@@ -46,6 +46,9 @@ type connectedMsg struct {
 // token was revoked.
 type disconnectedMsg struct{ reason string }
 
+// switchMsg opens another screen.
+type switchMsg struct{ screen screen }
+
 // eventMsg carries one event from a session's stream.
 type eventMsg struct {
 	client.Event
@@ -59,6 +62,7 @@ type app struct {
 	width, height int
 	sess          *session
 	screen        screen
+	library       *libraryScreen
 	stored        *client.Client // a stored connection to open on start
 }
 
@@ -103,7 +107,8 @@ func (a *app) open(cl *client.Client, st client.Status) tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.sess = &session{client: cl, status: st, stop: cancel, events: cl.Watch(ctx)}
-	a.screen = newLibrary(a.sess)
+	a.library = newLibrary(a.sess)
+	a.screen = a.library
 	return tea.Batch(a.screen.init(), waitEvent(a.sess.events))
 }
 
@@ -128,11 +133,21 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case connectedMsg:
 		return a, a.open(msg.client, msg.status)
+	case switchMsg:
+		a.screen = msg.screen
+		return a, a.screen.init()
+	case addedMsg:
+		if a.library == nil {
+			return a, nil
+		}
+		a.screen = a.library
+		return a, a.library.showAdded(msg)
 	case disconnectedMsg:
 		if a.sess != nil {
 			a.sess.stop()
 			a.sess = nil
 		}
+		a.library = nil
 		a.screen = newConnect(a.path, msg.reason)
 		return a, a.screen.init()
 	case eventMsg:
@@ -147,9 +162,21 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case client.EventDisconnected:
 			a.sess.offline = true
 		}
-		var cmd tea.Cmd
+		var cmd, libCmd tea.Cmd
 		a.screen, cmd = a.screen.update(msg)
-		return a, tea.Batch(cmd, waitEvent(a.sess.events))
+		if a.library != nil && a.screen != screen(a.library) {
+			// The library keeps the activity on every screen current.
+			_, libCmd = a.library.update(msg)
+		}
+		return a, tea.Batch(cmd, libCmd, waitEvent(a.sess.events))
+	case libraryMsg:
+		// The library may have been loading when another screen opened,
+		// or belong to a session that has ended.
+		if a.library == nil || msg.from != a.library {
+			return a, nil
+		}
+		_, cmd := a.library.update(msg)
+		return a, cmd
 	}
 	var cmd tea.Cmd
 	a.screen, cmd = a.screen.update(msg)

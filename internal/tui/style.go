@@ -18,6 +18,7 @@ var (
 	cMint   = lipgloss.Color("#75B39C")
 	cAmber  = lipgloss.Color("#F79926")
 	cRed    = lipgloss.Color("#F54D47")
+	cIris   = lipgloss.Color("#9BA0E3")
 )
 
 var (
