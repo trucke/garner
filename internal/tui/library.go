@@ -62,7 +62,7 @@ type libraryScreen struct {
 	selected int64
 	offset   int
 	page     int // table rows on screen, from the last view
-	message  string
+	flash    flash
 	lastKey  string
 }
 
@@ -79,12 +79,23 @@ func (s *libraryScreen) init() tea.Cmd {
 	return s.reload()
 }
 
-// showAdded selects a show just added, wherever the filter and tabs were.
+// showAdded selects a show just added, wherever the filter and tabs were,
+// for when the user returns from the show.
 func (s *libraryScreen) showAdded(msg addedMsg) tea.Cmd {
 	s.cat, s.filter, s.typing, s.selected = catAll, "", false, msg.id
-	s.message = gDone + " " + sNormal.Render("Added "+msg.name)
-	if msg.already {
-		s.message = gDone + " " + sNormal.Render(msg.name+" is already in the library")
+	return s.reload()
+}
+
+// showDeleted reports a deleted show.
+func (s *libraryScreen) showDeleted(msg deletedMsg) tea.Cmd {
+	text := "Deleted " + msg.name
+	if msg.deleted.Files > 0 {
+		text += fmt.Sprintf(" and %d files, %s", msg.deleted.Files, size(msg.deleted.Bytes))
+	}
+	s.flash.info(gDone + " " + sNormal.Render(text))
+	if n := len(msg.deleted.Problems); n > 0 {
+		s.flash.stay(gFailed + " " + sNormal.Render(text+fmt.Sprintf("; %d files could not be removed: ", n)) +
+			sRed.Render(clean(msg.deleted.Problems[0])))
 	}
 	return s.reload()
 }
@@ -113,7 +124,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
 		case msg.err != nil:
 			if !s.sess.offline {
-				s.message = sRed.Render(clean(msg.err.Error()))
+				s.flash.stay(sRed.Render(clean(msg.err.Error())))
 			}
 		default:
 			s.sess.shows, s.loaded = msg.shows, true
@@ -124,7 +135,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	case eventMsg:
 		switch msg.Type {
-		case client.EventConnected, "series.updated", "search.finished":
+		case client.EventConnected, "series.updated", "series.deleted", "search.finished":
 			return s, s.reload()
 		case "download.updated":
 			var d store.Download
@@ -160,7 +171,7 @@ func (s *libraryScreen) patch(d store.Download) bool {
 
 func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	key := msg.String()
-	s.message = ""
+	s.flash.clear()
 	if s.typing {
 		switch key {
 		case "enter":
@@ -218,16 +229,19 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		s.filter = ""
 	case "enter":
-		if rows, _ := s.rows(); len(rows) > 0 {
-			s.message = sMuted.Render("The show screen is not available yet.")
+		rows, _ := s.rows()
+		i := slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected })
+		if i >= 0 {
+			next := newShow(s.sess, s, rows[i].ID, showName(rows[i]), "")
+			return func() tea.Msg { return switchMsg{next} }
 		}
 	case "a":
 		next := newAddShow(s.sess, s)
 		return func() tea.Msg { return switchMsg{next} }
 	case "A":
-		s.message = sMuted.Render("Activity is not available yet.")
+		s.flash.info(sMuted.Render("Activity is not available yet."))
 	case "?":
-		s.message = sMuted.Render("Help is not available yet.")
+		s.flash.info(sMuted.Render("Help is not available yet."))
 	case "q":
 		return tea.Quit
 	}
@@ -406,8 +420,8 @@ func (s *libraryScreen) bottom(width, shown, total int) string {
 		left := sNormal.Render("/"+s.filter) + lipgloss.NewStyle().Background(cFg).Render(" ")
 		right := sMuted.Render(fmt.Sprintf("%d of %d", shown, total))
 		return left + strings.Repeat(" ", max(1, width-2-lipgloss.Width(left)-lipgloss.Width(right))) + right
-	case s.message != "":
-		return s.message
+	case s.flash.text != "":
+		return s.flash.text
 	case s.loaded && len(s.sess.shows) == 0:
 		return keyBar("a", "add show", "?", "help", "q", "quit")
 	case s.filter != "":
@@ -543,16 +557,38 @@ func showGlyph(sh store.Show) (string, lipgloss.Style) {
 	return "○", sSubtle
 }
 
-// stateParts describes what the show's most urgent episode is doing. The
-// sentences come from the server verbatim.
+// stateParts describes what the show's most urgent episode is doing.
 func stateParts(sh store.Show, now time.Time) []part {
 	f := sh.Focus
 	if f == nil {
 		return nil
 	}
-	sep := part{" · ", sMuted}
-	d := f.Download
 	switch f.State {
+	case store.EpisodeWaiting, store.EpisodeNotSearched:
+		if n := sh.Counts[store.EpisodeNotSearched]; n > 0 {
+			return []part{{strconv.Itoa(n) + " not searched", sMuted}}
+		}
+		if n := sh.Counts[store.EpisodeWaiting]; n > 1 {
+			next := ""
+			if f.NextRetry != nil {
+				next = " · next search " + when(*f.NextRetry, now)
+			}
+			return []part{{strconv.Itoa(n) + " waiting" + next, sMuted}}
+		}
+	case store.EpisodeUpcoming:
+		if sh.NextAired != "" {
+			return []part{{"next episode " + day(sh.NextAired, now), sMuted}}
+		}
+		return nil
+	}
+	return statusParts(f.State, f.Download, f.Summary, f.NextRetry, 0, now)
+}
+
+// statusParts describes what an episode is doing, from its state, latest
+// download and latest search. The sentences come from the server verbatim.
+func statusParts(state string, d *store.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
+	sep := part{" · ", sMuted}
+	switch state {
 	case store.EpisodeFailed:
 		if d == nil {
 			return []part{{"failed", sRed}}
@@ -571,18 +607,23 @@ func stateParts(sh store.Show, now time.Time) []part {
 		}
 		return []part{{"needs you", sAmber}, sep, {detail, sMuted}}
 	case store.EpisodeDownloading:
+		var parts []part
 		if d == nil || d.Progress <= 0 {
-			return []part{{"queued", sMuted}}
+			parts = []part{{"queued", sMuted}}
+		} else {
+			const bar = 16
+			done := min(bar, int(d.Progress/100*bar+0.5))
+			parts = []part{
+				{strings.Repeat("█", done), sAmber},
+				{strings.Repeat("█", bar-done), sBorder},
+				{fmt.Sprintf("  %3.0f%%", d.Progress), sNormal},
+			}
+			if left := timeLeft(d.TimeLeft); left != "" {
+				parts = append(parts, part{"   " + left + " left", sMuted})
+			}
 		}
-		const bar = 16
-		done := min(bar, int(d.Progress/100*bar+0.5))
-		parts := []part{
-			{strings.Repeat("█", done), sAmber},
-			{strings.Repeat("█", bar-done), sBorder},
-			{fmt.Sprintf("  %3.0f%%", d.Progress), sNormal},
-		}
-		if left := timeLeft(d.TimeLeft); left != "" {
-			parts = append(parts, part{"   " + left + " left", sMuted})
+		if attempts > 1 {
+			parts = append(parts, part{" · attempt " + strconv.Itoa(attempts), sMuted})
 		}
 		return parts
 	case store.EpisodeProcessing:
@@ -603,22 +644,14 @@ func stateParts(sh store.Show, now time.Time) []part {
 			return []part{{"waiting for Jellyfin since " + when(d.Import.Updated, now), sMuted}}
 		}
 		return []part{{"checking the file", sMuted}}
-	case store.EpisodeWaiting, store.EpisodeNotSearched:
-		if n := sh.Counts[store.EpisodeNotSearched]; n > 0 {
-			return []part{{strconv.Itoa(n) + " not searched", sMuted}}
-		}
+	case store.EpisodeWaiting:
 		next := ""
-		if f.NextRetry != nil {
-			next = " · " + when(*f.NextRetry, now)
+		if nextRetry != nil {
+			next = " · " + when(*nextRetry, now)
 		}
-		if n := sh.Counts[store.EpisodeWaiting]; n > 1 {
-			return []part{{strconv.Itoa(n) + " waiting" + strings.Replace(next, " · ", " · next search ", 1), sMuted}}
-		}
-		return []part{{clean(f.Summary) + next, sMuted}}
-	case store.EpisodeUpcoming:
-		if sh.NextAired != "" {
-			return []part{{"next episode " + day(sh.NextAired, now), sMuted}}
-		}
+		return []part{{clean(summary) + next, sMuted}}
+	case store.EpisodeNotSearched:
+		return []part{{"not searched", sMuted}}
 	}
 	return nil
 }
@@ -692,3 +725,5 @@ func when(t, now time.Time) string {
 	}
 	return day(t.Format(time.DateOnly), now) + " " + t.Format("15:04")
 }
+
+func (s *libraryScreen) flashed() *flash { return &s.flash }

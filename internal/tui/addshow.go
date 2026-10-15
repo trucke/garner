@@ -313,7 +313,7 @@ type previewScreen struct {
 	preview *catalog.Preview
 	err     error
 	adding  bool
-	message string
+	flash   flash
 }
 
 type (
@@ -370,16 +370,16 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case errors.Is(msg.err, client.ErrUnauthorized):
 			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
 		}
-		s.message = gFailed + " " + sRed.Render("Could not add the show: "+clean(msg.err.Error()))
+		s.flash.stay(gFailed + " " + sRed.Render("Could not add the show: "+clean(msg.err.Error())))
 	case openedMsg:
 		if msg.err != nil {
-			s.message = gFailed + " " + sRed.Render("Could not open the browser: "+clean(msg.err.Error()))
+			s.flash.stay(gFailed + " " + sRed.Render("Could not open the browser: "+clean(msg.err.Error())))
 		}
 	case tea.KeyPressMsg:
 		if s.adding {
 			return s, nil
 		}
-		s.message = ""
+		s.flash.clear()
 		switch msg.String() {
 		case "esc":
 			return s.back, nil
@@ -451,37 +451,18 @@ func (s *previewScreen) view(width, height int) string {
 	case p == nil:
 		b.WriteString("   " + sMuted.Render("Loading "+s.name()+" from TVDB…"))
 	default:
-		title := sBold.Render(s.name())
-		if p.NameDeu != "" && p.NameDeu != cmp.Or(p.NameEng, p.Name) {
-			title += "  " + sMuted.Render(clean(p.NameDeu))
-		}
-		b.WriteString("   " + title + "\n")
-		if p.NameEng != "" && p.Name != p.NameEng && p.Name != p.NameDeu {
-			// TVDB's main name is the original title, such as Japanese.
-			b.WriteString("   " + sMuted.Render(clean(p.Name)) + "\n")
-		}
-		facts := []string{"TV"}
+		typ := "TV"
 		if p.Type == "anime" {
-			facts[0] = "Anime"
+			typ = "Anime"
 		}
-		if p.Year > 0 {
-			facts = append(facts, strconv.Itoa(p.Year))
-		}
-		if st := status(p.Status); st != "" {
-			facts = append(facts, st)
-		}
-		b.WriteString("   " + sMuted.Render(strings.Join(facts, " · ")) + "\n")
+		b.WriteString(titleBlock(p.Name, p.NameEng, p.NameDeu, typ, p.Year, p.Status))
 		if p.Added {
 			b.WriteString("   " + gDone + " " + sNormal.Render("In the library") + "\n")
 		}
-		b.WriteString("\n" + indent(frame("tvdb", tvdbLines(p, w-6), w), 3) + "\n")
+		b.WriteString("\n" + indent(frame("tvdb", tvdbLines(previewFacts(p), w-6), w), 3) + "\n")
 		b.WriteString("\n" + indent(frame("garner", garnerLines(p, w-6), w), 3) + "\n")
 		if p.Overview != "" {
-			label := "overview"
-			if p.OverviewLanguage != "" && p.OverviewLanguage != "eng" {
-				label += " (" + langCode(p.OverviewLanguage) + ")"
-			}
-			b.WriteString("\n" + indent(frame(label, []string{sNormal.Render(clean(p.Overview))}, w), 3) + "\n")
+			b.WriteString("\n" + indent(frame(overviewLabel(p.OverviewLanguage), []string{sNormal.Render(clean(p.Overview))}, w), 3) + "\n")
 		}
 	}
 	return screenLayout(width, height, b.String(), s.bottom())
@@ -505,31 +486,45 @@ func field(label, value string, style lipgloss.Style, inner int) []string {
 	return lines
 }
 
+// tvdbFacts are what the TVDB frame shows, from a preview before adding or
+// from the stored show.
+type tvdbFacts struct {
+	network, status, firstAired, lastAired string
+	episodes, seasons, runtime             int
+	orders                                 []string
+	url                                    string
+}
+
+func previewFacts(p *catalog.Preview) tvdbFacts {
+	return tvdbFacts{network: p.Network, status: p.Status, firstAired: p.FirstAired, lastAired: p.LastAired,
+		episodes: p.Episodes, seasons: p.Seasons, runtime: p.Runtime, orders: p.Orders, url: p.URL}
+}
+
 // tvdbLines are TVDB's facts about the show.
-func tvdbLines(p *catalog.Preview, inner int) []string {
+func tvdbLines(f tvdbFacts, inner int) []string {
 	var lines []string
-	lines = append(lines, field("Network", clean(p.Network), sNormal, inner)...)
-	lines = append(lines, field("Aired", aired(p), sNormal, inner)...)
-	if p.Episodes > 0 {
-		e := fmt.Sprintf("%d in %d season", p.Episodes, p.Seasons)
-		if p.Seasons != 1 {
+	lines = append(lines, field("Network", clean(f.network), sNormal, inner)...)
+	lines = append(lines, field("Aired", aired(f), sNormal, inner)...)
+	if f.episodes > 0 {
+		e := fmt.Sprintf("%d in %d season", f.episodes, f.seasons)
+		if f.seasons != 1 {
 			e += "s"
 		}
-		if p.Runtime > 0 {
-			e += fmt.Sprintf(" · %d min", p.Runtime)
+		if f.runtime > 0 {
+			e += fmt.Sprintf(" · %d min", f.runtime)
 		}
 		lines = append(lines, field("Episodes", e, sNormal, inner)...)
 	}
-	if len(p.Orders) > 1 {
+	if len(f.orders) > 1 {
 		// Releases may follow an order other than the aired one.
-		orders := make([]string, len(p.Orders))
-		for i, o := range p.Orders {
+		orders := make([]string, len(f.orders))
+		for i, o := range f.orders {
 			orders[i] = clean(o)
 		}
 		lines = append(lines, field("Orders", strings.Join(orders, ", "), sNormal, inner)...)
 	}
-	if strings.HasPrefix(p.URL, "https://thetvdb.com/") {
-		lines = append(lines, field("Link", p.URL, lipgloss.NewStyle().Foreground(cIris).Underline(true).Hyperlink(p.URL), inner)...)
+	if strings.HasPrefix(f.url, "https://thetvdb.com/") {
+		lines = append(lines, field("Link", f.url, lipgloss.NewStyle().Foreground(cIris).Underline(true).Hyperlink(f.url), inner)...)
 	}
 	return lines
 }
@@ -546,7 +541,7 @@ func garnerLines(p *catalog.Preview, inner int) []string {
 
 // aired is "8 Apr 2003 to 8 Jul 2003" for an ended show, "since 29 Sep
 // 2023" for one still running.
-func aired(p *catalog.Preview) string {
+func aired(f tvdbFacts) string {
 	date := func(s string) string {
 		t, err := time.Parse(time.DateOnly, s)
 		if err != nil {
@@ -555,22 +550,22 @@ func aired(p *catalog.Preview) string {
 		return t.Format("2 Jan 2006")
 	}
 	switch {
-	case p.FirstAired == "":
+	case f.firstAired == "":
 		return ""
-	case p.Status == "Ended" && p.LastAired != "":
-		return date(p.FirstAired) + " to " + date(p.LastAired)
-	case p.Status == "Continuing":
-		return "since " + date(p.FirstAired)
+	case f.status == "Ended" && f.lastAired != "":
+		return date(f.firstAired) + " to " + date(f.lastAired)
+	case f.status == "Continuing":
+		return "since " + date(f.firstAired)
 	}
-	return "from " + date(p.FirstAired)
+	return "from " + date(f.firstAired)
 }
 
 func (s *previewScreen) bottom() string {
 	switch {
 	case s.adding:
 		return sMuted.Render("Adding " + s.name() + " and loading its episodes from TVDB…")
-	case s.message != "":
-		return s.message
+	case s.flash.text != "":
+		return s.flash.text
 	case s.err != nil:
 		return keyBar("r", "try again", "esc", "back")
 	case s.preview == nil:
@@ -580,3 +575,5 @@ func (s *previewScreen) bottom() string {
 	}
 	return keyBar("a", "add to library", "o", "open on TVDB", "esc", "back")
 }
+
+func (s *previewScreen) flashed() *flash { return &s.flash }

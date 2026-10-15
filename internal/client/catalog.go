@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/trucke/garner/internal/catalog"
+	"github.com/trucke/garner/internal/server"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -32,4 +33,44 @@ func (c *Client) Preview(ctx context.Context, id int64) (catalog.Preview, error)
 // episodes from TVDB and TheXEM does, usually a few seconds.
 func (c *Client) Add(ctx context.Context, id int64) error {
 	return c.do(ctx, http.MethodPost, "/api/v1/series", map[string]int64{"tvdb_id": id}, nil)
+}
+
+// Series returns a show with what Garner has of each episode.
+func (c *Client) Series(ctx context.Context, id int64) (server.SeriesDetail, error) {
+	var d server.SeriesDetail
+	return d, c.do(ctx, http.MethodGet, "/api/v1/series/"+strconv.FormatInt(id, 10), nil, &d)
+}
+
+// SetProfile changes a show's profile. Its earlier search results are
+// cleared.
+func (c *Client) SetProfile(ctx context.Context, id int64, profile string) (server.SeriesDetail, error) {
+	var d server.SeriesDetail
+	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"profile": profile}, &d)
+}
+
+// Refresh reloads a show from TVDB and TheXEM.
+func (c *Client) Refresh(ctx context.Context, id int64) (server.SeriesDetail, error) {
+	var d server.SeriesDetail
+	return d, c.do(ctx, http.MethodPost, "/api/v1/series/"+strconv.FormatInt(id, 10)+"/refresh", nil, &d)
+}
+
+// Deleted is what deleting a show removed.
+type Deleted struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+	// Problems lists files that could not be removed; the show is gone
+	// regardless.
+	Problems []string `json:"problems"`
+}
+
+// DeleteSeries removes a show, cancels its downloads and deletes its files.
+func (c *Client) DeleteSeries(ctx context.Context, id int64) (Deleted, error) {
+	var d Deleted
+	return d, c.do(ctx, http.MethodDelete, "/api/v1/series/"+strconv.FormatInt(id, 10), nil, &d)
+}
+
+// SearchEpisode searches the indexers for an episode.
+func (c *Client) SearchEpisode(ctx context.Context, episodeID int64) (store.Search, error) {
+	var s store.Search
+	return s, c.do(ctx, http.MethodPost, "/api/v1/episodes/"+strconv.FormatInt(episodeID, 10)+"/search", nil, &s)
 }

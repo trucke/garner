@@ -2,8 +2,10 @@ package tui
 
 import (
 	"strings"
+	"time"
 	"unicode"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -130,4 +132,90 @@ func indent(s string, n int) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+var cFaded = lipgloss.Color("#3A3A44")
+
+// overlay draws a rounded box with lines centred over base, everything
+// behind it in the faded colour, as the overlay boards show.
+func overlay(base string, lines []string, width, height int) string {
+	boxWidth := 0
+	for _, l := range lines {
+		boxWidth = max(boxWidth, lipgloss.Width(l))
+	}
+	boxWidth += 6 // borders and two cells of padding
+	box := []string{sBorder.Render("╭" + strings.Repeat("─", boxWidth-2) + "╮")}
+	for _, l := range lines {
+		box = append(box, sBorder.Render("│")+"  "+pad(l, boxWidth-6)+"  "+sBorder.Render("│"))
+	}
+	box = append(box, sBorder.Render("╰"+strings.Repeat("─", boxWidth-2)+"╯"))
+
+	faded := lipgloss.NewStyle().Foreground(cFaded)
+	rows := strings.Split(base, "\n")
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	top := max(0, (height-len(box))/2-2)
+	left := max(0, (width-boxWidth)/2)
+	for y, row := range rows {
+		plain := ansi.Strip(row)
+		i := y - top
+		if i < 0 || i >= len(box) {
+			rows[y] = faded.Render(plain)
+			continue
+		}
+		plain += strings.Repeat(" ", max(0, left-ansi.StringWidth(plain)))
+		rows[y] = faded.Render(ansi.Truncate(plain, left, "")) + box[i] + faded.Render(ansi.TruncateLeft(plain, left+boxWidth, ""))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// choice renders one option of an overlay, highlighted when chosen.
+func choice(label string, chosen bool) string {
+	if chosen {
+		return sNormal.Background(cSelect).Render(" " + label + " ")
+	}
+	return sNormal.Render(" " + label + " ")
+}
+
+// flashFor is how long a success or info message stays in the bottom line.
+const flashFor = 3 * time.Second
+
+// flash is a message in the bottom line. Success and info messages go after
+// flashFor; errors and work in progress stay until replaced or the next
+// key, so there is time to read them.
+type flash struct {
+	text   string
+	sticky bool
+	seq    int // counts messages, so a timer clears only its own
+	timed  int // the message a timer runs for
+}
+
+func (f *flash) info(text string) { f.text, f.sticky = text, false; f.seq++ }
+func (f *flash) stay(text string) { f.text, f.sticky = text, true; f.seq++ }
+
+func (f *flash) clear() {
+	if f.text != "" {
+		f.text = ""
+		f.seq++
+	}
+}
+
+// flasher is a screen with a bottom-line message.
+type flasher interface{ flashed() *flash }
+
+// flashDoneMsg ends a message's time, if it is still showing.
+type flashDoneMsg struct {
+	f   *flash
+	seq int
+}
+
+// expire starts the timer for a new message that should go by itself.
+func (f *flash) expire() tea.Cmd {
+	if f.text == "" || f.sticky || f.timed == f.seq {
+		return nil
+	}
+	f.timed = f.seq
+	seq := f.seq
+	return tea.Tick(flashFor, func(time.Time) tea.Msg { return flashDoneMsg{f, seq} })
 }

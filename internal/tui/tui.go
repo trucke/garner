@@ -34,6 +34,8 @@ type session struct {
 	offline bool
 	// shows is the library as last loaded, for the activity on every screen.
 	shows []store.Show
+	// folded remembers each show's folded seasons.
+	folded map[int64]map[int]bool
 }
 
 // connectedMsg opens the library once Connect has stored a working code.
@@ -123,6 +125,21 @@ func waitEvent(ch <-chan client.Event) tea.Cmd {
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if done, ok := msg.(flashDoneMsg); ok {
+		if done.f.seq == done.seq {
+			done.f.clear()
+		}
+		return a, nil
+	}
+	m, cmd := a.update(msg)
+	// A new success or info message on the current screen goes by itself.
+	if f, ok := a.screen.(flasher); ok {
+		cmd = tea.Batch(cmd, f.flashed().expire())
+	}
+	return m, cmd
+}
+
+func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
@@ -140,8 +157,18 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.library == nil {
 			return a, nil
 		}
+		message := gDone + " " + sNormal.Render("Added "+msg.name)
+		if msg.already {
+			message = gDone + " " + sNormal.Render(msg.name+" is already in the library")
+		}
+		a.screen = newShow(a.sess, a.library, msg.id, msg.name, message)
+		return a, tea.Batch(a.screen.init(), a.library.showAdded(msg))
+	case deletedMsg:
+		if a.library == nil {
+			return a, nil
+		}
 		a.screen = a.library
-		return a, a.library.showAdded(msg)
+		return a, a.library.showDeleted(msg)
 	case disconnectedMsg:
 		if a.sess != nil {
 			a.sess.stop()
