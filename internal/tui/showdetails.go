@@ -94,8 +94,8 @@ func (s *showDetailsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// The show screen keeps the episode states current.
 		_, cmd := s.show.update(msg)
 		return s, cmd
-	case seriesMsg, searchedMsg:
-		// Answers the show screen asked for, such as a search started there.
+	case seriesMsg:
+		// Answers the show screen asked for.
 		_, cmd := s.show.update(msg)
 		return s, cmd
 	case openedMsg:

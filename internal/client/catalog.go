@@ -74,3 +74,15 @@ func (c *Client) SearchEpisode(ctx context.Context, episodeID int64) (store.Sear
 	var s store.Search
 	return s, c.do(ctx, http.MethodPost, "/api/v1/episodes/"+strconv.FormatInt(episodeID, 10)+"/search", nil, &s)
 }
+
+// EpisodeSearch returns an episode's latest stored search.
+func (c *Client) EpisodeSearch(ctx context.Context, episodeID int64) (store.Search, error) {
+	var s store.Search
+	return s, c.do(ctx, http.MethodGet, "/api/v1/episodes/"+strconv.FormatInt(episodeID, 10)+"/search", nil, &s)
+}
+
+// DownloadCandidate downloads a release of a search, whatever its verdict.
+func (c *Client) DownloadCandidate(ctx context.Context, candidateID int64) (store.Download, error) {
+	var d store.Download
+	return d, c.do(ctx, http.MethodPost, "/api/v1/candidates/"+strconv.FormatInt(candidateID, 10)+"/download", nil, &d)
+}

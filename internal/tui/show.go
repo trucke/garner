@@ -29,11 +29,6 @@ type (
 		detail server.SeriesDetail
 		err    error
 	}
-	searchedMsg struct {
-		label  string
-		search store.Search
-		err    error
-	}
 )
 
 type showScreen struct {
@@ -118,20 +113,6 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.dirty = false
 			return s, s.reload()
 		}
-	case searchedMsg:
-		switch {
-		case errors.Is(msg.err, client.ErrUnauthorized):
-			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
-		case msg.err != nil:
-			s.flash.stay(gFailed + " " + sRed.Render(msg.label+": "+clean(msg.err.Error())))
-		default:
-			glyph := gWaiting
-			if msg.search.Outcome == "found" {
-				glyph = gDone
-			}
-			s.flash.info(glyph + " " + sNormal.Render(msg.label+": "+clean(msg.search.Summary)))
-		}
-		return s, s.reload()
 	case eventMsg:
 		switch msg.Type {
 		case client.EventConnected, "search.finished", "series.updated":
@@ -328,15 +309,8 @@ func (s *showScreen) key(key string) tea.Cmd {
 			s.flash.info(sMuted.Render("Choose an episode to search for."))
 			return nil
 		}
-		label := episodeLabel(e)
-		s.flash.stay(sMuted.Render("Searching for " + label + " on the indexers…"))
-		cl, id := s.sess.client, e.episode.ID
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
-			sr, err := cl.SearchEpisode(ctx, id)
-			return searchedMsg{label, sr, err}
-		}
+		next := newReleases(s.sess, s, e, true)
+		return func() tea.Msg { return switchMsg{next} }
 	case "S":
 		s.flash.info(sMuted.Render("Searching every missing episode is not available yet."))
 	case "i":
