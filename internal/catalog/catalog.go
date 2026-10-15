@@ -116,12 +116,19 @@ func (c *Catalog) Add(ctx context.Context, id int64) error {
 	if exists {
 		return fmt.Errorf("series %d: %w", id, ErrExists)
 	}
-	return c.Refresh(ctx, id)
+	return c.load(ctx, id, true)
 }
 
 // Refresh reloads a show from TVDB and TheXEM. If TheXEM fails, the show's
 // previous scene data is kept and the failure logged.
 func (c *Catalog) Refresh(ctx context.Context, id int64) error {
+	return c.load(ctx, id, false)
+}
+
+// load fetches a show and saves it. Unless adding, the show must still be
+// in the catalogue when saving: a show deleted while it loaded stays
+// deleted, and load returns store.ErrNotFound.
+func (c *Catalog) load(ctx context.Context, id int64, adding bool) error {
 	start := time.Now()
 	d, err := c.fetchTVDB(ctx, id)
 	if err != nil {
@@ -137,7 +144,11 @@ func (c *Catalog) Refresh(ctx context.Context, id int64) error {
 	}
 	d.Scene = scene
 	d.Titles = append(d.Titles, c.applyCorrections(id, titles)...)
-	if err := c.store.SaveSeries(ctx, d, gotScene, time.Now()); err != nil {
+	save := c.store.UpdateSeries
+	if adding {
+		save = c.store.SaveSeries
+	}
+	if err := save(ctx, d, gotScene, time.Now()); err != nil {
 		return err
 	}
 	c.log.Info("loaded series", "id", id, "name", displayName(d.Series), "episodes", len(d.Episodes),

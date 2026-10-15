@@ -93,6 +93,17 @@ type SeriesData struct {
 // SaveSeries stores a show, replacing its orders, titles, numbering and
 // episodes. When scene is false, existing scene numbering is kept.
 func (s *Store) SaveSeries(ctx context.Context, d SeriesData, scene bool, now time.Time) error {
+	return s.saveSeries(ctx, d, scene, now, true)
+}
+
+// UpdateSeries is SaveSeries for a show that must still be in the
+// catalogue: it returns ErrNotFound instead of adding a show deleted while
+// its update was loading.
+func (s *Store) UpdateSeries(ctx context.Context, d SeriesData, scene bool, now time.Time) error {
+	return s.saveSeries(ctx, d, scene, now, false)
+}
+
+func (s *Store) saveSeries(ctx context.Context, d SeriesData, scene bool, now time.Time, create bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -100,6 +111,15 @@ func (s *Store) SaveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 	defer tx.Rollback()
 	q := s.q.WithTx(tx)
 	sr := d.Series
+	if !create {
+		n, err := q.SeriesExists(ctx, sr.ID)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("series %d: %w", sr.ID, ErrNotFound)
+		}
+	}
 	if err := q.UpsertSeries(ctx, query.UpsertSeriesParams{
 		ID: sr.ID, Slug: sr.Slug, Name: sr.Name, NameEng: nullString(sr.NameEng), NameDeu: nullString(sr.NameDeu),
 		OriginalLanguage: sr.OriginalLanguage, OriginalCountry: sr.OriginalCountry, Status: sr.Status,

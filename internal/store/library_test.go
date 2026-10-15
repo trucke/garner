@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -103,5 +104,31 @@ func TestLibrary(t *testing.T) {
 	}
 	if c := three.Counts; c[EpisodeWaiting] != 1 || c[EpisodeImporting] != 1 {
 		t.Errorf("show 3 counts: %v", c)
+	}
+}
+
+// TestUpdateSeriesKeepsDeleted checks that a refresh that finishes after
+// its show was deleted does not bring the show back.
+func TestUpdateSeriesKeepsDeleted(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := SeriesData{Series: Series{ID: 7, Slug: "s", Name: "Show", OriginalLanguage: "eng", OriginalCountry: "usa",
+		Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv"}}
+	now := time.Now()
+	if err := st.SaveSeries(ctx, d, false, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSeries(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateSeries(ctx, d, false, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update of a deleted show: %v, want ErrNotFound", err)
+	}
+	if ok, _ := st.HasSeries(ctx, 7); ok {
+		t.Fatal("the update brought the deleted show back")
 	}
 }

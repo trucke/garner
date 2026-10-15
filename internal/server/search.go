@@ -93,7 +93,7 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `expected {"profile": "tv"} or {"profile": "anime"}`)
 		return
 	}
-	err := s.store.SetProfile(r.Context(), id, req.Profile)
+	err := s.store.ChangeProfile(r.Context(), id, req.Profile)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
 		return

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/sabnzbd"
@@ -62,7 +63,7 @@ func TestSearchAndDownload(t *testing.T) {
 	}))
 	defer indexer.Close()
 
-	s := &Server{store: st, log: log, events: newBroker(), tlsMode: TLSOff}
+	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
 	s.search = search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, log)
 	api := httptest.NewServer(s.Routes())
 	defer api.Close()

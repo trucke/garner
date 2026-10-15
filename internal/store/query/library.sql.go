@@ -10,16 +10,89 @@ import (
 	"database/sql"
 )
 
+const clearSeriesSearches = `-- name: ClearSeriesSearches :exec
+DELETE FROM searches
+WHERE episode_id IN (SELECT id FROM episodes WHERE series_id = ?)
+    AND episode_id NOT IN (SELECT episode_id FROM downloads WHERE state IN ('submitting', 'queued', 'downloading', 'processing'))
+`
+
+// Search results of a show's episodes, except those a running download
+// may still need to pick a replacement.
+func (q *Queries) ClearSeriesSearches(ctx context.Context, seriesID int64) error {
+	_, err := q.db.ExecContext(ctx, clearSeriesSearches, seriesID)
+	return err
+}
+
+const countDownloadsByEpisode = `-- name: CountDownloadsByEpisode :many
+SELECT episode_id, count(*) AS attempts FROM downloads GROUP BY episode_id
+`
+
+type CountDownloadsByEpisodeRow struct {
+	EpisodeID int64
+	Attempts  int64
+}
+
+func (q *Queries) CountDownloadsByEpisode(ctx context.Context) ([]CountDownloadsByEpisodeRow, error) {
+	rows, err := q.db.QueryContext(ctx, countDownloadsByEpisode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountDownloadsByEpisodeRow
+	for rows.Next() {
+		var i CountDownloadsByEpisodeRow
+		if err := rows.Scan(&i.EpisodeID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countSeriesBusyDownloads = `-- name: CountSeriesBusyDownloads :one
+SELECT count(*) FROM downloads d JOIN episodes e ON e.id = d.episode_id
+WHERE e.series_id = ?
+    AND (d.state IN ('submitting', 'queued', 'downloading', 'processing') OR d.import_state IN ('pending', 'moving'))
+`
+
+func (q *Queries) CountSeriesBusyDownloads(ctx context.Context, seriesID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSeriesBusyDownloads, seriesID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteSeries = `-- name: DeleteSeries :execrows
+DELETE FROM series WHERE id = ?
+`
+
+func (q *Queries) DeleteSeries(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSeries, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listEpisodeFiles = `-- name: ListEpisodeFiles :many
-SELECT episode_id, path, size FROM episode_files
+SELECT f.episode_id, f.path, f.size, coalesce(d.tier, '') AS tier
+FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id
 `
 
 type ListEpisodeFilesRow struct {
 	EpisodeID int64
 	Path      string
 	Size      int64
+	Tier      string
 }
 
+// Every imported file with the tier of the release it came from.
 func (q *Queries) ListEpisodeFiles(ctx context.Context) ([]ListEpisodeFilesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEpisodeFiles)
 	if err != nil {
@@ -29,7 +102,12 @@ func (q *Queries) ListEpisodeFiles(ctx context.Context) ([]ListEpisodeFilesRow, 
 	var items []ListEpisodeFilesRow
 	for rows.Next() {
 		var i ListEpisodeFilesRow
-		if err := rows.Scan(&i.EpisodeID, &i.Path, &i.Size); err != nil {
+		if err := rows.Scan(
+			&i.EpisodeID,
+			&i.Path,
+			&i.Size,
+			&i.Tier,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -172,6 +250,95 @@ func (q *Queries) ListSearchOutcomes(ctx context.Context) ([]ListSearchOutcomesR
 			&i.Summary,
 			&i.NextRetryAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeriesBusyDownloads = `-- name: ListSeriesBusyDownloads :many
+SELECT d.id, d.episode_id, d.title, d.indexer, d.link, d.size, d.verdict, d.tier, d.manual, d.state, d.detail, d.job_id, d.progress, d.time_left, d.storage, d.failure, d.retryable, d.stages, d.created_at, d.updated_at, d.import_state, d.import_detail, d.import_recovery, d.import_files, d.import_updated_at, d.import_notes FROM downloads d JOIN episodes e ON e.id = d.episode_id
+WHERE e.series_id = ?
+    AND (d.state IN ('submitting', 'queued', 'downloading', 'processing') OR d.import_state IN ('pending', 'moving'))
+`
+
+// Downloads of a show that are running or whose files are being moved.
+func (q *Queries) ListSeriesBusyDownloads(ctx context.Context, seriesID int64) ([]Download, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesBusyDownloads, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.EpisodeID,
+			&i.Title,
+			&i.Indexer,
+			&i.Link,
+			&i.Size,
+			&i.Verdict,
+			&i.Tier,
+			&i.Manual,
+			&i.State,
+			&i.Detail,
+			&i.JobID,
+			&i.Progress,
+			&i.TimeLeft,
+			&i.Storage,
+			&i.Failure,
+			&i.Retryable,
+			&i.Stages,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ImportState,
+			&i.ImportDetail,
+			&i.ImportRecovery,
+			&i.ImportFiles,
+			&i.ImportUpdatedAt,
+			&i.ImportNotes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeriesFiles = `-- name: ListSeriesFiles :many
+SELECT f.path, f.size FROM episode_files f JOIN episodes e ON e.id = f.episode_id WHERE e.series_id = ?
+`
+
+type ListSeriesFilesRow struct {
+	Path string
+	Size int64
+}
+
+func (q *Queries) ListSeriesFiles(ctx context.Context, seriesID int64) ([]ListSeriesFilesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesFiles, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeriesFilesRow
+	for rows.Next() {
+		var i ListSeriesFilesRow
+		if err := rows.Scan(&i.Path, &i.Size); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

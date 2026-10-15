@@ -34,20 +34,11 @@ const (
 //
 // tags are the release details from releaseTags.
 func (c showContext) target(lib config.Library, episodes []int64, tags, ext string) (string, error) {
-	root := lib.TV
-	if c.profile.Name == selection.Anime.Name {
-		root = lib.Anime
+	folder, err := ShowFolder(lib, c.data.Series, c.profile)
+	if err != nil {
+		return "", err
 	}
-	if root == "" {
-		return "", fmt.Errorf("no library folder is set for the %s profile", c.profile.Name)
-	}
-	sr := c.data.Series
-	// A title only in another script, such as Japanese, leaves nothing;
-	// TVDB's slug is ASCII.
-	name := cut(cmp.Or(dotted(cmp.Or(sr.NameEng, sr.Name)), dotted(sr.Slug), strconv.FormatInt(sr.ID, 10)), maxShow)
-	if year := strconv.Itoa(sr.Year); sr.Year > 0 && !strings.HasSuffix(name, "."+year) {
-		name += "." + year
-	}
+	name := showName(c.data.Series)
 
 	first := c.episodes[episodes[0]]
 	pos := first.Numbers["official"]
@@ -69,8 +60,33 @@ func (c showContext) target(lib config.Library, episodes []int64, tags, ext stri
 		file += "." + cut(title, room)
 	}
 	file = strings.TrimSuffix(file, ".") + tail + ext
-	folder := fmt.Sprintf("%s.[tvdbid-%d]", name, sr.ID)
-	return filepath.Join(filepath.Clean(root), folder, fmt.Sprintf("Season.%02d", pos.Season), file), nil
+	return filepath.Join(folder, fmt.Sprintf("Season.%02d", pos.Season), file), nil
+}
+
+// ShowFolder is the folder new files of a show go to, as Garner reaches it:
+//
+//	<library root>/Show.2013.[tvdbid-1]
+func ShowFolder(lib config.Library, sr store.Series, profile selection.Profile) (string, error) {
+	root := lib.TV
+	if profile.Name == selection.Anime.Name {
+		root = lib.Anime
+	}
+	if root == "" {
+		return "", fmt.Errorf("no library folder is set for the %s profile", profile.Name)
+	}
+	return filepath.Join(filepath.Clean(root), fmt.Sprintf("%s.[tvdbid-%d]", showName(sr), sr.ID)), nil
+}
+
+// showName is the show's part of folder and file names, such as
+// "Harbor.Precinct.2013".
+func showName(sr store.Series) string {
+	// A title only in another script, such as Japanese, leaves nothing;
+	// TVDB's slug is ASCII.
+	name := cut(cmp.Or(dotted(cmp.Or(sr.NameEng, sr.Name)), dotted(sr.Slug), strconv.FormatInt(sr.ID, 10)), maxShow)
+	if year := strconv.Itoa(sr.Year); sr.Year > 0 && !strings.HasSuffix(name, "."+year) {
+		name += "." + year
+	}
+	return name
 }
 
 // releaseTags are the details a file name keeps because they cannot be

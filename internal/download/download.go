@@ -286,6 +286,18 @@ func (s *Service) Reject(ctx context.Context, d store.Download, reason string) {
 	s.replace(ctx, d)
 }
 
+// Cancel stops a running download: SABnzbd deletes the job and its files,
+// and the download fails with reason, without a replacement.
+func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) error {
+	if d.JobID != "" {
+		if err := s.sab.Delete(ctx, d.JobID); err != nil {
+			return err
+		}
+	}
+	d.State, d.Failure, d.Retryable = store.Failed, reason, false
+	return s.save(ctx, d)
+}
+
 // replace starts the next release after a failure another release may fix.
 func (s *Service) replace(ctx context.Context, failed store.Download) {
 	sr, err := s.store.LoadSearch(ctx, failed.EpisodeID)

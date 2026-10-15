@@ -161,6 +161,19 @@ func (c *Client) History(ctx context.Context, ids []string, search string) ([]Do
 	return jobs, nil
 }
 
+// Delete removes a job and its files: from the queue while it downloads,
+// otherwise from the history.
+func (c *Client) Delete(ctx context.Context, id string) error {
+	var res struct{}
+	err := c.call(ctx, url.Values{"mode": {"queue"}, "name": {"delete"}, "value": {id}, "del_files": {"1"}}, &res)
+	var sabErr *Error
+	if err == nil || !errors.As(err, &sabErr) {
+		return err
+	}
+	// The queue reports failure for a job it no longer holds.
+	return c.call(ctx, url.Values{"mode": {"history"}, "name": {"delete"}, "value": {id}, "del_files": {"1"}}, &res)
+}
+
 func (c *Client) call(ctx context.Context, params url.Values, out any) error {
 	params.Set("output", "json")
 	params.Set("apikey", c.key)

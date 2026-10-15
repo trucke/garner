@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -92,6 +93,9 @@ func (c *Catalog) Sync(ctx context.Context) error {
 		if err := c.Refresh(ctx, s.ID); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, store.ErrNotFound) {
+				continue // deleted during the sync
 			}
 			c.log.Warn("could not refresh series", "id", s.ID, "err", err)
 			failed = append(failed, strconv.FormatInt(s.ID, 10))

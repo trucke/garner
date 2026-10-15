@@ -2,20 +2,46 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/trucke/garner/internal/catalog"
+	"github.com/trucke/garner/internal/importer"
+	"github.com/trucke/garner/internal/release"
+	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
 
-// SeriesDetail is a show with everything Garner knows about it and the
-// problems found in imported data.
+// SeriesDetail is a show with everything Garner knows about it, the
+// problems found in imported data, and what Garner has of each episode.
 type SeriesDetail struct {
 	store.SeriesData
 	Issues []catalog.Issue `json:"issues"`
+	// Summary counts the show's episodes as the library does.
+	Summary store.Show `json:"summary"`
+	// States holds every episode's state; Best lists the tiers no upgrade
+	// can beat, so clients can mark files below them.
+	States []store.EpisodeStatus `json:"states"`
+	Best   string                `json:"best_tier"`
+	// Folder is where new files of the show go.
+	Folder string `json:"folder,omitempty"`
+	// Rules describes the profile; Profiles lists the profiles to choose
+	// from with their rules.
+	Rules    string        `json:"rules"`
+	Profiles []ProfileInfo `json:"profiles"`
+	// LanguageName and LanguageNote say what the original language means
+	// for the audio.
+	LanguageName string `json:"language_name"`
+	LanguageNote string `json:"language_note"`
+}
+
+// ProfileInfo names a profile and its rules.
+type ProfileInfo struct {
+	Name  string `json:"name"`
+	Rules string `json:"rules"`
 }
 
 func (s *Server) catalogRoutes(mux *http.ServeMux) {
@@ -25,6 +51,7 @@ func (s *Server) catalogRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/series", s.auth(s.needCatalog(s.handleAddSeries)))
 	mux.Handle("GET /api/v1/series/{id}", s.auth(s.needCatalog(s.handleGetSeries)))
 	mux.Handle("POST /api/v1/series/{id}/refresh", s.auth(s.needCatalog(s.handleRefreshSeries)))
+	mux.Handle("DELETE /api/v1/series/{id}", s.auth(http.HandlerFunc(s.handleDeleteSeries)))
 }
 
 func (s *Server) needCatalog(h http.HandlerFunc) http.Handler {
@@ -127,7 +154,12 @@ func (s *Server) handleRefreshSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
 		return
 	}
-	if err := s.catalog.Refresh(r.Context(), id); err != nil {
+	err = s.catalog.Refresh(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "the show was deleted while it was refreshed")
+		return
+	}
+	if err != nil {
 		s.upstreamError(w, "refresh series", err)
 		return
 	}
@@ -144,7 +176,108 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 		s.internalError(w, "load series", err)
 		return
 	}
-	writeJSON(w, status, SeriesDetail{SeriesData: d, Issues: catalog.Issues(d)})
+	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now())
+	if err != nil {
+		s.internalError(w, "summarise series", err)
+		return
+	}
+	profile := selection.ProfileNamed(d.Series.Profile)
+	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+	detail := SeriesDetail{
+		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
+		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
+	}
+	for _, p := range []selection.Profile{selection.Anime, selection.TV} {
+		detail.Profiles = append(detail.Profiles, ProfileInfo{Name: p.Name, Rules: p.Describe()})
+	}
+	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series, profile); err == nil {
+		detail.Folder = folder
+	}
+	writeJSON(w, status, detail)
+}
+
+// handleDeleteSeries removes a show, cancels its running downloads and
+// deletes the files Garner imported for it.
+func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
+	id, ok := seriesID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	busy, err := s.store.BusyDownloads(ctx, id)
+	if err != nil {
+		s.internalError(w, "delete series", err)
+		return
+	}
+	for _, d := range busy {
+		if !d.Active() {
+			writeError(w, http.StatusConflict, "Garner is moving files of this show into the library; try again when that has finished")
+			return
+		}
+	}
+	// Read before cancelling, so nothing is cancelled when this fails.
+	files, err := s.store.SeriesFiles(ctx, id)
+	if err != nil {
+		s.internalError(w, "delete series", err)
+		return
+	}
+	// A file holding several episodes is listed once per episode.
+	paths := make([]string, 0, len(files))
+	seen := make(map[string]bool, len(files))
+	var size int64
+	for _, f := range files {
+		if !seen[f.Path] {
+			seen[f.Path] = true
+			paths = append(paths, f.Path)
+			size += f.Size
+		}
+	}
+	if len(busy) > 0 && s.downloads == nil {
+		writeError(w, http.StatusConflict, "the show has running downloads, and SABnzbd is not configured to cancel them")
+		return
+	}
+	for i, d := range busy {
+		if err := s.downloads.Cancel(ctx, d, "cancelled: the show was deleted"); err != nil {
+			s.log.Error("cancel download", "download", d.ID, "err", err)
+			msg := "could not cancel a download in SABnzbd, so the show stays: " + err.Error()
+			if i > 0 {
+				msg = fmt.Sprintf("cancelled %d of %d downloads, then SABnzbd failed, so the show stays; delete it again to finish: %v", i, len(busy), err)
+			}
+			writeError(w, http.StatusBadGateway, msg)
+			return
+		}
+	}
+	// Records first: if a download started meanwhile, nothing is touched.
+	// Files left on disk are visible and can be removed by hand; records of
+	// files that are gone would not be.
+	err = s.store.DeleteSeries(ctx, id)
+	cancelled := ""
+	if len(busy) > 0 {
+		cancelled = fmt.Sprintf(" Its %d running downloads were already cancelled.", len(busy))
+	}
+	if errors.Is(err, store.ErrBusy) {
+		writeError(w, http.StatusConflict, "a download or import of this show started while deleting it; delete it again."+cancelled)
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "series is not in the catalogue")
+		return
+	}
+	if err != nil {
+		s.log.Error("delete series", "series", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "could not delete the show; it stays."+cancelled)
+		return
+	}
+	removed, problems := importer.DeleteFiles(id, paths)
+	if len(problems) > 0 {
+		s.log.Error("delete series files", "series", id, "problems", problems)
+	}
+	s.log.Info("deleted a show", "series", id, "files", removed)
+	s.events.publish(Event{Type: "series.deleted", Data: map[string]int64{"id": id}})
+	if problems == nil {
+		problems = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": removed, "bytes": size, "problems": problems})
 }
 
 func seriesID(w http.ResponseWriter, r *http.Request) (int64, bool) {

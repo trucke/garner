@@ -245,7 +245,7 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 	original, _ := release.LanguageNamed(s.OriginalLanguage)
 	d := described{order: "official", Preview: Preview{
 		SearchResult: SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
-		Type:         profileFor(s), LanguageName: languageName(s.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
+		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
 		FirstAired: s.FirstAired, LastAired: s.LastAired, Runtime: s.AverageRuntime, Orders: []string{},
 		URL: "https://thetvdb.com/series/" + url.PathEscape(s.Slug),
 	}}
@@ -293,9 +293,9 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 	return d, nil
 }
 
-// languageName names a TVDB language code in English, such as Japanese
+// LanguageName names a TVDB language code in English, such as Japanese
 // for jpn. Languages Garner has no name for keep a two-letter code.
-func languageName(code string) string {
+func LanguageName(code string) string {
 	if l, ok := release.LanguageNamed(code); ok {
 		return l.Name()
 	}

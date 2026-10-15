@@ -58,15 +58,6 @@ func (s *Store) SeriesOfEpisode(ctx context.Context, episodeID int64) (int64, er
 	return id, err
 }
 
-// SetProfile changes a show's profile.
-func (s *Store) SetProfile(ctx context.Context, seriesID int64, profile string) error {
-	n, err := s.q.SetSeriesProfile(ctx, query.SetSeriesProfileParams{Profile: nullString(profile), ID: seriesID})
-	if err == nil && n == 0 {
-		err = fmt.Errorf("series %d: %w", seriesID, ErrNotFound)
-	}
-	return err
-}
-
 // SaveSearch replaces the episode's previous search. Candidates are saved
 // in the order given; their IDs are assigned here.
 func (s *Store) SaveSearch(ctx context.Context, sr Search) error {

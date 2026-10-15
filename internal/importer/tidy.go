@@ -268,3 +268,35 @@ func count(n int, noun string) string {
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
 }
+
+var seasonFolder = regexp.MustCompile(`^Season\.\d+$`)
+
+// DeleteFiles removes a show's imported files and their subtitle files,
+// then the season and show folders that are left empty. Only folders named
+// the way Garner names them are removed, so a library root or someone
+// else's folder never goes. It returns how many files it removed and the
+// problems it met.
+func DeleteFiles(seriesID int64, paths []string) (removed int, problems []string) {
+	showSuffix := fmt.Sprintf(".[tvdbid-%d]", seriesID)
+	folders := map[string]bool{}
+	for _, p := range paths {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			problems = append(problems, err.Error())
+			continue
+		} else if err == nil {
+			removed++
+		}
+		removeSubtitles(p)
+		folders[filepath.Dir(p)] = true
+	}
+	for season := range folders {
+		if !seasonFolder.MatchString(filepath.Base(season)) || os.Remove(season) != nil {
+			continue
+		}
+		if show := filepath.Dir(season); strings.HasSuffix(filepath.Base(show), showSuffix) {
+			// Fails while other seasons are left; they go in their turn.
+			os.Remove(show)
+		}
+	}
+	return removed, problems
+}
