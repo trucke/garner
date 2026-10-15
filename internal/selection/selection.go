@@ -125,8 +125,11 @@ type Evaluation struct {
 	Tier string
 	// Audio are the audio languages Garner assumes; empty when unknown.
 	Audio []release.Language
-	// Reasons explain the verdict, most important first.
-	Reasons []string
+	// Reasons explain the verdict, most important first. The first
+	// Decisive of them decided it: why the release is rejected or only a
+	// last resort. The rest are facts.
+	Reasons  []string
+	Decisive int
 
 	rank rankKey
 }
@@ -231,9 +234,9 @@ func Evaluate(ctx Context, r Release) Evaluation {
 
 	switch {
 	case len(rejects) > 0:
-		e.Verdict, e.rank.verdict, e.Reasons = Reject, 2, append(rejects, info...)
+		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Reject, 2, append(rejects, info...), len(rejects)
 	case len(fallbacks) > 0:
-		e.Verdict, e.rank.verdict, e.Reasons = Fallback, 1, append(fallbacks, info...)
+		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Fallback, 1, append(fallbacks, info...), len(fallbacks)
 	default:
 		e.Verdict, e.Reasons = Accept, info
 	}

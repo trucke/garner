@@ -65,6 +65,14 @@ func TestSearchAndDownload(t *testing.T) {
 
 	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
 	s.search = search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, log)
+	var progress []string
+	s.search.OnProgress = func(p search.Progress) {
+		var states []string
+		for _, ix := range p.Indexers {
+			states = append(states, fmt.Sprintf("%s:%v:%d", ix.Name, ix.Done, ix.Results))
+		}
+		progress = append(progress, strings.Join(states, " "))
+	}
 	api := httptest.NewServer(s.Routes())
 	defer api.Close()
 	token, err := st.CreateToken(ctx, "test")
@@ -97,6 +105,14 @@ func TestSearchAndDownload(t *testing.T) {
 			sr.Candidates[0].Title != "Harbor.Precinct.S01E01.German.DL.1080p.BluRay-GRP" || sr.Candidates[2].Verdict != "reject" {
 			t.Errorf("%s search = %+v", method, sr)
 		}
+		// The reasons that decided a verdict are told apart from facts.
+		if c := sr.Candidates; c[0].Decisive != 0 || c[2].Decisive < 1 || c[2].Decisive > len(c[2].Reasons) {
+			t.Errorf("%s search: decisive reasons %d and %d of %v", method, c[0].Decisive, c[2].Decisive, c[2].Reasons)
+		}
+	}
+	// Every indexer is reported as asked first, then as it answers.
+	if want := []string{"One:false:0 Two:false:0", "One:true:3 Two:false:0", "One:true:3 Two:true:0"}; fmt.Sprint(progress) != fmt.Sprint(want) {
+		t.Errorf("progress = %q, want %q", progress, want)
 	}
 	sab := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.PostFormValue("mode") == "addurl" {

@@ -37,6 +37,23 @@ type Service struct {
 	now   func() time.Time
 	// OnDone is called after a search was stored.
 	OnDone func(store.Search)
+	// OnProgress is called when a search starts asking the indexers and
+	// after each of them answered.
+	OnProgress func(Progress)
+}
+
+// Progress is a running search: every indexer, and what it answered so far.
+type Progress struct {
+	EpisodeID int64             `json:"episode_id"`
+	Indexers  []IndexerProgress `json:"indexers"`
+}
+
+// IndexerProgress is one indexer of a running search.
+type IndexerProgress struct {
+	Name    string `json:"name"`
+	Done    bool   `json:"done"`
+	Results int    `json:"results"`
+	Error   string `json:"error,omitempty"`
 }
 
 // New returns a search service. rules may be nil.
@@ -80,7 +97,12 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	if err != nil {
 		sr.Indexers = append(sr.Indexers, store.SearchIndexer{Name: "Prowlarr", Error: err.Error()})
 	}
-	for _, ix := range indexers {
+	progress := Progress{EpisodeID: episodeID, Indexers: make([]IndexerProgress, len(indexers))}
+	for i, ix := range indexers {
+		progress.Indexers[i] = IndexerProgress{Name: ix.Name}
+	}
+	s.report(progress)
+	for i, ix := range indexers {
 		results, err := s.prowlarr.Search(ctx, ix.ID, prowlarr.Query{TVDBID: seriesID, Season: pos.Season, Episode: pos.Number})
 		if ctx.Err() != nil {
 			return store.Search{}, ctx.Err()
@@ -91,6 +113,8 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 			s.log.Warn("indexer search failed", "indexer", ix.Name, "episode", episodeID, "err", err)
 		}
 		sr.Indexers = append(sr.Indexers, res)
+		progress.Indexers[i] = IndexerProgress{Name: ix.Name, Done: true, Results: res.Results, Error: res.Error}
+		s.report(progress)
 		for _, r := range results {
 			claims := release.Parse(r.Title)
 			m := show.Match(claims, r.Published)
@@ -130,6 +154,14 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	return saved, nil
 }
 
+// report passes a copy on, so the next answer cannot change what was sent.
+func (s *Service) report(p Progress) {
+	if s.OnProgress != nil {
+		p.Indexers = slices.Clone(p.Indexers)
+		s.OnProgress(p)
+	}
+}
+
 // hit is one search result with its verdict.
 type hit struct {
 	indexer  string
@@ -141,7 +173,8 @@ type hit struct {
 func (h hit) candidate() store.Candidate {
 	c := store.Candidate{
 		Indexer: h.indexer, Title: h.result.Title, Link: h.result.Link, Size: h.result.Size, Grabs: h.result.Grabs,
-		Verdict: string(h.eval.Verdict), Tier: h.eval.Tier, Reasons: h.eval.Reasons, Episodes: h.episodes,
+		Verdict: string(h.eval.Verdict), Tier: h.eval.Tier, Reasons: h.eval.Reasons, Decisive: h.eval.Decisive,
+		Episodes: h.episodes,
 	}
 	if !h.result.Published.IsZero() {
 		p := h.result.Published

@@ -15,8 +15,8 @@ RETURNING id;
 INSERT INTO search_indexers (search_id, indexer, results, error) VALUES (?, ?, ?, ?);
 
 -- name: InsertCandidate :exec
-INSERT INTO candidates (search_id, rank, indexer, title, link, size, published, grabs, verdict, tier, audio, reasons, episodes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO candidates (search_id, rank, indexer, title, link, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSearch :one
 SELECT * FROM searches WHERE episode_id = ?;
@@ -26,5 +26,5 @@ SELECT indexer, results, error FROM search_indexers WHERE search_id = ? ORDER BY
 
 -- Candidates without their download links.
 -- name: ListCandidates :many
-SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes
+SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank;

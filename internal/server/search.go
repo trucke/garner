@@ -30,6 +30,7 @@ func (s *Server) setupSearch() error {
 		rules = s.catalog.ServiceOrders
 	}
 	svc := search.New(s.store, prowlarr.New(p.URL, p.APIKey.Value(), client), rules, s.log)
+	svc.OnProgress = func(p search.Progress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
 	svc.OnDone = func(sr store.Search) {
 		s.events.publish(Event{Type: "search.finished", Data: map[string]any{"episode_id": sr.EpisodeID, "outcome": sr.Outcome}})
 	}

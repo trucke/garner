@@ -38,8 +38,8 @@ func (q *Queries) GetSearch(ctx context.Context, episodeID int64) (Search, error
 }
 
 const insertCandidate = `-- name: InsertCandidate :exec
-INSERT INTO candidates (search_id, rank, indexer, title, link, size, published, grabs, verdict, tier, audio, reasons, episodes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO candidates (search_id, rank, indexer, title, link, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertCandidateParams struct {
@@ -56,6 +56,7 @@ type InsertCandidateParams struct {
 	Audio     string
 	Reasons   string
 	Episodes  string
+	Decisive  int64
 }
 
 func (q *Queries) InsertCandidate(ctx context.Context, arg InsertCandidateParams) error {
@@ -73,6 +74,7 @@ func (q *Queries) InsertCandidate(ctx context.Context, arg InsertCandidateParams
 		arg.Audio,
 		arg.Reasons,
 		arg.Episodes,
+		arg.Decisive,
 	)
 	return err
 }
@@ -125,7 +127,7 @@ func (q *Queries) InsertSearchIndexer(ctx context.Context, arg InsertSearchIndex
 }
 
 const listCandidates = `-- name: ListCandidates :many
-SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes
+SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank
 `
 
@@ -142,6 +144,7 @@ type ListCandidatesRow struct {
 	Audio     string
 	Reasons   string
 	Episodes  string
+	Decisive  int64
 }
 
 // Candidates without their download links.
@@ -167,6 +170,7 @@ func (q *Queries) ListCandidates(ctx context.Context, searchID int64) ([]ListCan
 			&i.Audio,
 			&i.Reasons,
 			&i.Episodes,
+			&i.Decisive,
 		); err != nil {
 			return nil, err
 		}

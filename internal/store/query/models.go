@@ -40,6 +40,7 @@ type Candidate struct {
 	Audio     string
 	Reasons   string
 	Episodes  string
+	Decisive  int64
 }
 
 type Download struct {

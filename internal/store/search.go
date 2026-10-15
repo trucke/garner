@@ -46,7 +46,10 @@ type Candidate struct {
 	Tier      string     `json:"tier,omitempty"`
 	Audio     []string   `json:"audio"`
 	Reasons   []string   `json:"reasons"`
-	Episodes  []int64    `json:"episodes"`
+	// Decisive counts the leading reasons that decided the verdict: why it
+	// was rejected, or why it is only a last resort. The rest are facts.
+	Decisive int     `json:"decisive"`
+	Episodes []int64 `json:"episodes"`
 }
 
 // SeriesOfEpisode returns the show an episode belongs to.
@@ -98,6 +101,7 @@ func (s *Store) SaveSearch(ctx context.Context, sr Search) error {
 			SearchID: id, Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link, Size: c.Size,
 			Published: published, Grabs: int64(c.Grabs), Verdict: c.Verdict, Tier: c.Tier,
 			Audio: strings.Join(c.Audio, ","), Reasons: string(reasons), Episodes: string(episodes),
+			Decisive: int64(c.Decisive),
 		}); err != nil {
 			return fmt.Errorf("save candidate %q: %w", c.Title, err)
 		}
@@ -137,6 +141,7 @@ func (s *Store) LoadSearch(ctx context.Context, episodeID int64) (Search, error)
 		cand := Candidate{
 			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Size: c.Size, Grabs: int(c.Grabs),
 			Verdict: c.Verdict, Tier: c.Tier, Audio: []string{}, Reasons: []string{}, Episodes: []int64{},
+			Decisive: int(c.Decisive),
 		}
 		if c.Published.Valid {
 			t := time.Unix(c.Published.Int64, 0)
