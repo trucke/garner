@@ -135,8 +135,8 @@ type Evaluation struct {
 	// Audio are the audio languages Garner assumes; empty when unknown.
 	Audio []release.Language
 	// Reasons explain the verdict, most important first. The first
-	// Decisive of them decided it: why the release is rejected or only a
-	// last resort. The rest are facts.
+	// Decisive of them decided it: why the release is rejected, only a
+	// last resort, or accepted. The rest are facts, such as caveats.
 	Reasons  []string
 	Decisive int
 
@@ -157,7 +157,8 @@ type rankKey struct {
 
 // Evaluate judges one release.
 func Evaluate(ctx Context, r Release) Evaluation {
-	var rejects, fallbacks, info []string
+	// info supports the verdict; notes are caveats and other facts.
+	var rejects, fallbacks, info, notes []string
 	e := Evaluation{rank: rankKey{tier: len(ctx.Profile.Tiers) + 2, published: r.Published}}
 
 	switch r.Match.Kind {
@@ -172,13 +173,13 @@ func Evaluate(ctx Context, r Release) Evaluation {
 		}
 		switch {
 		case r.Match.Kind == match.Season:
-			info = append(info, fmt.Sprintf("season pack of %d episodes; it may not hold every one", len(r.Match.Episodes)))
+			notes = append(notes, fmt.Sprintf("season pack of %d episodes; it may not hold every one", len(r.Match.Episodes)))
 		case len(r.Match.Episodes) > 1:
-			info = append(info, "holds "+ctx.Show.Describe(r.Match.Episodes))
+			notes = append(notes, "holds "+ctx.Show.Describe(r.Match.Episodes))
 		default:
 			e.rank.whole = !r.Match.Uncertain
 		}
-		info = append(info, r.Match.Notes...)
+		notes = append(notes, r.Match.Notes...)
 	}
 	if r.OtherShow {
 		rejects = append(rejects, "the indexer files it under another show")
@@ -244,17 +245,17 @@ func Evaluate(ctx Context, r Release) Evaluation {
 	if limit, ok := largeAt[res]; ok && state == release.Unambiguous && len(rejects) == 0 && r.Size > 0 && r.Runtime >= time.Minute {
 		if perMinute := r.Size / 1e6 / int64(r.Runtime/time.Minute); perMinute > limit {
 			e.rank.large = true
-			info = append(info, fmt.Sprintf("large for %s: %d MB per minute, more than %d; listed after smaller releases of its tier", res, perMinute, limit))
+			notes = append(notes, fmt.Sprintf("large for %s: %d MB per minute, more than %d; listed after smaller releases of its tier", res, perMinute, limit))
 		}
 	}
 
 	switch {
 	case len(rejects) > 0:
-		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Reject, 2, append(rejects, info...), len(rejects)
+		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Reject, 2, slices.Concat(rejects, info, notes), len(rejects)
 	case len(fallbacks) > 0:
-		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Fallback, 1, append(fallbacks, info...), len(fallbacks)
+		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Fallback, 1, slices.Concat(fallbacks, info, notes), len(fallbacks)
 	default:
-		e.Verdict, e.Reasons = Accept, info
+		e.Verdict, e.Reasons, e.Decisive = Accept, slices.Concat(info, notes), len(info)
 	}
 	for _, f := range r.Claims.Flags {
 		if f.Value == release.Proper || f.Value == release.Repack {

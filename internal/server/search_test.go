@@ -106,7 +106,7 @@ func TestSearchAndDownload(t *testing.T) {
 			t.Errorf("%s search = %+v", method, sr)
 		}
 		// The reasons that decided a verdict are told apart from facts.
-		if c := sr.Candidates; c[0].Decisive != 0 || c[2].Decisive < 1 || c[2].Decisive > len(c[2].Reasons) {
+		if c := sr.Candidates; c[0].Decisive < 1 || c[0].Decisive > len(c[0].Reasons) || c[2].Decisive < 1 || c[2].Decisive > len(c[2].Reasons) {
 			t.Errorf("%s search: decisive reasons %d and %d of %v", method, c[0].Decisive, c[2].Decisive, c[2].Reasons)
 		}
 	}

@@ -426,13 +426,18 @@ func (s *releasesScreen) why(w int) []string {
 		decisive, decisiveStyle = "~", sAmber
 	}
 	decisiveCount := c.Decisive
-	if c.Verdict != "accept" && decisiveCount == 0 {
+	switch {
+	case decisiveCount > 0:
+	case c.Verdict == "accept":
+		// Stored before accepted releases had the count: all of them.
+		decisiveCount = len(c.Reasons)
+	default:
 		// Stored before the count was kept; the first reason always decides.
 		decisiveCount = 1
 	}
 	for i, r := range c.Reasons {
 		glyph := decisiveStyle.Render(decisive)
-		if c.Verdict != "accept" && i >= decisiveCount {
+		if i >= decisiveCount {
 			glyph = sSubtle.Render("·") // a fact, not why
 		}
 		for j, l := range strings.Split(ansi.Wrap(clean(r), max(10, w-8), ""), "\n") {
