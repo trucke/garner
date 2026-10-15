@@ -120,7 +120,8 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 			m := show.Match(claims, r.Published)
 			eval := selection.Evaluate(judge, selection.Release{
 				Claims: claims, Match: m, IndexerLanguages: selection.IndexerLanguages(r.Languages),
-				OtherShow: r.TVDBID != 0 && r.TVDBID != seriesID, Grabs: r.Grabs, Published: r.Published,
+				OtherShow: r.TVDBID != 0 && r.TVDBID != seriesID, Published: r.Published,
+				Size: r.Size, Runtime: runtimeOf(d, m.Episodes),
 			})
 			hits = append(hits, hit{indexer: ix.Name, result: r, eval: eval, episodes: m.Episodes})
 		}
@@ -238,4 +239,22 @@ func retryDelay(outcome, aired string, now time.Time) time.Duration {
 		return retryRecent
 	}
 	return retryOld
+}
+
+// runtimeOf is how long the episodes run, each by its own runtime or the
+// show's average; 0 when TVDB knows neither.
+func runtimeOf(d store.SeriesData, episodes []int64) time.Duration {
+	var total time.Duration
+	for _, id := range episodes {
+		i := slices.IndexFunc(d.Episodes, func(e store.Episode) bool { return e.ID == id })
+		minutes := d.Series.AverageRuntime
+		if i >= 0 && d.Episodes[i].Runtime > 0 {
+			minutes = d.Episodes[i].Runtime
+		}
+		if minutes <= 0 {
+			return 0
+		}
+		total += time.Duration(minutes) * time.Minute
+	}
+	return total
 }

@@ -84,22 +84,38 @@ func TestRank(t *testing.T) {
 		"Harbor.Precinct.S01E01.1080p.WEB-E",               // rejected
 		"Harbor.Precinct.S01.German.DL.1080p.BluRay-F",     // season pack
 		"Harbor.Precinct.S01E01.German.DL.1080p.BluRay-G",  // dual, Blu-ray
-		"Harbor.Precinct.S01E01.German.DL.1080p.WEB-DL-CC", // like C, more grabs
+		"Harbor.Precinct.S01E01.German.DL.1080p.WEB-DL-CC", // like C, newer
+		"Harbor.Precinct.S01E01.German.DL.1080p.BluRay-L",  // like G, far too large
 	}
+	s, want := fixture("Harbor Precinct", "en")
+	ctx := Context{Profile: TV, Show: s, Want: want, Original: "en"}
 	var evals []Evaluation
 	for _, n := range names {
-		e := evaluate(TV, "Harbor Precinct", "en", n)
-		if strings.HasSuffix(n, "-CC") {
-			e.rank.grabs = 5
+		claims := release.Parse(n)
+		r := Release{Claims: claims, Match: s.Match(claims, time.Time{})}
+		switch {
+		case strings.HasSuffix(n, "-CC"):
+			r.Published = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+		case strings.HasSuffix(n, "-C"):
+			r.Published = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		case strings.HasSuffix(n, "-L"):
+			// 7.6 GB for 24 minutes: over 300 MB per minute.
+			r.Size, r.Runtime = 7.6e9, 24*time.Minute
+		case strings.HasSuffix(n, "-G"):
+			r.Size, r.Runtime = 2.2e9, 24*time.Minute
 		}
-		evals = append(evals, e)
+		evals = append(evals, Evaluate(ctx, r))
 	}
 	var got []string
 	for _, i := range Rank(evals) {
 		got = append(got, names[i][strings.LastIndex(names[i], "-")+1:])
 	}
-	if want := "G CC C B F A D E"; strings.Join(got, " ") != want {
+	if want := "G CC C B F L A D E"; strings.Join(got, " ") != want {
 		t.Errorf("order = %s, want %s", strings.Join(got, " "), want)
+	}
+	large := evals[len(evals)-1]
+	if large.Verdict != Accept || !slices.ContainsFunc(large.Reasons, func(r string) bool { return strings.HasPrefix(r, "large for 1080p: 316 MB per minute") }) {
+		t.Errorf("large release: %s %q", large.Verdict, large.Reasons)
 	}
 
 	// German confirmed by the indexer ranks above German assumed for a German show.

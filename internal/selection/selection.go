@@ -113,9 +113,18 @@ type Release struct {
 	IndexerLanguages []release.Language
 	// OtherShow means the indexer files the release under another show.
 	OtherShow bool
-	Grabs     int
 	Published time.Time
+	// Size is the release's size in bytes; Runtime is how long the episodes
+	// it holds run. Either may be 0 when unknown.
+	Size    int64
+	Runtime time.Duration
 }
+
+// largeAt is the size per minute of runtime, in MB, above which a release
+// ranks behind the others of its tier. Encodes run at about 40 to 100 MB
+// per minute in 1080p and half that in 720p; well above it is remux
+// territory or an extreme encode.
+var largeAt = map[release.Resolution]int64{1080: 150, 720: 75}
 
 // Evaluation is the verdict on a release and why.
 type Evaluation struct {
@@ -142,14 +151,14 @@ type rankKey struct {
 	dual      bool
 	source    int
 	fixes     int
-	grabs     int
+	large     bool // far larger than its resolution needs
 	published time.Time
 }
 
 // Evaluate judges one release.
 func Evaluate(ctx Context, r Release) Evaluation {
 	var rejects, fallbacks, info []string
-	e := Evaluation{rank: rankKey{tier: len(ctx.Profile.Tiers) + 2, grabs: r.Grabs, published: r.Published}}
+	e := Evaluation{rank: rankKey{tier: len(ctx.Profile.Tiers) + 2, published: r.Published}}
 
 	switch r.Match.Kind {
 	case match.Unknown:
@@ -230,6 +239,13 @@ func Evaluate(ctx Context, r Release) Evaluation {
 		}
 	default:
 		rejects = append(rejects, fmt.Sprintf("no %s audio named", ctx.Profile.Wanted()))
+	}
+
+	if limit, ok := largeAt[res]; ok && state == release.Unambiguous && len(rejects) == 0 && r.Size > 0 && r.Runtime >= time.Minute {
+		if perMinute := r.Size / 1e6 / int64(r.Runtime/time.Minute); perMinute > limit {
+			e.rank.large = true
+			info = append(info, fmt.Sprintf("large for %s: %d MB per minute, more than %d; listed after smaller releases of its tier", res, perMinute, limit))
+		}
 	}
 
 	switch {
@@ -319,12 +335,12 @@ func Rank(evals []Evaluation) []int {
 		return cmp.Or(
 			cmp.Compare(x.verdict, y.verdict),
 			cmp.Compare(x.tier, y.tier),
+			compareBool(x.large, y.large),
 			-compareBool(x.whole, y.whole),
 			compareBool(x.assumed, y.assumed),
 			-compareBool(x.dual, y.dual),
 			-cmp.Compare(x.source, y.source),
 			-cmp.Compare(x.fixes, y.fixes),
-			-cmp.Compare(x.grabs, y.grabs),
 			-x.published.Compare(y.published),
 		)
 	})
