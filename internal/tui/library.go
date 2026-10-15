@@ -64,6 +64,11 @@ type libraryScreen struct {
 	page     int // table rows on screen, from the last view
 	flash    flash
 	lastKey  string
+	// The delete question for the show under the cursor, and the show
+	// being deleted.
+	asking   bool
+	choice   int
+	deleting string
 }
 
 func newLibrary(sess *session) *libraryScreen {
@@ -150,6 +155,17 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, s.reload()
 			}
 		}
+	case deleteResultMsg:
+		name := s.deleting
+		s.deleting = ""
+		switch {
+		case errors.Is(msg.err, client.ErrUnauthorized):
+			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
+		case msg.err != nil:
+			s.flash.stay(gFailed + " " + sRed.Render("Could not delete "+name+": "+clean(msg.err.Error())))
+			return s, nil
+		}
+		return s, s.showDeleted(deletedMsg{name, msg.deleted})
 	case tea.PasteMsg:
 		if s.typing {
 			s.filter += clean(msg.Content)
@@ -178,7 +194,13 @@ func (s *libraryScreen) patch(d store.Download) bool {
 
 func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	key := msg.String()
+	if s.deleting != "" {
+		return nil
+	}
 	s.flash.clear()
+	if s.asking {
+		return s.answer(key)
+	}
 	if s.typing {
 		switch key {
 		case "enter":
@@ -236,15 +258,22 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		s.filter = ""
 	case "enter":
-		rows, _ := s.rows()
-		i := slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected })
-		if i >= 0 {
-			next := newShow(s.sess, s, rows[i].ID, showName(rows[i]), "")
+		if sh, ok := s.cursorShow(); ok {
+			next := newShow(s.sess, s, sh.ID, showName(sh), "")
 			return func() tea.Msg { return switchMsg{next} }
 		}
 	case "a":
 		next := newAddShow(s.sess, s)
 		return func() tea.Msg { return switchMsg{next} }
+	case "i":
+		if sh, ok := s.cursorShow(); ok {
+			next := newShowDetails(s.sess, newShow(s.sess, s, sh.ID, showName(sh), ""), s)
+			return func() tea.Msg { return switchMsg{next} }
+		}
+	case "d":
+		if _, ok := s.cursorShow(); ok {
+			s.asking, s.choice = true, 0 // the safe choice: keep
+		}
 	case "A":
 		s.flash.info(sMuted.Render("Activity is not available yet."))
 	case "?":
@@ -253,6 +282,37 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 		return tea.Quit
 	}
 	return nil
+}
+
+// answer handles the delete question.
+func (s *libraryScreen) answer(key string) tea.Cmd {
+	switch key {
+	case "esc":
+		s.asking = false
+	case "h", "left", "shift+tab":
+		s.choice = 0
+	case "l", "right", "tab":
+		s.choice = 1
+	case "enter":
+		s.asking = false
+		sh, ok := s.cursorShow()
+		if s.choice != 1 || !ok {
+			return nil
+		}
+		s.deleting = showName(sh)
+		return deleteShow(s.sess.client, sh.ID)
+	}
+	return nil
+}
+
+// cursorShow is the show under the cursor, if any is shown.
+func (s *libraryScreen) cursorShow() (store.Show, bool) {
+	rows, _ := s.rows()
+	i := slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected })
+	if i < 0 {
+		return store.Show{}, false
+	}
+	return rows[i], true
 }
 
 // move shifts the cursor by n rows within the visible rows.
@@ -394,7 +454,11 @@ func (s *libraryScreen) view(width, height int) string {
 			b.WriteString(cols.row(rows[i], i == cursor) + "\n")
 		}
 	}
-	return screenLayout(width, height, b.String(), s.bottom(width, len(rows), total))
+	page := screenLayout(width, height, b.String(), s.bottom(width, len(rows), total))
+	if sh, ok := s.cursorShow(); ok && s.asking {
+		return overlay(page, deleteQuestion(showName(sh), sh, s.choice), width, height)
+	}
+	return page
 }
 
 func (s *libraryScreen) tabs() string {
@@ -427,16 +491,19 @@ func (s *libraryScreen) bottom(width, shown, total int) string {
 		left := sNormal.Render("/"+s.filter) + lipgloss.NewStyle().Background(cFg).Render(" ")
 		right := sMuted.Render(fmt.Sprintf("%d of %d", shown, total))
 		return left + strings.Repeat(" ", max(1, width-2-lipgloss.Width(left)-lipgloss.Width(right))) + right
+	case s.deleting != "":
+		return sMuted.Render("Deleting " + s.deleting + "…")
 	case s.flash.text != "":
 		return s.flash.text
 	case s.loaded && len(s.sess.shows) == 0:
 		return keyBar("a", "add show", "?", "help", "q", "quit")
 	case s.filter != "":
-		return keyBar("j k", "move", "tab", "category", "enter", "open", "a", "add show", "/", "filter",
-			"esc", "clear filter", "s", "sort", "A", "activity", "?", "help", "q", "quit")
+		return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
+			"esc", "clear filter", "tab", "category", "?", "help", "q", "quit")
 	}
-	return keyBar("j k", "move", "tab", "category", "enter", "open", "a", "add show", "/", "filter",
-		"s", "sort", "A", "activity", "?", "help", "q", "quit")
+	// A activity returns to the bar once the Activity screen exists.
+	return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
+		"s", "sort", "tab", "category", "?", "help", "q", "quit")
 }
 
 // columns holds the table's column widths: glyph, show, episodes, size,

@@ -14,6 +14,7 @@ import (
 
 	"github.com/trucke/garner/internal/client"
 	"github.com/trucke/garner/internal/server"
+	"github.com/trucke/garner/internal/store"
 )
 
 // Show details describes a show in the library, with the delete and
@@ -48,19 +49,24 @@ type (
 type showDetailsScreen struct {
 	sess    *session
 	show    *showScreen
+	back    screen // where esc goes: the show, or the library
 	overlay detailsOverlay
 	choice  int
 	busy    string // what runs, such as "Refreshing from TVDB…"
 	flash   flash
 }
 
-func newShowDetails(sess *session, show *showScreen) *showDetailsScreen {
-	return &showDetailsScreen{sess: sess, show: show}
+func newShowDetails(sess *session, show *showScreen, back screen) *showDetailsScreen {
+	return &showDetailsScreen{sess: sess, show: show, back: back}
 }
 
-// init needs nothing: the show screen has loaded everything, TVDB's facts
-// included.
-func (s *showDetailsScreen) init() tea.Cmd { return nil }
+// init loads the show unless its screen has already, TVDB's facts included.
+func (s *showDetailsScreen) init() tea.Cmd {
+	if s.show.detail == nil {
+		return s.show.reload()
+	}
+	return nil
+}
 
 func (s *showDetailsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -119,9 +125,13 @@ func (s *showDetailsScreen) name() string { return clean(s.show.name) }
 
 func (s *showDetailsScreen) key(key string) tea.Cmd {
 	d := s.show.detail
+	if key == "esc" {
+		return func() tea.Msg { return switchMsg{s.back} }
+	}
+	if d == nil {
+		return nil // still loading
+	}
 	switch key {
-	case "esc":
-		return func() tea.Msg { return switchMsg{s.show} }
 	case "p":
 		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p server.ProfileInfo) bool { return p.Name == d.Series.Profile }))
 	case "d":
@@ -161,12 +171,7 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 		switch {
 		case overlay == deleteOverlay && s.choice == 1:
 			s.busy = "Deleting " + s.name() + "…"
-			return func() tea.Msg {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				deleted, err := cl.DeleteSeries(ctx, id)
-				return deleteResultMsg{deleted, err}
-			}
+			return deleteShow(cl, id)
 		case overlay == profileOverlay && s.choice < len(d.Profiles) && d.Profiles[s.choice].Name != d.Series.Profile:
 			profile := d.Profiles[s.choice].Name
 			s.busy = "Changing the profile…"
@@ -185,6 +190,14 @@ func (s *showDetailsScreen) view(width, height int) string {
 	d := s.show.detail
 	var b strings.Builder
 	b.WriteString(header(width, s.sess, "Garner", "Library", s.name(), "Details") + "\n\n")
+	switch {
+	case d == nil && s.show.err != nil:
+		b.WriteString("   " + gFailed + " " + sRed.Render(clean(s.show.err.Error())))
+		return screenLayout(width, height, b.String(), keyBar("esc", "back"))
+	case d == nil:
+		b.WriteString("   " + sMuted.Render("Loading "+s.name()+"…"))
+		return screenLayout(width, height, b.String(), keyBar("esc", "back"))
+	}
 	w := max(40, min(detailsWidth, width-6))
 	sr := d.Series
 	typ := "TV"
@@ -239,31 +252,39 @@ func (s *showDetailsScreen) libraryLines(inner int) []string {
 }
 
 func (s *showDetailsScreen) deleteLines() []string {
-	d := s.show.detail
+	return deleteQuestion(s.name(), s.show.detail.Summary, s.choice)
+}
+
+// deleteQuestion is the delete overlay, from the library or the details
+// page. The cursor starts on Keep, the safe choice.
+func deleteQuestion(name string, sh store.Show, chosen int) []string {
 	const width = 64
-	files := 0
-	for _, st := range d.States {
-		if st.Size > 0 {
-			files++
-		}
-	}
 	text := "The show leaves the library. Garner has no files of it."
-	if files > 0 {
+	if sh.Bytes > 0 {
 		// Not the folder: after a profile change the files may lie elsewhere.
-		text = fmt.Sprintf("The show leaves the library and its files for %d episodes, %s, are deleted.",
-			files, size(d.Summary.Bytes))
+		text = fmt.Sprintf("The show leaves the library and its files, %s, are deleted.", size(sh.Bytes))
 	}
-	if d.Summary.Counts["downloading"]+d.Summary.Counts["processing"] > 0 {
+	if sh.Counts[store.EpisodeDownloading]+sh.Counts[store.EpisodeProcessing] > 0 {
 		text += " Downloads in progress are cancelled."
 	}
-	lines := []string{gFailed + " " + sBold.Render("Delete "+s.name()), ""}
+	lines := []string{gFailed + " " + sBold.Render("Delete "+name), ""}
 	for _, l := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
 		lines = append(lines, sNormal.Render(l))
 	}
 	return append(lines, "",
-		"  "+choice("Keep", s.choice == 0)+"   "+choice("Delete", s.choice == 1),
+		"  "+choice("Keep", chosen == 0)+"   "+choice("Delete", chosen == 1),
 		"",
 		keyBar("h l", "choose", "enter", "ok", "esc", "cancel"))
+}
+
+// deleteShow deletes a show with its files.
+func deleteShow(cl *client.Client, id int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		deleted, err := cl.DeleteSeries(ctx, id)
+		return deleteResultMsg{deleted, err}
+	}
 }
 
 func (s *showDetailsScreen) profileLines() []string {

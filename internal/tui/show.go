@@ -323,7 +323,7 @@ func (s *showScreen) key(key string) tea.Cmd {
 		s.flash.info(sMuted.Render("Searching every missing episode is not available yet."))
 	case "i":
 		if s.detail != nil {
-			next := newShowDetails(s.sess, s)
+			next := newShowDetails(s.sess, s, s)
 			return func() tea.Msg { return switchMsg{next} }
 		}
 	case "A":
