@@ -25,7 +25,8 @@ const (
 )
 
 // Run keeps the catalogue current until ctx is cancelled: once a day it
-// reloads shows TVDB reports as changed and shows whose TheXEM data is old.
+// reloads shows TVDB reports as changed, shows whose TheXEM data is old,
+// and shows loaded before their details were kept.
 func (c *Catalog) Run(ctx context.Context) {
 	retry := false
 	for {
@@ -134,7 +135,7 @@ func (c *Catalog) retryList(ctx context.Context) (map[int64]bool, error) {
 }
 
 func (c *Catalog) due(s store.Series, last time.Time, changed map[int64]bool) bool {
-	return last.IsZero() || time.Since(last) >= maxUpdatesAge || changed[s.ID] ||
+	return last.IsZero() || time.Since(last) >= maxUpdatesAge || changed[s.ID] || !s.HasDetails ||
 		s.XEMFetched == nil || time.Since(*s.XEMFetched) >= xemMaxAge
 }
 

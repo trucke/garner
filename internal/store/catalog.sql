@@ -1,14 +1,17 @@
 -- name: UpsertSeries :exec
 INSERT INTO series (id, slug, name, name_eng, name_deu, original_language, original_country, status, year,
-    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile,
+    network, last_aired, overview, overview_language)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     profile = coalesce(series.profile, excluded.profile),
     slug = excluded.slug, name = excluded.name, name_eng = excluded.name_eng, name_deu = excluded.name_deu,
     original_language = excluded.original_language, original_country = excluded.original_country,
     status = excluded.status, year = excluded.year, first_aired = excluded.first_aired,
     average_runtime = excluded.average_runtime, default_order = excluded.default_order,
-    tvdb_updated = excluded.tvdb_updated, fetched_at = excluded.fetched_at;
+    tvdb_updated = excluded.tvdb_updated, fetched_at = excluded.fetched_at,
+    network = excluded.network, last_aired = excluded.last_aired, overview = excluded.overview,
+    overview_language = excluded.overview_language;
 
 -- name: SetXEMFetched :exec
 UPDATE series SET xem_fetched_at = ? WHERE id = ?;

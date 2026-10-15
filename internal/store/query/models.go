@@ -144,6 +144,10 @@ type Series struct {
 	FetchedAt        int64
 	XemFetchedAt     sql.NullInt64
 	Profile          sql.NullString
+	Network          sql.NullString
+	LastAired        sql.NullString
+	Overview         sql.NullString
+	OverviewLanguage sql.NullString
 }
 
 type SeriesOrder struct {

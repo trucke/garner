@@ -30,6 +30,15 @@ type Series struct {
 	Added       time.Time  `json:"added"`
 	Fetched     time.Time  `json:"fetched"`
 	XEMFetched  *time.Time `json:"xem_fetched,omitempty"`
+	// TVDB facts for the details page. The overview is in English when TVDB
+	// has it, else German, else the original language; OverviewLanguage
+	// says which.
+	Network          string `json:"network,omitempty"`
+	LastAired        string `json:"last_aired,omitempty"`
+	Overview         string `json:"overview,omitempty"`
+	OverviewLanguage string `json:"overview_language,omitempty"`
+	// HasDetails is false for a show loaded before those facts were kept.
+	HasDetails bool `json:"has_details"`
 }
 
 // Order is an episode order TVDB offers, such as aired or Netflix.
@@ -126,6 +135,10 @@ func (s *Store) saveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 		Year: nullInt(sr.Year), FirstAired: nullString(sr.FirstAired), AverageRuntime: nullInt(sr.AverageRuntime),
 		DefaultOrder: sr.DefaultOrder, TvdbUpdated: sr.TVDBUpdated, AddedAt: now.Unix(), FetchedAt: now.Unix(),
 		Profile: nullString(sr.Profile),
+		// Never NULL once loaded, even without a network: NULL marks shows
+		// loaded before the details were kept.
+		Network: sql.NullString{String: sr.Network, Valid: true}, LastAired: nullString(sr.LastAired),
+		Overview: nullString(sr.Overview), OverviewLanguage: nullString(sr.OverviewLanguage),
 	}); err != nil {
 		return fmt.Errorf("save series: %w", err)
 	}
@@ -324,6 +337,8 @@ func seriesFromRow(r query.Series) Series {
 		Year: int(r.Year.Int64), FirstAired: r.FirstAired.String, AverageRuntime: int(r.AverageRuntime.Int64),
 		DefaultOrder: r.DefaultOrder, Profile: r.Profile.String, TVDBUpdated: r.TvdbUpdated,
 		Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
+		Network: r.Network.String, LastAired: r.LastAired.String, Overview: r.Overview.String,
+		OverviewLanguage: r.OverviewLanguage.String, HasDetails: r.Network.Valid,
 	}
 	if r.XemFetchedAt.Valid {
 		t := time.Unix(r.XemFetchedAt.Int64, 0)

@@ -247,11 +247,8 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 		SearchResult: SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
 		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
 		FirstAired: s.FirstAired, LastAired: s.LastAired, Runtime: s.AverageRuntime, Orders: []string{},
-		URL: "https://thetvdb.com/series/" + url.PathEscape(s.Slug),
+		URL: SeriesURL(s.Slug, s.ID),
 	}}
-	if s.Slug == "" {
-		d.URL = "https://thetvdb.com/dereferrer/series/" + strconv.FormatInt(s.ID, 10)
-	}
 	d.Rules = selection.ProfileNamed(d.Type).Describe()
 	if s.OriginalNetwork != nil {
 		d.Network = s.OriginalNetwork.Name
@@ -313,4 +310,12 @@ func profileFor(s tvdbSeries) string {
 		}
 	}
 	return "tv"
+}
+
+// SeriesURL is a show's page on thetvdb.com, by ID when TVDB has no slug.
+func SeriesURL(slug string, id int64) string {
+	if slug == "" {
+		return "https://thetvdb.com/dereferrer/series/" + strconv.FormatInt(id, 10)
+	}
+	return "https://thetvdb.com/series/" + url.PathEscape(slug)
 }

@@ -44,6 +44,7 @@ func TestRefresh(t *testing.T) {
 		}
 		fmt.Fprint(w, `{"status":"success","data":{"id":1,"name":"Ursprung","slug":"show",
 		"originalLanguage":"jpn","originalCountry":"jpn","year":"2020","defaultSeasonType":1,"lastUpdated":"2026-01-01",
+		"lastAired":"2020-03-25","overview":"Genbun","originalNetwork":{"name":"Example TV"},
 		"status":{"name":"Continuing"},"aliases":[{"language":"eng","name":"The Show"}],
 		"seasonTypes":[{"id":1,"type":"official","name":"Aired Order"},{"id":2,"type":"alternate","name":"Alternate","alternateName":"Netflix"}]}}`)
 	})
@@ -54,7 +55,7 @@ func TestRefresh(t *testing.T) {
 		}
 		fmt.Fprintf(w, `{"status":"success","data":[%s],"links":{"next":null}}`, changed)
 	})
-	reply("/series/1/translations/eng", `{"status":"success","data":{"name":"Show","aliases":["Show!"]}}`)
+	reply("/series/1/translations/eng", `{"status":"success","data":{"name":"Show","overview":"In English.","aliases":["Show!"]}}`)
 	tvdb.HandleFunc("GET /series/1/episodes/official", func(w http.ResponseWriter, r *http.Request) {
 		// Two pages, as TVDB splits long shows.
 		if r.URL.Query().Get("page") == "0" {
@@ -121,6 +122,11 @@ func TestRefresh(t *testing.T) {
 	}
 	if s := d.Series; s.NameEng != "Show" || s.NameDeu != "" || s.DefaultOrder != "official" {
 		t.Errorf("series = %+v", s)
+	}
+	// The details page's facts are stored, the overview in English first.
+	if s := d.Series; !s.HasDetails || s.Network != "Example TV" || s.LastAired != "2020-03-25" ||
+		s.Overview != "In English." || s.OverviewLanguage != "eng" {
+		t.Errorf("details: network %q, last aired %q, overview %q (%s), stored %v", s.Network, s.LastAired, s.Overview, s.OverviewLanguage, s.HasDetails)
 	}
 	if len(d.Orders) != 2 || d.Orders[0].Type != "alternate" || d.Orders[0].AlternateName != "Netflix" {
 		t.Errorf("orders = %+v", d.Orders)

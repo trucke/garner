@@ -170,8 +170,12 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 	year, _ := strconv.Atoi(s.Year)
 	d := store.SeriesData{Series: store.Series{
 		ID: s.ID, Slug: s.Slug, Name: s.Name, OriginalLanguage: s.OriginalLanguage, OriginalCountry: s.OriginalCountry,
-		Status: s.Status.Name, Year: year, FirstAired: s.FirstAired, AverageRuntime: s.AverageRuntime, TVDBUpdated: s.LastUpdated,
+		Status: s.Status.Name, Year: year, FirstAired: s.FirstAired, LastAired: s.LastAired, AverageRuntime: s.AverageRuntime,
+		TVDBUpdated: s.LastUpdated,
 	}}
+	if s.OriginalNetwork != nil {
+		d.Series.Network = s.OriginalNetwork.Name
+	}
 	// The profile is only stored for new shows; a changed one stays.
 	d.Series.Profile = profileFor(s)
 	for _, a := range s.Aliases {
@@ -190,9 +194,15 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 		} else {
 			d.Series.NameDeu = tr.Name
 		}
+		if d.Series.Overview == "" && tr.Overview != "" {
+			d.Series.Overview, d.Series.OverviewLanguage = tr.Overview, lang
+		}
 		for _, a := range tr.Aliases {
 			d.Titles = append(d.Titles, store.Title{Title: a, Language: lang, Source: "tvdb"})
 		}
+	}
+	if d.Series.Overview == "" && s.Overview != "" {
+		d.Series.Overview, d.Series.OverviewLanguage = s.Overview, s.OriginalLanguage
 	}
 	d.Titles = dedupeTitles(d.Titles)
 

@@ -26,8 +26,9 @@ type SeriesDetail struct {
 	// can beat, so clients can mark files below them.
 	States []store.EpisodeStatus `json:"states"`
 	Best   string                `json:"best_tier"`
-	// Folder is where new files of the show go.
+	// Folder is where new files of the show go; URL is its TVDB page.
 	Folder string `json:"folder,omitempty"`
+	URL    string `json:"url"`
 	// Rules describes the profile; Profiles lists the profiles to choose
 	// from with their rules.
 	Rules    string        `json:"rules"`
@@ -186,6 +187,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 	detail := SeriesDetail{
 		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
 		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
+		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID),
 	}
 	for _, p := range []selection.Profile{selection.Anime, selection.TV} {
 		detail.Profiles = append(detail.Profiles, ProfileInfo{Name: p.Name, Rules: p.Describe()})
