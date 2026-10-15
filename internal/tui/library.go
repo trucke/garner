@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -640,15 +642,9 @@ func stateParts(sh store.Show, now time.Time) []part {
 	}
 	switch f.State {
 	case store.EpisodeWaiting, store.EpisodeNotSearched:
-		if n := sh.Counts[store.EpisodeNotSearched]; n > 0 {
-			return []part{{strconv.Itoa(n) + " not searched", sMuted}}
-		}
-		if n := sh.Counts[store.EpisodeWaiting]; n > 1 {
-			next := ""
-			if f.NextRetry != nil {
-				next = " · next search " + when(*f.NextRetry, now)
-			}
-			return []part{{strconv.Itoa(n) + " waiting" + next, sMuted}}
+		// One missing episode tells what its search found, several their count.
+		if n := sh.Counts[store.EpisodeNotSearched] + sh.Counts[store.EpisodeWaiting]; n > 1 {
+			return []part{{strconv.Itoa(n) + " missing", sMuted}}
 		}
 	case store.EpisodeUpcoming:
 		if sh.NextAired != "" {
@@ -748,15 +744,28 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 		}
 		return []part{{"checking the file", sMuted}}
 	case store.EpisodeWaiting:
-		next := ""
-		if nextRetry != nil {
-			next = " · " + when(*nextRetry, now)
+		text := "missing"
+		if summary != "" {
+			text += " · " + lowerFirst(clean(summary))
 		}
-		return []part{{clean(summary) + next, sMuted}}
+		if nextRetry != nil {
+			text += " · next search " + when(*nextRetry, now)
+		}
+		return []part{{text, sMuted}}
 	case store.EpisodeNotSearched:
-		return []part{{"not searched", sMuted}}
+		return []part{{"missing", sMuted}}
 	}
 	return nil
+}
+
+// lowerFirst lets a server sentence continue a line: "Found 21 matching
+// releases" becomes "found 21 matching releases".
+func lowerFirst(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 {
+		return s
+	}
+	return string(unicode.ToLower(r)) + s[n:]
 }
 
 func episodes(sh store.Show) string { return fmt.Sprintf("%d/%d", sh.Imported, sh.Aired) }

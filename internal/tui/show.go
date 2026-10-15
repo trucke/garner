@@ -308,8 +308,8 @@ func (s *showScreen) key(key string) tea.Cmd {
 	case "enter":
 		if s.cursor.episode == 0 && folded != nil {
 			folded[s.cursor.season] = !folded[s.cursor.season]
-		} else if s.cursor.episode != 0 {
-			s.flash.info(sMuted.Render("The episode screen is not available yet."))
+		} else if e, ok := s.cursorEpisode(); ok {
+			return s.open(e)
 		}
 	case "s":
 		e, ok := s.cursorEpisode()
@@ -445,8 +445,43 @@ func (s *showScreen) bottom() string {
 	if s.flash.text != "" {
 		return s.flash.text
 	}
-	return keyBar("enter", "episode", "h l", "fold", "tab", "season", "s", "search", "S", "search missing",
-		"i", "show details", "A", "activity", "esc", "back")
+	keys := []string{"h l", "fold", "tab", "season", "s", "new search", "S", "search missing", "i", "show details", "esc", "back"}
+	if label := s.enterLabel(); label != "" {
+		keys = append([]string{"enter", label}, keys...)
+	}
+	// A activity returns to the bar once the Activity screen exists.
+	return keyBar(keys...)
+}
+
+// open is enter on an episode. A missing one opens its releases: the last
+// search's, or a new search when it was never searched. Any other opens its
+// details.
+func (s *showScreen) open(e episodeRow) tea.Cmd {
+	switch e.status.State {
+	case store.EpisodeNotSearched, store.EpisodeWaiting, store.EpisodeFailed:
+		next := newReleases(s.sess, s, e, e.status.State == store.EpisodeNotSearched)
+		return func() tea.Msg { return switchMsg{next} }
+	case store.EpisodeUpcoming:
+		s.flash.info(sMuted.Render(episodeLabel(e) + " has not aired yet; s searches anyway."))
+		return nil
+	}
+	s.flash.info(sMuted.Render("The episode screen is not available yet."))
+	return nil
+}
+
+// enterLabel is what enter does on the cursor row, for the key bar; empty
+// on a season row, where h l fold, and on an episode not aired yet.
+func (s *showScreen) enterLabel() string {
+	e, ok := s.cursorEpisode()
+	switch {
+	case !ok, e.status.State == store.EpisodeUpcoming:
+		return ""
+	case e.status.State == store.EpisodeNotSearched:
+		return "search"
+	case e.status.State == store.EpisodeWaiting, e.status.State == store.EpisodeFailed:
+		return "releases"
+	}
+	return "details"
 }
 
 // showCols sizes the episode table: glyph, episode, title, aired, size,
