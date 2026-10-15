@@ -133,6 +133,13 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.dirty = false
 			return s, s.reload()
 		}
+		var waiting []*store.Download
+		for _, sh := range s.sess.shows {
+			if sh.Focus != nil {
+				waiting = append(waiting, sh.Focus.Download)
+			}
+		}
+		return s, redrawWhenSlow(waiting...)
 	case eventMsg:
 		switch msg.Type {
 		case client.EventConnected, "series.updated", "series.deleted", "search.finished":
@@ -584,6 +591,31 @@ func stateParts(sh store.Show, now time.Time) []part {
 	return statusParts(f.State, f.Download, f.Summary, f.NextRetry, 0, now)
 }
 
+// importSlowAfter is when an import that waits for Jellyfin shows since
+// when it waits.
+const importSlowAfter = 3 * time.Minute
+
+// redrawMsg only makes the screen draw again.
+type redrawMsg struct{}
+
+// redrawWhenSlow draws the screen again when a waiting import passes
+// importSlowAfter, so its start time appears without a key press.
+func redrawWhenSlow(downloads ...*store.Download) tea.Cmd {
+	var next time.Time
+	for _, d := range downloads {
+		if d == nil || d.Import.State != store.ImportScanning {
+			continue
+		}
+		if at := d.Updated.Add(importSlowAfter); at.After(time.Now()) && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	if next.IsZero() {
+		return nil
+	}
+	return tea.Tick(time.Until(next), func(time.Time) tea.Msg { return redrawMsg{} })
+}
+
 // statusParts describes what an episode is doing, from its state, latest
 // download and latest search. The sentences come from the server verbatim.
 func statusParts(state string, d *store.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
@@ -639,9 +671,12 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 		case store.ImportMoving:
 			return []part{{"moving into the library", sMuted}}
 		case store.ImportScanning:
-			// A start time rather than a counter: the screen changes only on
-			// keys and server events, so a counter would stand still.
-			return []part{{"waiting for Jellyfin since " + when(d.Import.Updated, now), sMuted}}
+			// Jellyfin usually confirms within 1 to 2 minutes; only a longer
+			// wait gets its start time.
+			if started := d.Updated; now.Sub(started) >= importSlowAfter {
+				return []part{{"importing into the media library… · since " + when(started, now), sMuted}}
+			}
+			return []part{{"importing into the media library…", sMuted}}
 		}
 		return []part{{"checking the file", sMuted}}
 	case store.EpisodeWaiting:

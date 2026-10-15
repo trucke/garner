@@ -57,6 +57,8 @@ type addScreen struct {
 	selected  int64
 	offset    int
 	rowsShown int
+	adding    string // the show being added
+	flash     flash
 }
 
 func newAddShow(sess *session, back screen) *addScreen {
@@ -113,10 +115,34 @@ func (s *addScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.selected = s.page.Results[0].ID
 		}
 		return s, nil
+	case addResultMsg:
+		s.adding = ""
+		return s, added(msg, &s.flash)
 	case tea.KeyPressMsg:
+		if s.adding != "" {
+			return s, nil
+		}
+		s.flash.clear()
 		switch msg.String() {
 		case "esc":
 			return s.back, s.back.init()
+		case "ctrl+u":
+			// Clear the whole search, wherever the cursor is, and drop a
+			// search still due for the old text.
+			s.input.SetValue("")
+			s.seq++
+			return s, nil
+		case "ctrl+a":
+			q := strings.TrimSpace(s.input.Value())
+			r, ok := s.cursorResult()
+			if !ok || q != s.shown {
+				return s, nil
+			}
+			if r.Added {
+				return s, func() tea.Msg { return addedMsg{id: r.ID, name: resultName(r), already: true} }
+			}
+			s.adding = resultName(r)
+			return s, addShow(s.sess.client, r.ID, s.adding)
 		case "enter":
 			q := strings.TrimSpace(s.input.Value())
 			if s.err != nil && q == s.shown {
@@ -228,12 +254,18 @@ func (s *addScreen) bottom(width int, q string) string {
 	case s.err == nil:
 		count = strconv.Itoa(len(s.page.Results)) + " results"
 	}
-	keys := keyBar("esc", "back")
+	switch {
+	case s.adding != "":
+		return sMuted.Render("Adding " + s.adding + " and loading its episodes from TVDB…")
+	case s.flash.text != "":
+		return s.flash.text
+	}
+	keys := keyBar("ctrl+u", "clear", "esc", "back")
 	switch {
 	case s.err != nil && q == s.shown:
-		keys = keyBar("enter", "try again", "esc", "back")
+		keys = keyBar("enter", "try again", "ctrl+u", "clear", "esc", "back")
 	case len(s.page.Results) > 0 && q == s.shown:
-		keys = keyBar("↑↓", "move", "enter", "details", "esc", "back")
+		keys = keyBar("↑↓", "move", "enter", "details", "ctrl+a", "add", "ctrl+u", "clear", "esc", "back")
 	}
 	right := keys
 	if count != "" {
@@ -324,8 +356,13 @@ type (
 		preview catalog.Preview
 		err     error
 	}
-	addResultMsg struct{ err error }
-	openedMsg    struct{ err error }
+	// addResultMsg answers adding a show, from the list or its details.
+	addResultMsg struct {
+		id   int64
+		name string
+		err  error
+	}
+	openedMsg struct{ err error }
 )
 
 func newPreview(sess *session, back screen, r catalog.SearchResult) *previewScreen {
@@ -359,18 +396,7 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		s.preview = &msg.preview
 	case addResultMsg:
 		s.adding = false
-		var server *client.ServerError
-		switch {
-		case msg.err == nil:
-			id, name := s.result.ID, s.name()
-			return s, func() tea.Msg { return addedMsg{id: id, name: name} }
-		case errors.As(msg.err, &server) && server.Status == http.StatusConflict:
-			id, name := s.result.ID, s.name()
-			return s, func() tea.Msg { return addedMsg{id: id, name: name, already: true} }
-		case errors.Is(msg.err, client.ErrUnauthorized):
-			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
-		}
-		s.flash.stay(gFailed + " " + sRed.Render("Could not add the show: "+clean(msg.err.Error())))
+		return s, added(msg, &s.flash)
 	case openedMsg:
 		if msg.err != nil {
 			s.flash.stay(gFailed + " " + sRed.Render("Could not open the browser: "+clean(msg.err.Error())))
@@ -394,13 +420,7 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case "a":
 			if s.preview != nil && !s.preview.Added {
 				s.adding = true
-				cl, id := s.sess.client, s.result.ID
-				return s, func() tea.Msg {
-					// Adding loads every episode from TVDB and TheXEM.
-					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					return addResultMsg{cl.Add(ctx, id)}
-				}
+				return s, addShow(s.sess.client, s.result.ID, s.name())
 			}
 		}
 	}
@@ -577,3 +597,31 @@ func (s *previewScreen) bottom() string {
 }
 
 func (s *previewScreen) flashed() *flash { return &s.flash }
+
+func (s *addScreen) flashed() *flash { return &s.flash }
+
+// addShow adds a show. It loads every episode from TVDB and TheXEM, which
+// takes a few seconds.
+func addShow(cl *client.Client, id int64, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return addResultMsg{id, name, cl.Add(ctx, id)}
+	}
+}
+
+// added opens the show once it is in the library, also when it was there
+// already, and reports anything else in the bottom line.
+func added(msg addResultMsg, f *flash) tea.Cmd {
+	var server *client.ServerError
+	switch {
+	case msg.err == nil:
+		return func() tea.Msg { return addedMsg{id: msg.id, name: msg.name} }
+	case errors.As(msg.err, &server) && server.Status == http.StatusConflict:
+		return func() tea.Msg { return addedMsg{id: msg.id, name: msg.name, already: true} }
+	case errors.Is(msg.err, client.ErrUnauthorized):
+		return func() tea.Msg { return disconnectedMsg{errRevoked} }
+	}
+	f.stay(gFailed + " " + sRed.Render("Could not add "+msg.name+": "+clean(msg.err.Error())))
+	return nil
+}

@@ -113,6 +113,13 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.dirty = false
 			return s, s.reload()
 		}
+		if s.detail != nil {
+			var waiting []*store.Download
+			for _, st := range s.detail.States {
+				waiting = append(waiting, st.Download)
+			}
+			return s, redrawWhenSlow(waiting...)
+		}
 	case eventMsg:
 		switch msg.Type {
 		case client.EventConnected, "search.finished", "series.updated":
@@ -191,7 +198,7 @@ func (s *showScreen) initialFolding() map[int]bool {
 }
 
 // seasons groups the episodes by season of the show's default order:
-// regular seasons newest first, then the specials.
+// regular seasons newest first, then the specials; episodes newest first.
 func (s *showScreen) seasons() []season {
 	if s.detail == nil {
 		return nil
@@ -216,8 +223,9 @@ func (s *showScreen) seasons() []season {
 	}
 	out := make([]season, 0, len(bySeason))
 	for _, se := range bySeason {
+		// Newest first, like the seasons.
 		slices.SortStableFunc(se.episodes, func(a, b episodeRow) int {
-			return cmp.Or(cmp.Compare(a.pos.Number, b.pos.Number), cmp.Compare(a.episode.Aired, b.episode.Aired))
+			return cmp.Or(cmp.Compare(b.pos.Number, a.pos.Number), cmp.Compare(b.episode.Aired, a.episode.Aired))
 		})
 		out = append(out, *se)
 	}
