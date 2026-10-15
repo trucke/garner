@@ -68,7 +68,8 @@ type libraryScreen struct {
 	// being deleted.
 	asking   bool
 	choice   int
-	deleting string
+	deleting string // its name
+	busy     string // what runs, such as "Deleting Harbor Precinct…"
 }
 
 func newLibrary(sess *session) *libraryScreen {
@@ -94,8 +95,11 @@ func (s *libraryScreen) showAdded(msg addedMsg) tea.Cmd {
 // showDeleted reports a deleted show.
 func (s *libraryScreen) showDeleted(msg deletedMsg) tea.Cmd {
 	text := "Deleted " + msg.name
-	if msg.deleted.Files > 0 {
-		text += fmt.Sprintf(" and %d files, %s", msg.deleted.Files, size(msg.deleted.Bytes))
+	switch {
+	case msg.deleted.Kept > 0:
+		text = fmt.Sprintf("Removed %s; its %s, %s, stay in the library", msg.name, plural(msg.deleted.Kept, "file"), size(msg.deleted.Bytes))
+	case msg.deleted.Files > 0:
+		text += fmt.Sprintf(" and %s, %s", plural(msg.deleted.Files, "file"), size(msg.deleted.Bytes))
 	}
 	s.flash.info(gDone + " " + sNormal.Render(text))
 	if n := len(msg.deleted.Problems); n > 0 {
@@ -157,7 +161,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	case deleteResultMsg:
 		name := s.deleting
-		s.deleting = ""
+		s.deleting, s.busy = "", ""
 		switch {
 		case errors.Is(msg.err, client.ErrUnauthorized):
 			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
@@ -272,7 +276,7 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case "d":
 		if _, ok := s.cursorShow(); ok {
-			s.asking, s.choice = true, 0 // the safe choice: keep
+			s.asking, s.choice = true, 0 // the safe choice: cancel
 		}
 	case "A":
 		s.flash.info(sMuted.Render("Activity is not available yet."))
@@ -286,23 +290,20 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 
 // answer handles the delete question.
 func (s *libraryScreen) answer(key string) tea.Cmd {
-	switch key {
-	case "esc":
+	sh, ok := s.cursorShow()
+	if !ok {
 		s.asking = false
-	case "h", "left", "shift+tab":
-		s.choice = 0
-	case "l", "right", "tab":
-		s.choice = 1
-	case "enter":
-		s.asking = false
-		sh, ok := s.cursorShow()
-		if s.choice != 1 || !ok {
-			return nil
-		}
-		s.deleting = showName(sh)
-		return deleteShow(s.sess.client, sh.ID)
+		return nil
 	}
-	return nil
+	done, a := deleteKey(key, sh, &s.choice)
+	if done {
+		s.asking = false
+	}
+	if !a.delete {
+		return nil
+	}
+	s.deleting, s.busy = showName(sh), a.busy(showName(sh))
+	return deleteShow(s.sess.client, sh.ID, a.keep)
 }
 
 // cursorShow is the show under the cursor, if any is shown.
@@ -491,8 +492,8 @@ func (s *libraryScreen) bottom(width, shown, total int) string {
 		left := sNormal.Render("/"+s.filter) + lipgloss.NewStyle().Background(cFg).Render(" ")
 		right := sMuted.Render(fmt.Sprintf("%d of %d", shown, total))
 		return left + strings.Repeat(" ", max(1, width-2-lipgloss.Width(left)-lipgloss.Width(right))) + right
-	case s.deleting != "":
-		return sMuted.Render("Deleting " + s.deleting + "…")
+	case s.busy != "":
+		return sMuted.Render(s.busy)
 	case s.flash.text != "":
 		return s.flash.text
 	case s.loaded && len(s.sess.shows) == 0:

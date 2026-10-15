@@ -54,19 +54,25 @@ func (c *Client) Refresh(ctx context.Context, id int64) (server.SeriesDetail, er
 	return d, c.do(ctx, http.MethodPost, "/api/v1/series/"+strconv.FormatInt(id, 10)+"/refresh", nil, &d)
 }
 
-// Deleted is what deleting a show removed.
+// Deleted is what deleting a show removed, or kept.
 type Deleted struct {
-	Files int   `json:"files"`
+	Files int   `json:"files"` // deleted
+	Kept  int   `json:"kept"`  // left in the library
 	Bytes int64 `json:"bytes"`
 	// Problems lists files that could not be removed; the show is gone
 	// regardless.
 	Problems []string `json:"problems"`
 }
 
-// DeleteSeries removes a show, cancels its downloads and deletes its files.
-func (c *Client) DeleteSeries(ctx context.Context, id int64) (Deleted, error) {
+// DeleteSeries removes a show and cancels its downloads. Its files are
+// deleted unless keepFiles is set.
+func (c *Client) DeleteSeries(ctx context.Context, id int64, keepFiles bool) (Deleted, error) {
+	files := "delete"
+	if keepFiles {
+		files = "keep"
+	}
 	var d Deleted
-	return d, c.do(ctx, http.MethodDelete, "/api/v1/series/"+strconv.FormatInt(id, 10), nil, &d)
+	return d, c.do(ctx, http.MethodDelete, "/api/v1/series/"+strconv.FormatInt(id, 10)+"?files="+files, nil, &d)
 }
 
 // SearchEpisode searches the indexers for an episode.

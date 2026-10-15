@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
@@ -274,9 +276,9 @@ var seasonFolder = regexp.MustCompile(`^Season\.\d+$`)
 // DeleteFiles removes a show's imported files and their subtitle files,
 // then the season and show folders that are left empty. Only folders named
 // the way Garner names them are removed, so a library root or someone
-// else's folder never goes. It returns how many files it removed and the
+// else's folder never goes. It returns the files it removed and the
 // problems it met.
-func DeleteFiles(seriesID int64, paths []string) (removed int, problems []string) {
+func DeleteFiles(seriesID int64, paths []string) (removed, problems []string) {
 	showSuffix := fmt.Sprintf(".[tvdbid-%d]", seriesID)
 	folders := map[string]bool{}
 	for _, p := range paths {
@@ -284,7 +286,7 @@ func DeleteFiles(seriesID int64, paths []string) (removed int, problems []string
 			problems = append(problems, err.Error())
 			continue
 		} else if err == nil {
-			removed++
+			removed = append(removed, p)
 		}
 		removeSubtitles(p)
 		folders[filepath.Dir(p)] = true
@@ -299,4 +301,27 @@ func DeleteFiles(seriesID int64, paths []string) (removed int, problems []string
 		}
 	}
 	return removed, problems
+}
+
+// Removed tells Jellyfin that files are gone. When that fails, Jellyfin
+// drops them at its next library scan.
+func (s *Service) Removed(ctx context.Context, paths []string) {
+	if s.jellyfin == nil {
+		return
+	}
+	var remote []string
+	for _, p := range paths {
+		if r, ok := s.opts.JellyfinPaths.Remote(p); ok {
+			remote = append(remote, r)
+		}
+	}
+	if len(remote) == 0 {
+		return
+	}
+	// The files are gone: tell Jellyfin even when the caller stopped waiting.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := s.jellyfin.Deleted(ctx, remote); err != nil {
+		s.log.Warn("could not tell Jellyfin about deleted files; it drops them at its next scan", "err", err)
+	}
 }

@@ -33,8 +33,8 @@ func TestDeleteFiles(t *testing.T) {
 	}
 
 	removed, problems := DeleteFiles(42, []string{a, b, filepath.Join(show, "Season.01/already-gone.mkv")})
-	if removed != 2 || len(problems) != 0 {
-		t.Fatalf("removed %d, problems %v; want 2 and none", removed, problems)
+	if len(removed) != 2 || len(problems) != 0 {
+		t.Fatalf("removed %v, problems %v; want 2 files and none", removed, problems)
 	}
 	for _, gone := range []string{filepath.Join(show, "Season.01"), b} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {

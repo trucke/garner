@@ -91,7 +91,7 @@ func TestDeleteSeries(t *testing.T) {
 	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: now, Outcome: "nothing", Summary: "No matching release found"}); err != nil {
 		t.Fatal(err)
 	}
-	if code := call(http.MethodDelete, "/api/v1/series/42", ""); code != http.StatusConflict {
+	if code := call(http.MethodDelete, "/api/v1/series/42?files=delete", ""); code != http.StatusConflict {
 		t.Fatalf("delete while files are moved: %d, want 409", code)
 	}
 	if _, err := os.Stat(video); err != nil {
@@ -101,7 +101,14 @@ func TestDeleteSeries(t *testing.T) {
 	if err := st.UpdateImport(ctx, d.ID, store.Import{State: store.ImportDone}, now); err != nil {
 		t.Fatal(err)
 	}
-	if code := call(http.MethodDelete, "/api/v1/series/42", ""); code != http.StatusOK {
+	// Without saying what happens to the files, nothing happens.
+	if code := call(http.MethodDelete, "/api/v1/series/42", ""); code != http.StatusBadRequest {
+		t.Fatalf("delete without files=: %d, want 400", code)
+	}
+	if ok, _ := st.HasSeries(ctx, 42); !ok {
+		t.Fatal("a refused delete removed the show")
+	}
+	if code := call(http.MethodDelete, "/api/v1/series/42?files=delete", ""); code != http.StatusOK {
 		t.Fatalf("delete: %d", code)
 	}
 	if _, err := os.Stat(video); !os.IsNotExist(err) {
@@ -122,5 +129,33 @@ func TestDeleteSeries(t *testing.T) {
 	}
 	if shows, err := st.Library(ctx, now); err != nil || len(shows) != 0 {
 		t.Errorf("library after delete: %d shows, %v", len(shows), err)
+	}
+
+	// files=keep removes the show and leaves its files in the library.
+	if err := st.SaveSeries(ctx, store.SeriesData{
+		Series: store.Series{ID: 43, Slug: "quiet-harbour", Name: "Quiet Harbour", OriginalLanguage: "eng",
+			OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+		Episodes: []store.Episode{{ID: 201, Aired: "2026-01-01", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}}},
+	}, true, now); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(t.TempDir(), "Quiet.Harbour.[tvdbid-43]", "Season.01", "Quiet.Harbour.S01E01.mkv")
+	if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kept, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 201, Path: kept, Size: 5}, 0, now); err != nil {
+		t.Fatal(err)
+	}
+	if code := call(http.MethodDelete, "/api/v1/series/43?files=keep", ""); code != http.StatusOK {
+		t.Fatalf("delete keeping files: %d", code)
+	}
+	if ok, _ := st.HasSeries(ctx, 43); ok {
+		t.Error("the show is still in the catalogue")
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Errorf("the kept file is gone: %v", err)
 	}
 }

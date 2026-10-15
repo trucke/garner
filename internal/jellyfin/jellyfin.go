@@ -31,6 +31,17 @@ func New(baseURL, apiKey string, client *http.Client) *Client {
 // Created tells Jellyfin that files appeared, so it scans just those paths.
 // Paths are as Jellyfin sees them.
 func (c *Client) Created(ctx context.Context, paths []string) error {
+	return c.updated(ctx, "Created", paths)
+}
+
+// Deleted tells Jellyfin that files are gone, so it drops them about a
+// minute later instead of at its next library scan. Paths are as Jellyfin
+// sees them.
+func (c *Client) Deleted(ctx context.Context, paths []string) error {
+	return c.updated(ctx, "Deleted", paths)
+}
+
+func (c *Client) updated(ctx context.Context, kind string, paths []string) error {
 	type update struct {
 		Path       string `json:"Path"`
 		UpdateType string `json:"UpdateType"`
@@ -39,7 +50,7 @@ func (c *Client) Created(ctx context.Context, paths []string) error {
 		Updates []update `json:"Updates"`
 	}{}
 	for _, p := range paths {
-		body.Updates = append(body.Updates, update{Path: p, UpdateType: "Created"})
+		body.Updates = append(body.Updates, update{Path: p, UpdateType: kind})
 	}
 	return c.do(ctx, http.MethodPost, "/Library/Media/Updated", body, nil)
 }

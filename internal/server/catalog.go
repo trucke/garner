@@ -198,11 +198,22 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 	writeJSON(w, status, detail)
 }
 
-// handleDeleteSeries removes a show, cancels its running downloads and
-// deletes the files Garner imported for it.
+// handleDeleteSeries removes a show and cancels its running downloads.
+// files=delete also deletes the files Garner imported for it; files=keep
+// leaves them in the library. One of them is required, so a bare request
+// never deletes files.
 func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 	id, ok := seriesID(w, r)
 	if !ok {
+		return
+	}
+	var keep bool
+	switch r.URL.Query().Get("files") {
+	case "keep":
+		keep = true
+	case "delete":
+	default:
+		writeError(w, http.StatusBadRequest, "say what happens to the show's files: files=keep or files=delete")
 		return
 	}
 	ctx := r.Context()
@@ -270,16 +281,25 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not delete the show; it stays."+cancelled)
 		return
 	}
+	if keep {
+		s.log.Info("deleted a show, kept its files", "series", id, "files", len(paths))
+		s.events.publish(Event{Type: "series.deleted", Data: map[string]int64{"id": id}})
+		writeJSON(w, http.StatusOK, map[string]any{"files": 0, "kept": len(paths), "bytes": size, "problems": []string{}})
+		return
+	}
 	removed, problems := importer.DeleteFiles(id, paths)
 	if len(problems) > 0 {
 		s.log.Error("delete series files", "series", id, "problems", problems)
 	}
-	s.log.Info("deleted a show", "series", id, "files", removed)
+	if s.imports != nil {
+		s.imports.Removed(ctx, removed)
+	}
+	s.log.Info("deleted a show", "series", id, "files", len(removed))
 	s.events.publish(Event{Type: "series.deleted", Data: map[string]int64{"id": id}})
 	if problems == nil {
 		problems = []string{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": removed, "bytes": size, "problems": problems})
+	writeJSON(w, http.StatusOK, map[string]any{"files": len(removed), "kept": 0, "bytes": size, "problems": problems})
 }
 
 func seriesID(w http.ResponseWriter, r *http.Request) (int64, bool) {

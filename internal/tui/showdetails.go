@@ -135,7 +135,7 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	case "p":
 		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p server.ProfileInfo) bool { return p.Name == d.Series.Profile }))
 	case "d":
-		s.overlay, s.choice = deleteOverlay, 0 // the safe choice: keep
+		s.overlay, s.choice = deleteOverlay, 0 // the safe choice: cancel
 	case "o":
 		return openLink(d.URL)
 	case "r":
@@ -153,10 +153,18 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 
 func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 	d := s.show.detail
-	options := 2 // keep, delete
-	if s.overlay == profileOverlay {
-		options = len(d.Profiles)
+	if s.overlay == deleteOverlay {
+		done, a := deleteKey(key, d.Summary, &s.choice)
+		if done {
+			s.overlay = noOverlay
+		}
+		if !a.delete {
+			return nil
+		}
+		s.busy = a.busy(s.name())
+		return deleteShow(s.sess.client, s.show.id, a.keep)
 	}
+	options := len(d.Profiles)
 	switch key {
 	case "esc":
 		s.overlay = noOverlay
@@ -169,9 +177,6 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 		s.overlay = noOverlay
 		cl, id := s.sess.client, s.show.id
 		switch {
-		case overlay == deleteOverlay && s.choice == 1:
-			s.busy = "Deleting " + s.name() + "…"
-			return deleteShow(cl, id)
 		case overlay == profileOverlay && s.choice < len(d.Profiles) && d.Profiles[s.choice].Name != d.Series.Profile:
 			profile := d.Profiles[s.choice].Name
 			s.busy = "Changing the profile…"
@@ -255,34 +260,79 @@ func (s *showDetailsScreen) deleteLines() []string {
 	return deleteQuestion(s.name(), s.show.detail.Summary, s.choice)
 }
 
-// deleteQuestion is the delete overlay, from the library or the details
-// page. The cursor starts on Keep, the safe choice.
-func deleteQuestion(name string, sh store.Show, chosen int) []string {
-	const width = 64
-	text := "The show leaves the library. Garner has no files of it."
+// deleteAnswer is a choice in the delete question.
+type deleteAnswer struct {
+	label  string
+	delete bool // false: cancel
+	keep   bool // leave the files in the library
+}
+
+// deleteAnswers are the choices in the delete question, from the library
+// or the details page. Cancel, the safe one, comes first and is
+// preselected; keeping the files is offered only when there are files.
+func deleteAnswers(sh store.Show) []deleteAnswer {
 	if sh.Bytes > 0 {
-		// Not the folder: after a profile change the files may lie elsewhere.
-		text = fmt.Sprintf("The show leaves the library and its files, %s, are deleted.", size(sh.Bytes))
+		return []deleteAnswer{{label: "Cancel"}, {"Keep files", true, true}, {"Delete files", true, false}}
+	}
+	return []deleteAnswer{{label: "Cancel"}, {label: "Delete", delete: true}}
+}
+
+func (a deleteAnswer) busy(name string) string {
+	if a.keep {
+		return "Removing " + name + "…"
+	}
+	return "Deleting " + name + "…"
+}
+
+// deleteKey moves the choice in the delete question about sh or answers
+// it. done closes the question; the answer says whether and how to delete.
+func deleteKey(key string, sh store.Show, chosen *int) (done bool, answer deleteAnswer) {
+	answers := deleteAnswers(sh)
+	switch key {
+	case "esc":
+		return true, deleteAnswer{}
+	case "h", "left", "shift+tab":
+		*chosen = max(0, *chosen-1)
+	case "l", "right", "tab":
+		*chosen = min(len(answers)-1, *chosen+1)
+	case "enter":
+		if *chosen < len(answers) {
+			answer = answers[*chosen]
+		}
+		return true, answer
+	}
+	return false, deleteAnswer{}
+}
+
+// deleteQuestion is the delete overlay.
+func deleteQuestion(name string, sh store.Show, chosen int) []string {
+	var body []string
+	if sh.Bytes > 0 {
+		body = append(body, sNormal.Render("Files: "+size(sh.Bytes)))
 	}
 	if sh.Counts[store.EpisodeDownloading]+sh.Counts[store.EpisodeProcessing] > 0 {
-		text += " Downloads in progress are cancelled."
+		body = append(body, sNormal.Render("Running downloads are cancelled."))
 	}
-	lines := []string{gFailed + " " + sBold.Render("Delete "+name), ""}
-	for _, l := range strings.Split(ansi.Wrap(text, width, ""), "\n") {
-		lines = append(lines, sNormal.Render(l))
+	lines := []string{gFailed + " " + sBold.Render("Delete "+name+"?")}
+	if len(body) > 0 {
+		lines = append(append(lines, ""), body...)
+	}
+	var row []string
+	for i, a := range deleteAnswers(sh) {
+		row = append(row, choice(a.label, i == chosen))
 	}
 	return append(lines, "",
-		"  "+choice("Keep", chosen == 0)+"   "+choice("Delete", chosen == 1),
+		"  "+strings.Join(row, "   "),
 		"",
 		keyBar("h l", "choose", "enter", "ok", "esc", "cancel"))
 }
 
-// deleteShow deletes a show with its files.
-func deleteShow(cl *client.Client, id int64) tea.Cmd {
+// deleteShow deletes a show, with its files unless keepFiles is set.
+func deleteShow(cl *client.Client, id int64, keepFiles bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		deleted, err := cl.DeleteSeries(ctx, id)
+		deleted, err := cl.DeleteSeries(ctx, id, keepFiles)
 		return deleteResultMsg{deleted, err}
 	}
 }
