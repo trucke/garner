@@ -38,9 +38,11 @@ type (
 )
 
 type releasesScreen struct {
-	sess      *session
-	back      *showScreen
-	episode   episodeRow
+	sess    *session
+	back    *showScreen
+	episode episodeRow
+	// season is set for a season search, which lists packs only.
+	season    int
 	search    *store.Search
 	progress  *search.Progress
 	searching bool
@@ -61,6 +63,11 @@ func newReleases(sess *session, back *showScreen, e episodeRow, fresh bool) *rel
 	return &releasesScreen{sess: sess, back: back, episode: e, searching: fresh}
 }
 
+// newSeasonReleases searches a whole season for packs.
+func newSeasonReleases(sess *session, back *showScreen, season int) *releasesScreen {
+	return &releasesScreen{sess: sess, back: back, season: season, searching: true}
+}
+
 func (s *releasesScreen) init() tea.Cmd {
 	if s.searching {
 		return s.run()
@@ -79,9 +86,13 @@ func (s *releasesScreen) run() tea.Cmd {
 	s.searching, s.progress, s.err, s.confirm = true, nil, nil, 0
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	s.cancel = cancel
-	cl, id := s.sess.client, s.episode.episode.ID
+	cl, id, series, season := s.sess.client, s.episode.episode.ID, s.back.id, s.season
 	return func() tea.Msg {
 		defer cancel()
+		if season > 0 {
+			sr, err := cl.SearchSeason(ctx, series, season)
+			return releasesMsg{s, sr, err}
+		}
 		sr, err := cl.SearchEpisode(ctx, id)
 		return releasesMsg{s, sr, err}
 	}
@@ -126,13 +137,21 @@ func (s *releasesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.flash.stay(gFailed + " " + sRed.Render("Could not start the download: "+clean(msg.err.Error())))
 			return s, nil
 		}
-		// The episode screen follows the download.
-		next := newEpisode(s.sess, s.back, s.episode.episode.ID)
+		// The episode screen follows the download; a pack's belongs to its
+		// first missing episode.
+		next := newEpisode(s.sess, s.back, msg.download.EpisodeID)
 		return s, func() tea.Msg { return switchMsg{next} }
 	case eventMsg:
 		if msg.Type == "search.progress" {
 			var p search.Progress
-			if json.Unmarshal(msg.Data, &p) == nil && p.EpisodeID == s.episode.episode.ID && s.searching {
+			if json.Unmarshal(msg.Data, &p) != nil || !s.searching {
+				break
+			}
+			ours := p.EpisodeID == s.episode.episode.ID
+			if s.season > 0 {
+				ours = p.SeriesID == s.back.id && p.Season == s.season
+			}
+			if ours {
 				s.progress = &p
 			}
 		}
@@ -201,10 +220,14 @@ func (s *releasesScreen) download() tea.Cmd {
 	}
 	s.confirm = 0
 	s.busy = "Starting the download…"
-	cl, id := s.sess.client, c.ID
+	cl, id, pack := s.sess.client, c.ID, s.season > 0
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		if pack {
+			d, err := cl.DownloadSeasonCandidate(ctx, id)
+			return startedMsg{d, err}
+		}
 		d, err := cl.DownloadCandidate(ctx, id)
 		return startedMsg{d, err}
 	}
@@ -245,6 +268,9 @@ func (s *releasesScreen) move(n int) {
 func (s *releasesScreen) view(width, height int) string {
 	var b strings.Builder
 	label := episodeLabel(s.episode)
+	if s.season > 0 {
+		label = fmt.Sprintf("Season %d", s.season)
+	}
 	b.WriteString(header(width, s.sess, "Garner", "Library", clean(s.back.name), label, "Releases") + "\n\n")
 	b.WriteString("   " + s.facts() + "\n\n")
 
@@ -261,6 +287,9 @@ func (s *releasesScreen) view(width, height int) string {
 
 func (s *releasesScreen) facts() string {
 	parts := episodeFacts(s.episode)
+	if s.season > 0 {
+		parts = s.seasonFacts()
+	}
 	switch {
 	case s.searching:
 		parts = append(parts, sSubtle.Render("Searched")+"  "+gWorking+" "+sAmber.Render("running"))
@@ -275,6 +304,24 @@ func (s *releasesScreen) facts() string {
 		parts = append(parts, fact("Searched", searched))
 	}
 	return strings.Join(parts, "      ")
+}
+
+// seasonFacts are the season and how many of its episodes are missing.
+func (s *releasesScreen) seasonFacts() []string {
+	parts := []string{fact("Season", strconv.Itoa(s.season))}
+	for _, se := range s.back.seasons() {
+		if se.number != s.season {
+			continue
+		}
+		missing := 0
+		for _, e := range se.episodes {
+			if e.status.State == store.EpisodeNotSearched || e.status.State == store.EpisodeWaiting {
+				missing++
+			}
+		}
+		parts = append(parts, fact("Missing", fmt.Sprintf("%d of %d episodes", missing, len(se.episodes))))
+	}
+	return parts
 }
 
 // progressLines show each indexer of a running search.
@@ -305,7 +352,7 @@ func (s *releasesScreen) progressLines() string {
 const (
 	tierWidth  = len("English 1080p")
 	audioWidth = len("DE, EN, JA")
-	sizeWidth  = len("9.8 GB")
+	sizeWidth  = len("99.9 GB")
 	ageWidth   = len("11mo")
 )
 

@@ -312,12 +312,16 @@ func (s *showScreen) key(key string) tea.Cmd {
 			return s.open(e)
 		}
 	case "s":
-		e, ok := s.cursorEpisode()
-		if !ok {
-			s.flash.info(sMuted.Render("Choose an episode to search for."))
+		var next screen
+		switch e, ok := s.cursorEpisode(); {
+		case ok:
+			next = newReleases(s.sess, s, e, true)
+		case s.cursor.season == 0:
+			s.flash.info(sMuted.Render("Specials come one by one; search them on their own row."))
 			return nil
+		default:
+			next = newSeasonReleases(s.sess, s, s.cursor.season)
 		}
-		next := newReleases(s.sess, s, e, true)
 		return func() tea.Msg { return switchMsg{next} }
 	case "S":
 		s.flash.info(sMuted.Render("Searching every missing episode is not available yet."))
@@ -444,7 +448,11 @@ func (s *showScreen) bottom() string {
 	if s.flash.text != "" {
 		return s.flash.text
 	}
-	keys := []string{"h l", "fold", "tab", "season", "s", "new search", "S", "search missing", "i", "show details", "esc", "back"}
+	search := "search season" // for its packs
+	if _, ok := s.cursorEpisode(); ok {
+		search = "new search"
+	}
+	keys := []string{"h l", "fold", "tab", "season", "s", search, "S", "search missing", "i", "show details", "esc", "back"}
 	if label := s.enterLabel(); label != "" {
 		keys = append([]string{"enter", label}, keys...)
 	}
