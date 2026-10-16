@@ -194,10 +194,6 @@ func (s *releasesScreen) key(key string) tea.Cmd {
 		}
 	case "enter":
 		return s.download()
-	case "A":
-		s.flash.info(sMuted.Render("Activity is not available yet."))
-	case "?":
-		s.flash.info(sMuted.Render("Help is not available yet."))
 	}
 	return nil
 }
@@ -506,10 +502,18 @@ func (s *releasesScreen) bottom() string {
 	case s.searching:
 		return keyBar("esc", "back")
 	}
-	return keyBar("j k", "move", "enter", "download", "r", "search again", "A", "activity", "esc", "back")
+	return keyBar("j k", "move", "enter", "download", "r", "search again", "A", "activity", "?", "help", "esc", "back")
 }
 
 func (s *releasesScreen) flashed() *flash { return &s.flash }
+
+func (s *releasesScreen) captures() bool { return s.busy != "" }
+
+func (s *releasesScreen) help() (string, []string) {
+	return "Releases", []string{
+		"enter", "download; a rejected one asks twice", "r", "search again",
+	}
+}
 
 // cutMiddle shortens a release name in the middle, keeping its start and
 // the group tag after the last hyphen, as in "Show.S01E01.…-GROUP".

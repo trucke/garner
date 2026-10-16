@@ -330,10 +330,6 @@ func (s *showScreen) key(key string) tea.Cmd {
 			next := newShowDetails(s.sess, s, s)
 			return func() tea.Msg { return switchMsg{next} }
 		}
-	case "A":
-		s.flash.info(sMuted.Render("Activity is not available yet."))
-	case "?":
-		s.flash.info(sMuted.Render("Help is not available yet."))
 	}
 	return nil
 }
@@ -444,6 +440,14 @@ func (s *showScreen) facts(now time.Time) string {
 	return fact("Type", typ) + "      " + fact("Status", st) + "      " + fact("Episodes", episodes)
 }
 
+func (s *showScreen) help() (string, []string) {
+	return "Show", []string{
+		"enter", "open the episode", "s", "search the episode, or the season for packs",
+		"h l", "fold, unfold the season", "S", "search every missing episode (not built yet)",
+		"tab", "next season", "i", "show details",
+	}
+}
+
 func (s *showScreen) bottom() string {
 	if s.flash.text != "" {
 		return s.flash.text
@@ -452,11 +456,11 @@ func (s *showScreen) bottom() string {
 	if _, ok := s.cursorEpisode(); ok {
 		search = "new search"
 	}
-	keys := []string{"h l", "fold", "tab", "season", "s", search, "S", "search missing", "i", "show details", "esc", "back"}
+	// S search missing joins the bar once it is built; Help lists it.
+	keys := []string{"h l", "fold", "tab", "season", "s", search, "i", "show details", "A", "activity", "?", "help", "esc", "back"}
 	if label := s.enterLabel(); label != "" {
 		keys = append([]string{"enter", label}, keys...)
 	}
-	// A activity returns to the bar once the Activity screen exists.
 	return keyBar(keys...)
 }
 

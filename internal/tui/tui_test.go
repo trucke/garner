@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"slices"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/server"
@@ -130,5 +133,53 @@ func TestPipelineFailures(t *testing.T) {
 	if st := pipeline(store.Download{State: store.Failed, JobID: "j", Failure: "file check: audio is Japanese",
 		Import: store.Import{State: store.ImportRejected}}, time.Now())[3]; st.detail[0].text != "audio is Japanese" {
 		t.Errorf("rejected detail = %q", st.detail[0].text)
+	}
+}
+
+// TestKeysWhileTyping sends ? and A to a filter being typed; otherwise they
+// open Help and the Activity.
+func TestKeysWhileTyping(t *testing.T) {
+	sess := &session{}
+	a := &app{sess: sess, library: newLibrary(sess)}
+	a.screen = a.library
+	a.library.typing = true
+	for _, k := range []rune{'?', 'A'} {
+		a.update(tea.KeyPressMsg{Code: k, Text: string(k)})
+	}
+	if a.help || a.screen != screen(a.library) || a.library.filter != "?A" {
+		t.Fatalf("while typing: help %v, filter %q", a.help, a.library.filter)
+	}
+	a.library.typing = false
+	a.update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	if !a.help {
+		t.Error("? did not open Help")
+	}
+	a.update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if a.help {
+		t.Error("esc did not close Help")
+	}
+}
+
+// TestActivityOrder lists what needs the user first, then what runs, then
+// what ended; the newest first within each.
+func TestActivityOrder(t *testing.T) {
+	at := func(m int) time.Time { return time.Date(2026, 10, 16, 12, m, 0, 0, time.UTC) }
+	item := func(ep int64, d store.Download) store.ActivityItem {
+		d.EpisodeID = ep
+		return store.ActivityItem{Download: d}
+	}
+	s := &activityScreen{items: []store.ActivityItem{
+		item(1, store.Download{State: store.Completed, Updated: at(50), Import: store.Import{State: store.ImportDone, Updated: at(55)}}),
+		item(2, store.Download{State: store.Downloading, Created: at(10)}),
+		item(3, store.Download{State: store.Queued, Created: at(20)}),
+		item(4, store.Download{State: store.Completed, Updated: at(1), Import: store.Import{State: store.ImportFailed, Updated: at(2)}}),
+		item(5, store.Download{State: store.Cancelled, Updated: at(40)}),
+	}}
+	var got []int64
+	for _, it := range s.rows() {
+		got = append(got, it.Download.EpisodeID)
+	}
+	if want := []int64{4, 3, 2, 1, 5}; !slices.Equal(got, want) {
+		t.Errorf("order = %v, want %v", got, want)
 	}
 }

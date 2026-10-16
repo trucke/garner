@@ -280,10 +280,6 @@ func (s *libraryScreen) key(msg tea.KeyPressMsg) tea.Cmd {
 		if _, ok := s.cursorShow(); ok {
 			s.asking, s.choice = true, 0 // the safe choice: cancel
 		}
-	case "A":
-		s.flash.info(sMuted.Render("Activity is not available yet."))
-	case "?":
-		s.flash.info(sMuted.Render("Help is not available yet."))
 	case "q":
 		return tea.Quit
 	}
@@ -502,11 +498,11 @@ func (s *libraryScreen) bottom(width, shown, total int) string {
 		return keyBar("a", "add show", "?", "help", "q", "quit")
 	case s.filter != "":
 		return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
-			"esc", "clear filter", "tab", "category", "?", "help", "q", "quit")
+			"esc", "clear filter", "?", "help", "q", "quit")
 	}
-	// A activity returns to the bar once the Activity screen exists.
+	// tab category is in Help; the tabs show at the top.
 	return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
-		"s", "sort", "tab", "category", "?", "help", "q", "quit")
+		"s", "sort", "A", "activity", "?", "help", "q", "quit")
 }
 
 // columns holds the table's column widths: glyph, show, episodes, size,
@@ -839,3 +835,15 @@ func when(t, now time.Time) string {
 }
 
 func (s *libraryScreen) flashed() *flash { return &s.flash }
+
+func (s *libraryScreen) captures() bool { return s.typing || s.asking || s.deleting != "" }
+
+func (s *libraryScreen) help() (string, []string) {
+	return "Library", []string{
+		"enter", "open the show", "i", "show details",
+		"a", "add a show", "d", "delete the show",
+		"tab", "next category", "1 2 3 4", "jump to a category",
+		"/", "filter, esc clears", "s", "sort by the next column",
+		"I", "reverse the order", "q", "quit",
+	}
+}

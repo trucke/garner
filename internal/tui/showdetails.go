@@ -359,6 +359,15 @@ func (s *showDetailsScreen) profileLines() []string {
 		keyBar("j k", "choose", "enter", "ok", "esc", "cancel"))
 }
 
+func (s *showDetailsScreen) captures() bool { return s.overlay != noOverlay || s.busy != "" }
+
+func (s *showDetailsScreen) help() (string, []string) {
+	return "Show details", []string{
+		"p", "change the profile", "r", "refresh from TVDB",
+		"o", "open on TVDB", "d", "delete the show",
+	}
+}
+
 func (s *showDetailsScreen) bottom() string {
 	switch {
 	case s.busy != "":
@@ -366,7 +375,7 @@ func (s *showDetailsScreen) bottom() string {
 	case s.flash.text != "":
 		return s.flash.text
 	}
-	return keyBar("p", "change profile", "r", "refresh from TVDB", "o", "open on TVDB", "d", "delete show", "esc", "back")
+	return keyBar("p", "change profile", "r", "refresh from TVDB", "o", "open on TVDB", "d", "delete show", "?", "help", "esc", "back")
 }
 
 // titleBlock is the heading of a details page: the English name, the

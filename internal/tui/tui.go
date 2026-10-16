@@ -61,6 +61,8 @@ var errRevoked = "The stored token no longer works: " + client.ErrUnauthorized.E
 
 type app struct {
 	path          string
+	version       string // of this program
+	help          bool   // the Help overlay is open
 	width, height int
 	sess          *session
 	screen        screen
@@ -69,8 +71,8 @@ type app struct {
 }
 
 // Run opens the interface. path is where the connection code is stored.
-func Run(ctx context.Context, path string) error {
-	a := &app{path: path}
+func Run(ctx context.Context, path, version string) error {
+	a := &app{path: path, version: version}
 	code, err := connect.Load(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -145,8 +147,26 @@ func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width, a.height = msg.Width, msg.Height
 		return a, nil
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
+		key := msg.String()
+		if key == "ctrl+c" {
 			return a, tea.Quit
+		}
+		if a.help {
+			return a, a.helpKey(key)
+		}
+		if c, ok := a.screen.(capturer); a.sess == nil || ok && c.captures() {
+			break
+		}
+		switch key {
+		case "?":
+			a.help = true
+			return a, nil
+		case "A":
+			if _, there := a.screen.(*activityScreen); !there {
+				a.screen = newActivity(a.sess, a.screen)
+				return a, a.screen.init()
+			}
+			return a, nil
 		}
 	case connectedMsg:
 		return a, a.open(msg.client, msg.status)
@@ -216,8 +236,25 @@ func (a *app) View() tea.View {
 	v.WindowTitle = "Garner"
 	if a.width > 0 && a.height > 0 {
 		v.Content = a.screen.view(a.width, a.height)
+		if a.help {
+			v.Content = overlay(v.Content, helpLines(a.screen), a.width, a.height)
+		}
 	}
 	return v
+}
+
+// helpKey handles a key while the Help overlay is open: ? and esc close it,
+// a opens About.
+func (a *app) helpKey(key string) tea.Cmd {
+	switch key {
+	case "?", "esc":
+		a.help = false
+	case "a":
+		a.help = false
+		a.screen = newAbout(a.sess, a.screen, a.path, a.version)
+		return a.screen.init()
+	}
+	return nil
 }
 
 // header renders the first row: the breadcrumb on the left, the activity

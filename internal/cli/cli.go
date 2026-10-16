@@ -81,7 +81,7 @@ func newRoot(version string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tui.Run(cmd.Context(), path)
+			return tui.Run(cmd.Context(), path, a.version)
 		},
 	}
 	root.PersistentFlags().StringVarP(&a.configPath, "config", "c", "", "config file (default $GARNER_CONFIG or "+config.DefaultPath+")")

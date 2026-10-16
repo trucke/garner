@@ -437,10 +437,15 @@ func (s *previewScreen) name() string {
 // openLink opens a TVDB page in the browser. Only thetvdb.com links are
 // opened: the address comes from the server.
 func openLink(link string) tea.Cmd {
+	if !strings.HasPrefix(link, "https://thetvdb.com/") {
+		return func() tea.Msg { return openedMsg{fmt.Errorf("not a thetvdb.com link: %s", link)} }
+	}
+	return browse(link)
+}
+
+// browse opens a link in the browser.
+func browse(link string) tea.Cmd {
 	return func() tea.Msg {
-		if !strings.HasPrefix(link, "https://thetvdb.com/") {
-			return openedMsg{fmt.Errorf("not a thetvdb.com link: %s", link)}
-		}
 		name := "xdg-open"
 		if runtime.GOOS == "darwin" {
 			name = "open"
@@ -597,6 +602,13 @@ func (s *previewScreen) bottom() string {
 }
 
 func (s *previewScreen) flashed() *flash { return &s.flash }
+
+func (s *previewScreen) help() (string, []string) {
+	return "Add show", []string{"a", "add to the library", "o", "open on TVDB"}
+}
+
+// captures: the search field takes every key, ? and A included.
+func (s *addScreen) captures() bool { return true }
 
 func (s *addScreen) flashed() *flash { return &s.flash }
 

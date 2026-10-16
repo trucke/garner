@@ -368,3 +368,6 @@ func homeShort(path string) string {
 	}
 	return path
 }
+
+// captures: the code field takes every key.
+func (s *connectScreen) captures() bool { return true }

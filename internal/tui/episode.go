@@ -43,7 +43,8 @@ type (
 type episodeScreen struct {
 	sess   *session
 	show   *showScreen
-	id     int64 // TVDB episode ID
+	back   screen // where esc goes: the show, or the activity
+	id     int64  // TVDB episode ID
 	detail *server.EpisodeDetail
 	err    error
 	// A reload asked for while one runs follows it.
@@ -55,10 +56,16 @@ type episodeScreen struct {
 }
 
 func newEpisode(sess *session, show *showScreen, id int64) *episodeScreen {
-	return &episodeScreen{sess: sess, show: show, id: id}
+	return &episodeScreen{sess: sess, show: show, back: show, id: id}
 }
 
-func (s *episodeScreen) init() tea.Cmd { return s.reload() }
+// init loads the episode, and its show unless the show screen has already.
+func (s *episodeScreen) init() tea.Cmd {
+	if s.show.detail == nil {
+		return tea.Batch(s.reload(), s.show.reload())
+	}
+	return s.reload()
+}
 
 func (s *episodeScreen) reload() tea.Cmd {
 	if s.loading {
@@ -105,8 +112,10 @@ func (s *episodeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.flash.stay(gFailed + " " + sRed.Render("Could not cancel the download: "+clean(msg.err.Error())))
 			return s, nil
 		}
-		s.show.flash.info(gDone + " " + sNormal.Render("Cancelled the download of "+s.label()))
-		return s, func() tea.Msg { return switchMsg{s.show} }
+		if f, ok := s.back.(flasher); ok {
+			f.flashed().info(gDone + " " + sNormal.Render("Cancelled the download of "+s.label()))
+		}
+		return s, func() tea.Msg { return switchMsg{s.back} }
 	case retriedMsg:
 		s.busy = ""
 		switch {
@@ -177,17 +186,13 @@ func (s *episodeScreen) redrawWhenSlow() tea.Cmd {
 func (s *episodeScreen) key(key string) tea.Cmd {
 	switch key {
 	case "esc":
-		return func() tea.Msg { return switchMsg{s.show} }
+		return func() tea.Msg { return switchMsg{s.back} }
 	case "x":
 		if _, ok := s.cancellable(); ok {
 			s.asking, s.choice = true, 0 // the safe choice: keep going
 		}
 	case "r":
 		return s.again()
-	case "A":
-		s.flash.info(sMuted.Render("Activity is not available yet."))
-	case "?":
-		s.flash.info(sMuted.Render("Help is not available yet."))
 	}
 	return nil
 }
@@ -204,7 +209,11 @@ func (s *episodeScreen) answer(key string) tea.Cmd {
 	case "enter":
 		s.asking = false
 		d, ok := s.cancellable()
-		if s.choice != 1 || !ok {
+		switch {
+		case s.choice != 1:
+			return nil
+		case !ok:
+			s.flash.info(gWaiting + " " + sNormal.Render("Too late to cancel: SABnzbd has finished downloading it."))
 			return nil
 		}
 		s.busy = "Cancelling the download…"
@@ -435,11 +444,18 @@ func (s *episodeScreen) bottom() string {
 	if label := s.againLabel(); label != "" && s.detail != nil {
 		keys = append(keys, "r", label)
 	}
-	// A activity returns to the bar once the Activity screen exists.
-	return keyBar(append(keys, "esc", "back")...)
+	return keyBar(append(keys, "A", "activity", "?", "help", "esc", "back")...)
 }
 
 func (s *episodeScreen) flashed() *flash { return &s.flash }
+
+func (s *episodeScreen) captures() bool { return s.asking || s.busy != "" }
+
+func (s *episodeScreen) help() (string, []string) {
+	return "Episode", []string{
+		"x", "cancel the download", "r", "other releases, search again or retry the import",
+	}
+}
 
 // step is one row of the pipeline.
 type step struct {
