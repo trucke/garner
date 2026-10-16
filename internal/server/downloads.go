@@ -33,6 +33,7 @@ func (s *Server) downloadRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/episodes/{id}/download", s.auth(s.needDownloads(s.handleDownloadBest)))
 	mux.Handle("GET /api/v1/downloads", s.auth(http.HandlerFunc(s.handleListDownloads)))
 	mux.Handle("GET /api/v1/downloads/{id}", s.auth(http.HandlerFunc(s.handleGetDownload)))
+	mux.Handle("POST /api/v1/season-candidates/{id}/download", s.auth(s.needDownloads(s.handleDownloadSeasonCandidate)))
 	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.auth(s.needDownloads(s.handleCancelDownload)))
 	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
 }
@@ -136,6 +137,15 @@ func (s *Server) needDownloads(h http.HandlerFunc) http.Handler {
 
 // handleDownloadCandidate sends any candidate of a search to SABnzbd: the
 // manual choice.
+func (s *Server) handleDownloadSeasonCandidate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "invalid candidate ID")
+	if !ok {
+		return
+	}
+	d, err := s.downloads.SeasonCandidate(r.Context(), id)
+	s.writeDownload(w, d, err, "candidate is not part of a season search")
+}
+
 func (s *Server) handleDownloadCandidate(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "invalid candidate ID")
 	if !ok {

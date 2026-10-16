@@ -103,6 +103,10 @@ type Context struct {
 	Want int64
 	// Original is the show's original language.
 	Original release.Language
+	// Missing are the aired episodes of Want's season without a file. A
+	// pack with all of them, when there are several, ranks before single
+	// episodes of its tier.
+	Missing []int64
 }
 
 // Release is one search result.
@@ -152,6 +156,7 @@ type rankKey struct {
 	source    int
 	fixes     int
 	large     bool // far larger than its resolution needs
+	complete  bool // a pack with every missing episode of its season
 	published time.Time
 }
 
@@ -249,6 +254,12 @@ func Evaluate(ctx Context, r Release) Evaluation {
 		}
 	}
 
+	if len(ctx.Missing) > 1 && len(r.Match.Episodes) > 1 && len(rejects) == 0 &&
+		!slices.ContainsFunc(ctx.Missing, func(id int64) bool { return !slices.Contains(r.Match.Episodes, id) }) {
+		e.rank.complete = true
+		notes = append(notes, "holds every missing episode of the season")
+	}
+
 	switch {
 	case len(rejects) > 0:
 		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Reject, 2, slices.Concat(rejects, info, notes), len(rejects)
@@ -337,6 +348,7 @@ func Rank(evals []Evaluation) []int {
 			cmp.Compare(x.verdict, y.verdict),
 			cmp.Compare(x.tier, y.tier),
 			compareBool(x.large, y.large),
+			-compareBool(x.complete, y.complete),
 			-compareBool(x.whole, y.whole),
 			compareBool(x.assumed, y.assumed),
 			-compareBool(x.dual, y.dual),
@@ -349,7 +361,12 @@ func Rank(evals []Evaluation) []int {
 }
 
 // Summary states the outcome of a search in plain words.
-func Summary(p Profile, evals []Evaluation) string {
+func Summary(p Profile, evals []Evaluation) string { return summary(p, evals, "release") }
+
+// PackSummary states the outcome of a season search, which keeps packs.
+func PackSummary(p Profile, evals []Evaluation) string { return summary(p, evals, "season pack") }
+
+func summary(p Profile, evals []Evaluation, noun string) string {
 	accepted, fallback := 0, 0
 	for _, e := range evals {
 		switch e.Verdict {
@@ -361,13 +378,13 @@ func Summary(p Profile, evals []Evaluation) string {
 	}
 	switch {
 	case accepted == 1:
-		return "Found 1 matching release"
+		return "Found 1 matching " + noun
 	case accepted > 1:
-		return fmt.Sprintf("Found %d matching releases", accepted)
+		return fmt.Sprintf("Found %d matching %ss", accepted, noun)
 	case fallback > 0:
-		return fmt.Sprintf("No matching %s release found; %d last-resort releases", p.Wanted(), fallback)
+		return fmt.Sprintf("No matching %s %s found; %d last-resort %ss", p.Wanted(), noun, fallback, noun)
 	}
-	return fmt.Sprintf("No matching %s release found", p.Wanted())
+	return fmt.Sprintf("No matching %s %s found", p.Wanted(), noun)
 }
 
 // IndexerLanguages normalises languages as indexers report them ("German",

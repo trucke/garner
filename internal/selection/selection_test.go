@@ -125,3 +125,27 @@ func TestRank(t *testing.T) {
 		t.Error("assumed German ranked above confirmed German")
 	}
 }
+
+// TestRankPack puts a season pack with every missing episode before single
+// episodes of its tier, and after them when it would bring one episode.
+func TestRankPack(t *testing.T) {
+	s, want := fixture("Harbor Precinct", "en")
+	pack := release.Parse("Harbor.Precinct.S01.German.DL.1080p.BluRay-P")
+	single := release.Parse("Harbor.Precinct.S01E01.German.DL.1080p.BluRay-S")
+	for _, tc := range []struct {
+		missing []int64
+		first   string
+	}{
+		{[]int64{101, 102, 103}, "P"},
+		{[]int64{101}, "S"},
+	} {
+		ctx := Context{Profile: TV, Show: s, Want: want, Original: "en", Missing: tc.missing}
+		evals := []Evaluation{
+			Evaluate(ctx, Release{Claims: single, Match: s.Match(single, time.Time{})}),
+			Evaluate(ctx, Release{Claims: pack, Match: s.Match(pack, time.Time{})}),
+		}
+		if got := []string{"S", "P"}[Rank(evals)[0]]; got != tc.first {
+			t.Errorf("%d missing: %s first, want %s (%q)", len(tc.missing), got, tc.first, evals[1].Reasons)
+		}
+	}
+}

@@ -28,3 +28,30 @@ SELECT indexer, results, error FROM search_indexers WHERE search_id = ? ORDER BY
 -- name: ListCandidates :many
 SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank;
+
+-- name: DeleteSeasonSearch :exec
+DELETE FROM season_searches WHERE series_id = ? AND season = ?;
+
+-- name: ClearSeriesSeasonSearches :exec
+DELETE FROM season_searches WHERE series_id = ?;
+
+-- name: InsertSeasonSearch :one
+INSERT INTO season_searches (series_id, season, searched_at, outcome, summary, indexers) VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id;
+
+-- name: InsertSeasonCandidate :exec
+INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, size, published, verdict, tier, audio,
+    reasons, decisive, episodes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetSeasonSearch :one
+SELECT * FROM season_searches WHERE series_id = ? AND season = ?;
+
+-- Candidates without their download links.
+-- name: ListSeasonCandidates :many
+SELECT id, rank, indexer, title, size, published, verdict, tier, audio, reasons, decisive, episodes
+FROM season_candidates WHERE search_id = ? ORDER BY rank;
+
+-- name: GetSeasonCandidateLink :one
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, reasons, decisive
+FROM season_candidates WHERE id = ?;

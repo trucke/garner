@@ -10,12 +10,35 @@ import (
 	"database/sql"
 )
 
+const clearSeriesSeasonSearches = `-- name: ClearSeriesSeasonSearches :exec
+DELETE FROM season_searches WHERE series_id = ?
+`
+
+func (q *Queries) ClearSeriesSeasonSearches(ctx context.Context, seriesID int64) error {
+	_, err := q.db.ExecContext(ctx, clearSeriesSeasonSearches, seriesID)
+	return err
+}
+
 const deleteSearch = `-- name: DeleteSearch :exec
 DELETE FROM searches WHERE episode_id = ?
 `
 
 func (q *Queries) DeleteSearch(ctx context.Context, episodeID int64) error {
 	_, err := q.db.ExecContext(ctx, deleteSearch, episodeID)
+	return err
+}
+
+const deleteSeasonSearch = `-- name: DeleteSeasonSearch :exec
+DELETE FROM season_searches WHERE series_id = ? AND season = ?
+`
+
+type DeleteSeasonSearchParams struct {
+	SeriesID int64
+	Season   int64
+}
+
+func (q *Queries) DeleteSeasonSearch(ctx context.Context, arg DeleteSeasonSearchParams) error {
+	_, err := q.db.ExecContext(ctx, deleteSeasonSearch, arg.SeriesID, arg.Season)
 	return err
 }
 
@@ -33,6 +56,66 @@ func (q *Queries) GetSearch(ctx context.Context, episodeID int64) (Search, error
 		&i.Outcome,
 		&i.Summary,
 		&i.NextRetryAt,
+	)
+	return i, err
+}
+
+const getSeasonCandidateLink = `-- name: GetSeasonCandidateLink :one
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, reasons, decisive
+FROM season_candidates WHERE id = ?
+`
+
+type GetSeasonCandidateLinkRow struct {
+	ID        int64
+	EpisodeID int64
+	Title     string
+	Indexer   string
+	Link      string
+	Size      int64
+	Verdict   string
+	Tier      string
+	Reasons   string
+	Decisive  int64
+}
+
+func (q *Queries) GetSeasonCandidateLink(ctx context.Context, id int64) (GetSeasonCandidateLinkRow, error) {
+	row := q.db.QueryRowContext(ctx, getSeasonCandidateLink, id)
+	var i GetSeasonCandidateLinkRow
+	err := row.Scan(
+		&i.ID,
+		&i.EpisodeID,
+		&i.Title,
+		&i.Indexer,
+		&i.Link,
+		&i.Size,
+		&i.Verdict,
+		&i.Tier,
+		&i.Reasons,
+		&i.Decisive,
+	)
+	return i, err
+}
+
+const getSeasonSearch = `-- name: GetSeasonSearch :one
+SELECT id, series_id, season, searched_at, outcome, summary, indexers FROM season_searches WHERE series_id = ? AND season = ?
+`
+
+type GetSeasonSearchParams struct {
+	SeriesID int64
+	Season   int64
+}
+
+func (q *Queries) GetSeasonSearch(ctx context.Context, arg GetSeasonSearchParams) (SeasonSearch, error) {
+	row := q.db.QueryRowContext(ctx, getSeasonSearch, arg.SeriesID, arg.Season)
+	var i SeasonSearch
+	err := row.Scan(
+		&i.ID,
+		&i.SeriesID,
+		&i.Season,
+		&i.SearchedAt,
+		&i.Outcome,
+		&i.Summary,
+		&i.Indexers,
 	)
 	return i, err
 }
@@ -126,6 +209,77 @@ func (q *Queries) InsertSearchIndexer(ctx context.Context, arg InsertSearchIndex
 	return err
 }
 
+const insertSeasonCandidate = `-- name: InsertSeasonCandidate :exec
+INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, size, published, verdict, tier, audio,
+    reasons, decisive, episodes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
+
+type InsertSeasonCandidateParams struct {
+	SearchID  int64
+	EpisodeID int64
+	Rank      int64
+	Indexer   string
+	Title     string
+	Link      string
+	Size      int64
+	Published sql.NullInt64
+	Verdict   string
+	Tier      string
+	Audio     string
+	Reasons   string
+	Decisive  int64
+	Episodes  string
+}
+
+func (q *Queries) InsertSeasonCandidate(ctx context.Context, arg InsertSeasonCandidateParams) error {
+	_, err := q.db.ExecContext(ctx, insertSeasonCandidate,
+		arg.SearchID,
+		arg.EpisodeID,
+		arg.Rank,
+		arg.Indexer,
+		arg.Title,
+		arg.Link,
+		arg.Size,
+		arg.Published,
+		arg.Verdict,
+		arg.Tier,
+		arg.Audio,
+		arg.Reasons,
+		arg.Decisive,
+		arg.Episodes,
+	)
+	return err
+}
+
+const insertSeasonSearch = `-- name: InsertSeasonSearch :one
+INSERT INTO season_searches (series_id, season, searched_at, outcome, summary, indexers) VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type InsertSeasonSearchParams struct {
+	SeriesID   int64
+	Season     int64
+	SearchedAt int64
+	Outcome    string
+	Summary    string
+	Indexers   string
+}
+
+func (q *Queries) InsertSeasonSearch(ctx context.Context, arg InsertSeasonSearchParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, insertSeasonSearch,
+		arg.SeriesID,
+		arg.Season,
+		arg.SearchedAt,
+		arg.Outcome,
+		arg.Summary,
+		arg.Indexers,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listCandidates = `-- name: ListCandidates :many
 SELECT id, rank, indexer, title, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank
@@ -205,6 +359,63 @@ func (q *Queries) ListSearchIndexers(ctx context.Context, searchID int64) ([]Lis
 	for rows.Next() {
 		var i ListSearchIndexersRow
 		if err := rows.Scan(&i.Indexer, &i.Results, &i.Error); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeasonCandidates = `-- name: ListSeasonCandidates :many
+SELECT id, rank, indexer, title, size, published, verdict, tier, audio, reasons, decisive, episodes
+FROM season_candidates WHERE search_id = ? ORDER BY rank
+`
+
+type ListSeasonCandidatesRow struct {
+	ID        int64
+	Rank      int64
+	Indexer   string
+	Title     string
+	Size      int64
+	Published sql.NullInt64
+	Verdict   string
+	Tier      string
+	Audio     string
+	Reasons   string
+	Decisive  int64
+	Episodes  string
+}
+
+// Candidates without their download links.
+func (q *Queries) ListSeasonCandidates(ctx context.Context, searchID int64) ([]ListSeasonCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSeasonCandidates, searchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeasonCandidatesRow
+	for rows.Next() {
+		var i ListSeasonCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Rank,
+			&i.Indexer,
+			&i.Title,
+			&i.Size,
+			&i.Published,
+			&i.Verdict,
+			&i.Tier,
+			&i.Audio,
+			&i.Reasons,
+			&i.Decisive,
+			&i.Episodes,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

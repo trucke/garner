@@ -131,6 +131,34 @@ type SearchIndexer struct {
 	Error    sql.NullString
 }
 
+type SeasonCandidate struct {
+	ID        int64
+	SearchID  int64
+	EpisodeID int64
+	Rank      int64
+	Indexer   string
+	Title     string
+	Link      string
+	Size      int64
+	Published sql.NullInt64
+	Verdict   string
+	Tier      string
+	Audio     string
+	Reasons   string
+	Decisive  int64
+	Episodes  string
+}
+
+type SeasonSearch struct {
+	ID         int64
+	SeriesID   int64
+	Season     int64
+	SearchedAt int64
+	Outcome    string
+	Summary    string
+	Indexers   string
+}
+
 type Series struct {
 	ID               int64
 	Slug             string

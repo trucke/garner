@@ -71,6 +71,16 @@ func (s *Service) Candidate(ctx context.Context, candidateID int64) (store.Downl
 	return s.submit(ctx, episodeID, c, true)
 }
 
+// SeasonCandidate downloads a pack of a season search, for its first
+// missing episode; the import takes the pack's other episodes along.
+func (s *Service) SeasonCandidate(ctx context.Context, candidateID int64) (store.Download, error) {
+	c, episodeID, err := s.store.SeasonCandidateLink(ctx, candidateID)
+	if err != nil {
+		return store.Download{}, err
+	}
+	return s.submit(ctx, episodeID, c, true)
+}
+
 // Best downloads the best release of the episode's latest search that has
 // not failed before.
 func (s *Service) Best(ctx context.Context, episodeID int64) (store.Download, error) {

@@ -14,7 +14,9 @@ import (
 
 // Search is the latest search for an episode.
 type Search struct {
-	EpisodeID  int64           `json:"episode_id"`
+	EpisodeID int64 `json:"episode_id"`
+	// Season is set instead for a season search, which keeps only packs.
+	Season     int             `json:"season,omitempty"`
 	Searched   time.Time       `json:"searched"`
 	Outcome    string          `json:"outcome"` // found, fallback, nothing or failed
 	Summary    string          `json:"summary"`

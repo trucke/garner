@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -109,4 +110,16 @@ func (c *Client) CancelDownload(ctx context.Context, downloadID int64) (store.Do
 func (c *Client) RetryImport(ctx context.Context, downloadID int64) (store.Download, error) {
 	var d store.Download
 	return d, c.do(ctx, http.MethodPost, "/api/v1/downloads/"+strconv.FormatInt(downloadID, 10)+"/import", nil, &d)
+}
+
+// SearchSeason searches a whole season for packs.
+func (c *Client) SearchSeason(ctx context.Context, seriesID int64, season int) (store.Search, error) {
+	var s store.Search
+	return s, c.do(ctx, http.MethodPost, fmt.Sprintf("/api/v1/series/%d/seasons/%d/search", seriesID, season), nil, &s)
+}
+
+// DownloadSeasonCandidate downloads a pack of a season search.
+func (c *Client) DownloadSeasonCandidate(ctx context.Context, candidateID int64) (store.Download, error) {
+	var d store.Download
+	return d, c.do(ctx, http.MethodPost, "/api/v1/season-candidates/"+strconv.FormatInt(candidateID, 10)+"/download", nil, &d)
 }

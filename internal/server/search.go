@@ -41,6 +41,7 @@ func (s *Server) setupSearch() error {
 func (s *Server) searchRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleSearchEpisode)))
 	mux.Handle("GET /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleGetSearch)))
+	mux.Handle("POST /api/v1/series/{id}/seasons/{season}/search", s.auth(http.HandlerFunc(s.handleSearchSeason)))
 	mux.Handle("PATCH /api/v1/series/{id}", s.auth(http.HandlerFunc(s.handleUpdateSeries)))
 }
 
@@ -60,6 +61,33 @@ func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.internalError(w, "search episode", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sr)
+}
+
+// handleSearchSeason searches a whole season for packs.
+func (s *Server) handleSearchSeason(w http.ResponseWriter, r *http.Request) {
+	if s.search == nil {
+		writeError(w, http.StatusServiceUnavailable, "searching needs Prowlarr: set prowlarr.url and PROWLARR_API_KEY")
+		return
+	}
+	id, ok := seriesID(w, r)
+	if !ok {
+		return
+	}
+	season, err := strconv.Atoi(r.PathValue("season"))
+	if err != nil || season < 1 {
+		writeError(w, http.StatusBadRequest, "invalid season; specials have no season packs")
+		return
+	}
+	sr, err := s.search.Season(r.Context(), id, season)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "the show or season is not in the catalogue")
+		return
+	}
+	if err != nil {
+		s.internalError(w, "search season", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, sr)

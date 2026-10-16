@@ -392,5 +392,8 @@ func (s *Store) ChangeProfile(ctx context.Context, seriesID int64, profile strin
 	if err := q.ClearSeriesSearches(ctx, seriesID); err != nil {
 		return err
 	}
+	if err := q.ClearSeriesSeasonSearches(ctx, seriesID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

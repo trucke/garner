@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,22 @@ func TestSearchAndDownload(t *testing.T) {
 		case "/api/v1/indexer":
 			fmt.Fprint(w, `[{"id":1,"name":"One","enable":true,"protocol":"usenet"},{"id":2,"name":"Two","enable":true,"protocol":"usenet"}]`)
 		case "/1/api":
-			var items strings.Builder
-			for _, title := range []string{
+			titles := []string{
 				"Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP",
 				"Harbor.Precinct.S01E01.1080p.WEB-DL-GRP",
 				"Harbor.Precinct.S01E01.German.DL.1080p.BluRay-GRP",
-			} {
-				fmt.Fprintf(&items, `<item><title>%s</title><link>http://prowlarr/1/download?apikey=SECRET&amp;link=X</link><size>1</size></item>`, title)
+			}
+			if r.URL.Query().Get("ep") == "" {
+				// A season query: a pack, a single episode, another season.
+				titles = []string{
+					"Harbor.Precinct.S01E01.German.DL.1080p.WEB-ONE",
+					"Harbor.Precinct.S01.German.DL.1080p.BluRay-PACK",
+					"Harbor.Precinct.S02.German.DL.1080p.BluRay-OTHER",
+				}
+			}
+			var items strings.Builder
+			for _, title := range titles {
+				fmt.Fprintf(&items, `<item><title>%s</title><link>http://prowlarr/1/download?apikey=SECRET&amp;link=%[1]s</link><size>1</size></item>`, title)
 			}
 			fmt.Fprintf(w, `<rss><channel>%s</channel></rss>`, items.String())
 		default:
@@ -114,9 +124,11 @@ func TestSearchAndDownload(t *testing.T) {
 	if want := []string{"One:false:0 Two:false:0", "One:true:3 Two:false:0", "One:true:3 Two:true:0"}; fmt.Sprint(progress) != fmt.Sprint(want) {
 		t.Errorf("progress = %q, want %q", progress, want)
 	}
+	jobs := 0
 	sab := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.PostFormValue("mode") == "addurl" {
-			fmt.Fprint(w, `{"status":true,"nzo_ids":["job-1"]}`)
+			jobs++
+			fmt.Fprintf(w, `{"status":true,"nzo_ids":["job-%d"]}`, jobs)
 			return
 		}
 		fmt.Fprint(w, `{"queue":{"slots":[]},"history":{"slots":[]}}`)
@@ -135,6 +147,38 @@ func TestSearchAndDownload(t *testing.T) {
 		if code >= 300 || strings.Contains(body, "SECRET") || !strings.Contains(body, `"job_id":"job-1"`) {
 			t.Errorf("%s %s: %d %s", method, path, code, body)
 		}
+	}
+
+	// A season search keeps the pack, judged for the first missing episode,
+	// and a download of it belongs to that episode.
+	running, err := st.ActiveDownloads(ctx)
+	if err != nil || len(running) != 1 {
+		t.Fatalf("running downloads: %d, %v", len(running), err)
+	}
+	if code, body := call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/cancel", running[0].ID), ""); code != http.StatusOK {
+		t.Fatalf("cancel: %d %s", code, body)
+	}
+	code, body := call(http.MethodPost, "/api/v1/series/42/seasons/1/search", "")
+	var season store.Search
+	json.Unmarshal([]byte(body), &season)
+	if code != http.StatusOK || strings.Contains(body, "SECRET") || len(season.Candidates) != 1 ||
+		!strings.HasSuffix(season.Candidates[0].Title, "-PACK") || !strings.HasPrefix(season.Summary, "Found 1 matching season pack") {
+		t.Fatalf("season search: %d %s", code, body)
+	}
+	if !slices.Contains(season.Candidates[0].Reasons, "holds every missing episode of the season") {
+		t.Errorf("pack reasons: %q", season.Candidates[0].Reasons)
+	}
+	code, body = call(http.MethodPost, fmt.Sprintf("/api/v1/season-candidates/%d/download", season.Candidates[0].ID), "")
+	var pack store.Download
+	json.Unmarshal([]byte(body), &pack)
+	if code >= 300 || strings.Contains(body, "SECRET") || pack.EpisodeID != 101 || !strings.HasSuffix(pack.Title, "-PACK") {
+		t.Errorf("season download: %d %s", code, body)
+	}
+	if code, _ := call(http.MethodPost, "/api/v1/series/42/seasons/0/search", ""); code != http.StatusBadRequest {
+		t.Errorf("specials: %d", code)
+	}
+	if code, _ := call(http.MethodPost, "/api/v1/series/42/seasons/9/search", ""); code != http.StatusNotFound {
+		t.Errorf("unknown season: %d", code)
 	}
 
 	if code, _ := call(http.MethodPost, "/api/v1/episodes/999/search", ""); code != http.StatusNotFound {
