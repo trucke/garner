@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/server"
@@ -94,5 +95,40 @@ func TestFlash(t *testing.T) {
 	f.stay("✗ TVDB did not answer")
 	if f.expire() != nil {
 		t.Fatal("an error message would go by itself")
+	}
+}
+
+// TestPipelineFailures checks that each kind of failure marks the step it
+// happened in, and the steps after it stay pending.
+func TestPipelineFailures(t *testing.T) {
+	checked := []store.ImportFile{{Source: "a.mkv", Check: []byte(`{"audio":["German"]}`)}}
+	planned := []store.ImportFile{{Source: "a.mkv", Target: "/lib/A.mkv", Check: []byte(`{"audio":["German"]}`)}}
+	for _, tc := range []struct {
+		name string
+		d    store.Download
+		want int // the failed step
+	}{
+		{"SABnzbd refused it", store.Download{State: store.Failed, Failure: "refused"}, 0},
+		{"missing articles", store.Download{State: store.Failed, JobID: "j", Failure: "cannot be completed"}, 1},
+		{"file check rejected it", store.Download{State: store.Failed, JobID: "j", Failure: "file check: audio is Japanese",
+			Import: store.Import{State: store.ImportRejected, Files: checked}}, 3},
+		{"share not mounted", store.Download{State: store.Completed, JobID: "j",
+			Import: store.Import{State: store.ImportFailed, Detail: "Garner cannot see it"}}, 3},
+		{"move failed", store.Download{State: store.Completed, JobID: "j",
+			Import: store.Import{State: store.ImportFailed, Detail: "the library folder is missing", Files: planned}}, 4},
+	} {
+		steps := pipeline(tc.d, time.Now())
+		for i, st := range steps {
+			switch {
+			case i == tc.want && st.glyph != gFailed:
+				t.Errorf("%s: step %d (%s) is not marked failed", tc.name, i, st.name)
+			case i > tc.want && st.glyph != gWaiting:
+				t.Errorf("%s: step %d (%s) after the failure is not pending", tc.name, i, st.name)
+			}
+		}
+	}
+	if st := pipeline(store.Download{State: store.Failed, JobID: "j", Failure: "file check: audio is Japanese",
+		Import: store.Import{State: store.ImportRejected}}, time.Now())[3]; st.detail[0].text != "audio is Japanese" {
+		t.Errorf("rejected detail = %q", st.detail[0].text)
 	}
 }

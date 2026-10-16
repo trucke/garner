@@ -437,8 +437,7 @@ func (s *showScreen) facts(now time.Time) string {
 	if b := size(d.Summary.Bytes); b != "" {
 		episodes += " · " + b
 	}
-	field := func(label, value string) string { return sSubtle.Render(label) + "  " + sNormal.Render(value) }
-	return field("Type", typ) + "      " + field("Status", st) + "      " + field("Episodes", episodes)
+	return fact("Type", typ) + "      " + fact("Status", st) + "      " + fact("Episodes", episodes)
 }
 
 func (s *showScreen) bottom() string {
@@ -454,19 +453,20 @@ func (s *showScreen) bottom() string {
 }
 
 // open is enter on an episode. A missing one opens its releases: the last
-// search's, or a new search when it was never searched. Any other opens its
-// details.
+// search's, or a new search when it was never searched. Any other opens the
+// episode screen, which follows its download or shows its file.
 func (s *showScreen) open(e episodeRow) tea.Cmd {
+	var next screen
 	switch e.status.State {
-	case store.EpisodeNotSearched, store.EpisodeWaiting, store.EpisodeFailed:
-		next := newReleases(s.sess, s, e, e.status.State == store.EpisodeNotSearched)
-		return func() tea.Msg { return switchMsg{next} }
+	case store.EpisodeNotSearched, store.EpisodeWaiting:
+		next = newReleases(s.sess, s, e, e.status.State == store.EpisodeNotSearched)
 	case store.EpisodeUpcoming:
 		s.flash.info(sMuted.Render(episodeLabel(e) + " has not aired yet; s searches anyway."))
 		return nil
+	default:
+		next = newEpisode(s.sess, s, e.episode.ID)
 	}
-	s.flash.info(sMuted.Render("The episode screen is not available yet."))
-	return nil
+	return func() tea.Msg { return switchMsg{next} }
 }
 
 // enterLabel is what enter does on the cursor row, for the key bar; empty
@@ -478,7 +478,7 @@ func (s *showScreen) enterLabel() string {
 		return ""
 	case e.status.State == store.EpisodeNotSearched:
 		return "search"
-	case e.status.State == store.EpisodeWaiting, e.status.State == store.EpisodeFailed:
+	case e.status.State == store.EpisodeWaiting:
 		return "releases"
 	}
 	return "details"

@@ -126,10 +126,9 @@ func (s *releasesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.flash.stay(gFailed + " " + sRed.Render("Could not start the download: "+clean(msg.err.Error())))
 			return s, nil
 		}
-		// The episode screen follows a download; until it exists, the show
-		// screen does.
-		s.back.flash.info(gWorking + " " + sNormal.Render(episodeLabel(s.episode)+": downloading "+clean(msg.download.Title)))
-		return s, func() tea.Msg { return switchMsg{s.back} }
+		// The episode screen follows the download.
+		next := newEpisode(s.sess, s.back, s.episode.episode.ID)
+		return s, func() tea.Msg { return switchMsg{next} }
 	case eventMsg:
 		if msg.Type == "search.progress" {
 			var p search.Progress
@@ -261,12 +260,7 @@ func (s *releasesScreen) view(width, height int) string {
 }
 
 func (s *releasesScreen) facts() string {
-	field := func(label, value string) string { return sSubtle.Render(label) + "  " + sNormal.Render(value) }
-	title := clean(cmp.Or(s.episode.episode.NameEng, s.episode.episode.Name))
-	parts := []string{field("Episode", strings.TrimSpace(episodeLabel(s.episode)+" "+title))}
-	if t, err := time.Parse(time.DateOnly, s.episode.episode.Aired); err == nil {
-		parts = append(parts, field("Aired", t.Format("2 Jan 2006")))
-	}
+	parts := episodeFacts(s.episode)
 	switch {
 	case s.searching:
 		parts = append(parts, sSubtle.Render("Searched")+"  "+gWorking+" "+sAmber.Render("running"))
@@ -278,7 +272,7 @@ func (s *releasesScreen) facts() string {
 				searched = strings.TrimSuffix(searched, "s")
 			}
 		}
-		parts = append(parts, field("Searched", searched))
+		parts = append(parts, fact("Searched", searched))
 	}
 	return strings.Join(parts, "      ")
 }
@@ -417,37 +411,43 @@ func (s *releasesScreen) why(w int) []string {
 	if !ok {
 		return nil
 	}
-	lines := []string{sNormal.Render(clean(c.Title)), ""}
-	decisive, decisiveStyle := "✓", sMint
-	switch c.Verdict {
+	lines := append([]string{sNormal.Render(clean(c.Title)), ""}, reasonLines(c.Verdict, c.Reasons, c.Decisive, w-8)...)
+	return strings.Split(indent(frame("why", lines, w), 3), "\n")
+}
+
+// reasonLines marks the reasons that decided a verdict with its glyph and
+// the remaining facts with ·, wrapped to w cells.
+func reasonLines(verdict string, reasons []string, decisive, w int) []string {
+	mark, style := "✓", sMint
+	switch verdict {
 	case "reject":
-		decisive, decisiveStyle = "✗", sRed
+		mark, style = "✗", sRed
 	case "fallback":
-		decisive, decisiveStyle = "~", sAmber
+		mark, style = "~", sAmber
 	}
-	decisiveCount := c.Decisive
 	switch {
-	case decisiveCount > 0:
-	case c.Verdict == "accept":
+	case decisive > 0:
+	case verdict == "accept":
 		// Stored before accepted releases had the count: all of them.
-		decisiveCount = len(c.Reasons)
+		decisive = len(reasons)
 	default:
 		// Stored before the count was kept; the first reason always decides.
-		decisiveCount = 1
+		decisive = 1
 	}
-	for i, r := range c.Reasons {
-		glyph := decisiveStyle.Render(decisive)
-		if i >= decisiveCount {
+	var lines []string
+	for i, r := range reasons {
+		glyph := style.Render(mark)
+		if i >= decisive {
 			glyph = sSubtle.Render("·") // a fact, not why
 		}
-		for j, l := range strings.Split(ansi.Wrap(clean(r), max(10, w-8), ""), "\n") {
+		for j, l := range strings.Split(ansi.Wrap(clean(r), max(10, w), ""), "\n") {
 			if j > 0 {
 				glyph = " "
 			}
 			lines = append(lines, glyph+" "+sNormal.Render(l))
 		}
 	}
-	return strings.Split(indent(frame("why", lines, w), 3), "\n")
+	return lines
 }
 
 func (s *releasesScreen) bottom() string {
@@ -497,4 +497,17 @@ func plural(n int, word string) string {
 		return "1 " + word
 	}
 	return strconv.Itoa(n) + " " + word + "s"
+}
+
+// fact is a labelled fact, as in "Aired  8 Jul 2003".
+func fact(label, value string) string { return sSubtle.Render(label) + "  " + sNormal.Render(value) }
+
+// episodeFacts are the episode's label, title and air date.
+func episodeFacts(e episodeRow) []string {
+	title := clean(cmp.Or(e.episode.NameEng, e.episode.Name))
+	parts := []string{fact("Episode", strings.TrimSpace(episodeLabel(e)+" "+title))}
+	if t, err := time.Parse(time.DateOnly, e.episode.Aired); err == nil {
+		parts = append(parts, fact("Aired", t.Format("2 Jan 2006")))
+	}
+	return parts
 }
