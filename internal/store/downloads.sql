@@ -51,3 +51,19 @@ WHERE s.episode_id = ? ORDER BY c.rank;
 SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id
 WHERE c.id = ?;
+
+-- Each episode's latest download, when it runs, waits for the user, or
+-- ended since the given time; with its show and its place in the show's
+-- default order.
+-- name: ListActivity :many
+SELECT sqlc.embed(d), e.series_id, s.name AS series_name, s.name_eng AS series_name_eng,
+    n.season AS season, n.number AS number
+FROM downloads d
+JOIN episodes e ON e.id = d.episode_id
+JOIN series s ON s.id = e.series_id
+LEFT JOIN episode_numbers n ON n.episode_id = e.id AND n.order_type = s.default_order
+WHERE d.id IN (SELECT max(id) FROM downloads GROUP BY episode_id)
+  AND (d.state IN ('submitting', 'queued', 'downloading', 'processing')
+    OR d.import_state IN ('pending', 'moving', 'scanning', 'failed', 'unverified')
+    OR d.updated_at >= sqlc.arg(since) OR d.import_updated_at >= sqlc.arg(since))
+ORDER BY d.id DESC;

@@ -182,6 +182,38 @@ func (s *Store) Downloads(ctx context.Context, limit int) ([]Download, error) {
 	return downloadsFromRows(rows)
 }
 
+// ActivityItem is an episode's latest download with its show and its
+// place in the show's default order; Season and Number are 0 when the order
+// does not place it.
+type ActivityItem struct {
+	Download      Download `json:"download"`
+	SeriesID      int64    `json:"series_id"`
+	SeriesName    string   `json:"series_name"`
+	SeriesNameEng string   `json:"series_name_eng,omitempty"`
+	Season        int      `json:"season"`
+	Number        int      `json:"number"`
+}
+
+// Activity lists each episode's latest download that runs, waits for the
+// user (an import that failed or was not confirmed), or ended since since;
+// newest first.
+func (s *Store) Activity(ctx context.Context, since time.Time) ([]ActivityItem, error) {
+	rows, err := s.q.ListActivity(ctx, since.Unix())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ActivityItem, 0, len(rows))
+	for _, r := range rows {
+		d, err := downloadFromRow(r.Download)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ActivityItem{Download: d, SeriesID: r.SeriesID, SeriesName: r.SeriesName,
+			SeriesNameEng: r.SeriesNameEng.String, Season: int(r.Season.Int64), Number: int(r.Number.Int64)})
+	}
+	return out, nil
+}
+
 // FailedTitles lists the releases that failed or were cancelled for an
 // episode; Garner does not pick them again on its own.
 func (s *Store) FailedTitles(ctx context.Context, episodeID int64) ([]string, error) {

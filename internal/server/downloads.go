@@ -34,6 +34,7 @@ func (s *Server) downloadRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/episodes/{id}/download", s.auth(s.needDownloads(s.handleDownloadBest)))
 	mux.Handle("GET /api/v1/downloads", s.auth(http.HandlerFunc(s.handleListDownloads)))
 	mux.Handle("GET /api/v1/downloads/{id}", s.auth(http.HandlerFunc(s.handleGetDownload)))
+	mux.Handle("GET /api/v1/activity", s.auth(http.HandlerFunc(s.handleActivity)))
 	mux.Handle("POST /api/v1/season-candidates/{id}/download", s.auth(s.needDownloads(s.handleDownloadSeasonCandidate)))
 	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.auth(s.needDownloads(s.handleCancelDownload)))
 	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
@@ -186,6 +187,20 @@ func (s *Server) handleListDownloads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+// activityFor is how long a finished download stays in the activity.
+const activityFor = 24 * time.Hour
+
+// handleActivity lists what runs, what waits for the user, and what ended
+// within the last day: one row per episode, its latest download.
+func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.Activity(r.Context(), time.Now().Add(-activityFor))
+	if err != nil {
+		s.internalError(w, "list activity", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) handleGetDownload(w http.ResponseWriter, r *http.Request) {

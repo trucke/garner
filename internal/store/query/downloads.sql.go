@@ -232,6 +232,89 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 	return items, nil
 }
 
+const listActivity = `-- name: ListActivity :many
+SELECT d.id, d.episode_id, d.title, d.indexer, d.link, d.size, d.verdict, d.tier, d.manual, d.state, d.detail, d.job_id, d.progress, d.time_left, d.storage, d.failure, d.retryable, d.stages, d.created_at, d.updated_at, d.import_state, d.import_detail, d.import_recovery, d.import_files, d.import_updated_at, d.import_notes, d.reasons, d.decisive, e.series_id, s.name AS series_name, s.name_eng AS series_name_eng,
+    n.season AS season, n.number AS number
+FROM downloads d
+JOIN episodes e ON e.id = d.episode_id
+JOIN series s ON s.id = e.series_id
+LEFT JOIN episode_numbers n ON n.episode_id = e.id AND n.order_type = s.default_order
+WHERE d.id IN (SELECT max(id) FROM downloads GROUP BY episode_id)
+  AND (d.state IN ('submitting', 'queued', 'downloading', 'processing')
+    OR d.import_state IN ('pending', 'moving', 'scanning', 'failed', 'unverified')
+    OR d.updated_at >= ?1 OR d.import_updated_at >= ?1)
+ORDER BY d.id DESC
+`
+
+type ListActivityRow struct {
+	Download      Download
+	SeriesID      int64
+	SeriesName    string
+	SeriesNameEng sql.NullString
+	Season        sql.NullInt64
+	Number        sql.NullInt64
+}
+
+// Each episode's latest download, when it runs, waits for the user, or
+// ended since the given time; with its show and its place in the show's
+// default order.
+func (q *Queries) ListActivity(ctx context.Context, since int64) ([]ListActivityRow, error) {
+	rows, err := q.db.QueryContext(ctx, listActivity, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActivityRow
+	for rows.Next() {
+		var i ListActivityRow
+		if err := rows.Scan(
+			&i.Download.ID,
+			&i.Download.EpisodeID,
+			&i.Download.Title,
+			&i.Download.Indexer,
+			&i.Download.Link,
+			&i.Download.Size,
+			&i.Download.Verdict,
+			&i.Download.Tier,
+			&i.Download.Manual,
+			&i.Download.State,
+			&i.Download.Detail,
+			&i.Download.JobID,
+			&i.Download.Progress,
+			&i.Download.TimeLeft,
+			&i.Download.Storage,
+			&i.Download.Failure,
+			&i.Download.Retryable,
+			&i.Download.Stages,
+			&i.Download.CreatedAt,
+			&i.Download.UpdatedAt,
+			&i.Download.ImportState,
+			&i.Download.ImportDetail,
+			&i.Download.ImportRecovery,
+			&i.Download.ImportFiles,
+			&i.Download.ImportUpdatedAt,
+			&i.Download.ImportNotes,
+			&i.Download.Reasons,
+			&i.Download.Decisive,
+			&i.SeriesID,
+			&i.SeriesName,
+			&i.SeriesNameEng,
+			&i.Season,
+			&i.Number,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCandidateLinks = `-- name: ListCandidateLinks :many
 SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id

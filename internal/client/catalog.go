@@ -130,3 +130,10 @@ func (c *Client) Services(ctx context.Context) (server.Services, error) {
 	var s server.Services
 	return s, c.do(ctx, http.MethodGet, "/api/v1/status/services", nil, &s)
 }
+
+// Activity lists what runs, what waits for the user, and what ended within
+// the last day.
+func (c *Client) Activity(ctx context.Context) ([]store.ActivityItem, error) {
+	var items []store.ActivityItem
+	return items, c.do(ctx, http.MethodGet, "/api/v1/activity", nil, &items)
+}
