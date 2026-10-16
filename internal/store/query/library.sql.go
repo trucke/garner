@@ -324,6 +324,41 @@ func (q *Queries) ListSeriesBusyDownloads(ctx context.Context, seriesID int64) (
 	return items, nil
 }
 
+const listSeriesFileTiers = `-- name: ListSeriesFileTiers :many
+SELECT f.episode_id, coalesce(d.tier, '') AS tier
+FROM episode_files f JOIN episodes e ON e.id = f.episode_id LEFT JOIN downloads d ON d.id = f.download_id
+WHERE e.series_id = ?
+`
+
+type ListSeriesFileTiersRow struct {
+	EpisodeID int64
+	Tier      string
+}
+
+// Episodes with a file, and the tier of the release it came from.
+func (q *Queries) ListSeriesFileTiers(ctx context.Context, seriesID int64) ([]ListSeriesFileTiersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesFileTiers, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeriesFileTiersRow
+	for rows.Next() {
+		var i ListSeriesFileTiersRow
+		if err := rows.Scan(&i.EpisodeID, &i.Tier); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSeriesFiles = `-- name: ListSeriesFiles :many
 SELECT f.path, f.size FROM episode_files f JOIN episodes e ON e.id = f.episode_id WHERE e.series_id = ?
 `

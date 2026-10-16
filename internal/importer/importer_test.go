@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -492,5 +493,48 @@ func TestReleaseTags(t *testing.T) {
 	untagged := inspect.Probe{Video: []inspect.Video{{Width: 1280, Height: 720}}, Audio: []inspect.Track{{Language: "und"}}}
 	if got := releaseTags(&store.Download{Title: "Show.S01E01.720p.WEB-GRP", Tier: "German 720p"}, untagged); got != "WEB-720p.DE-GRP" {
 		t.Errorf("untagged audio: %q", got)
+	}
+}
+
+// TestImportPackKeepsBetter imports a pack's other episodes only where the
+// pack is better than the file in the library: one version per episode.
+func TestImportPackKeepsBetter(t *testing.T) {
+	for _, tc := range []struct {
+		existing string // tier of S01E02's file
+		replaced bool
+	}{
+		{"German 1080p", false}, // as good as the pack: kept
+		{"German 720p", true},   // worse: replaced
+	} {
+		ctx := context.Background()
+		e, d := setup(t, german)
+		job := filepath.Join(e.share, jobDir)
+		os.Remove(filepath.Join(job, "x7f3a.mkv"))
+		for _, name := range []string{"Harbor.Precinct.Night.Shift.S01E01.mkv", "Harbor.Precinct.Night.Shift.S01E02.mkv"} {
+			os.WriteFile(filepath.Join(job, name), make([]byte, 1000), 0o644)
+		}
+		earlier, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 102, Title: "Harbor.Precinct.S01E02-OLD", Link: "x",
+			Verdict: "accept", Tier: tc.existing}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := filepath.Join(e.share, "library/tv/old/S01E02.mkv")
+		os.MkdirAll(filepath.Dir(old), 0o755)
+		os.WriteFile(old, []byte("old"), 0o644)
+		e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 102, Path: old, Size: 3}, earlier.ID, time.Now())
+
+		e.svc.work(ctx)
+		got, _ := e.st.GetDownload(ctx, d.ID)
+		f, _, _ := e.st.EpisodeFile(ctx, 102)
+		kept := slices.ContainsFunc(got.Import.Notes, func(n string) bool { return strings.HasPrefix(n, "kept the existing file of S01E02") })
+		if replaced := f.Path != old; replaced != tc.replaced || kept == tc.replaced {
+			t.Errorf("existing %s: S01E02's file is %s, notes %q", tc.existing, f.Path, got.Import.Notes)
+		}
+		if _, err := os.Stat(old); (err == nil) == tc.replaced {
+			t.Errorf("existing %s: the old file exists: %v", tc.existing, err == nil)
+		}
+		if _, err := os.Stat(job); !os.IsNotExist(err) {
+			t.Errorf("existing %s: SABnzbd's folder is still there", tc.existing)
+		}
 	}
 }

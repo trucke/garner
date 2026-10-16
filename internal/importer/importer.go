@@ -127,7 +127,7 @@ func (s *Service) work(ctx context.Context) {
 		case store.ImportPending:
 			s.check(ctx, &d)
 		case store.ImportMoving:
-			s.move(ctx, &d)
+			s.move(ctx, &d, nil)
 		case store.ImportScanning:
 			s.verify(ctx, &d)
 		}
@@ -217,6 +217,7 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 		s.reject(ctx, d, files, "the download does not hold "+c.show.Label(d.EpisodeID))
 		return
 	}
+	files, dropped, notes := s.keepBetter(ctx, d, c, files)
 
 	var problems []string
 	for i := range files {
@@ -255,14 +256,17 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 		s.reject(ctx, d, files, "file check: "+strings.Join(problems, "; "))
 		return
 	}
-	s.save(ctx, d, store.Import{State: store.ImportMoving, Detail: "the file check passed", Files: files})
-	s.move(ctx, d)
+	s.save(ctx, d, store.Import{State: store.ImportMoving, Detail: "the file check passed", Files: files, Notes: notes})
+	s.move(ctx, d, dropped)
 }
 
 // move renames the files into the library. A rename moves the file on the
 // share without copying it; a rename that would cross filesystems fails
 // instead of copying.
-func (s *Service) move(ctx context.Context, d *store.Download) {
+// dropped are a pack's files the library keeps its own version of; they
+// are deleted once the move succeeded, so SABnzbd's folder can be tidied.
+// After a restart they are no longer known and stay in the folder.
+func (s *Service) move(ctx context.Context, d *store.Download, dropped []string) {
 	files := d.Import.Files
 	for _, f := range files {
 		root := s.rootOf(f.Target)
@@ -310,7 +314,12 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 		s.log.Info("imported file", "download", d.ID, "target", f.Target)
 	}
 	s.recordFiles(ctx, d, files)
-	notes := s.tidy(d, files)
+	for _, f := range dropped {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.log.Warn("could not remove a file it does not import", "download", d.ID, "file", f, "err", err)
+		}
+	}
+	notes := append(slices.Clone(d.Import.Notes), s.tidy(d, files)...)
 	if notes == nil {
 		notes = []string{}
 	}
@@ -338,6 +347,43 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 }
 
 const permissionFix = "On the NAS, give the account Garner uses write access to SABnzbd's completed folder and the library (UID 1000 in this setup), then retry the import."
+
+// keepBetter drops a pack's files for episodes, other than the one it was
+// chosen for, whose file came from a release of the same tier or a better
+// one: one version per episode, the better one. It returns the files to
+// import, the dropped ones' paths and a note naming the episodes that kept
+// their file.
+func (s *Service) keepBetter(ctx context.Context, d *store.Download, c showContext, files []store.ImportFile) (keep []store.ImportFile, dropped, notes []string) {
+	if len(files) < 2 {
+		return files, nil, nil
+	}
+	have, err := s.store.SeriesFileTiers(ctx, c.data.Series.ID)
+	if err != nil {
+		s.log.Warn("could not compare with the files in the library; importing every file", "download", d.ID, "err", err)
+		return files, nil, nil
+	}
+	pack := selection.TierRank(c.profile, d.Tier)
+	var kept []int64
+	for _, f := range files {
+		ours := !slices.Contains(f.Episodes, d.EpisodeID)
+		for _, ep := range f.Episodes {
+			if tier, found := have[ep]; !found || selection.TierRank(c.profile, tier) > pack {
+				ours = false
+			}
+		}
+		if !ours {
+			keep = append(keep, f)
+			continue
+		}
+		kept = append(kept, f.Episodes...)
+		dropped = append(dropped, f.Source)
+	}
+	if len(kept) == 0 {
+		return keep, nil, nil
+	}
+	s.log.Info("kept the existing files", "download", d.ID, "episodes", c.show.Describe(kept))
+	return keep, dropped, []string{"kept the existing file of " + c.show.Describe(kept) + ": as good as the pack's or better"}
+}
 
 // recordFiles remembers each episode's file and removes the version Garner
 // imported before: one version per episode.

@@ -416,3 +416,12 @@ func compareBool(a, b bool) int {
 	}
 	return -1
 }
+
+// TierRank places a tier name such as "German 1080p" in the profile: 0 is
+// the best tier; an unknown or empty one ranks after every tier.
+func TierRank(p Profile, tier string) int {
+	if i := slices.IndexFunc(p.Tiers, func(t Tier) bool { return t.String() == tier }); i >= 0 {
+		return i
+	}
+	return len(p.Tiers)
+}
