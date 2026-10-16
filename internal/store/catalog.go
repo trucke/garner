@@ -76,6 +76,10 @@ type Episode struct {
 	Name     string `json:"name,omitempty"`
 	NameEng  string `json:"name_eng,omitempty"`
 	NameDeu  string `json:"name_deu,omitempty"`
+	// Overview is TVDB's description in OverviewLanguage. Saved with the
+	// show, but read only through EpisodeOverview and never sent with it.
+	Overview         string `json:"-"`
+	OverviewLanguage string `json:"-"`
 	// Numbers maps an order type to the episode's position in it.
 	Numbers map[string]Position `json:"numbers"`
 }
@@ -175,6 +179,7 @@ func (s *Store) saveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 			ID: e.ID, SeriesID: sr.ID, Aired: nullString(e.Aired), Runtime: nullInt(e.Runtime),
 			AbsoluteNumber: nullInt(e.Absolute), IsMovie: boolInt(e.IsMovie),
 			Name: nullString(e.Name), NameEng: nullString(e.NameEng), NameDeu: nullString(e.NameDeu),
+			Overview: e.Overview, OverviewLanguage: e.OverviewLanguage,
 		}); err != nil {
 			return fmt.Errorf("save episode %d: %w", e.ID, err)
 		}
@@ -371,4 +376,14 @@ func boolInt(b bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+// EpisodeOverview returns TVDB's description of an episode and its
+// language; both are empty when TVDB has none.
+func (s *Store) EpisodeOverview(ctx context.Context, episodeID int64) (overview, language string, err error) {
+	r, err := s.q.GetEpisodeOverview(ctx, episodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", fmt.Errorf("episode %d: %w", episodeID, ErrNotFound)
+	}
+	return r.Overview, r.OverviewLanguage, err
 }

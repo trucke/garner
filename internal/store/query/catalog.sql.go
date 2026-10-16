@@ -55,6 +55,22 @@ func (q *Queries) DeleteSeriesTitles(ctx context.Context, seriesID int64) error 
 	return err
 }
 
+const getEpisodeOverview = `-- name: GetEpisodeOverview :one
+SELECT overview, overview_language FROM episodes WHERE id = ?
+`
+
+type GetEpisodeOverviewRow struct {
+	Overview         string
+	OverviewLanguage string
+}
+
+func (q *Queries) GetEpisodeOverview(ctx context.Context, id int64) (GetEpisodeOverviewRow, error) {
+	row := q.db.QueryRowContext(ctx, getEpisodeOverview, id)
+	var i GetEpisodeOverviewRow
+	err := row.Scan(&i.Overview, &i.OverviewLanguage)
+	return i, err
+}
+
 const getSeries = `-- name: GetSeries :one
 SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language FROM series WHERE id = ?
 `
@@ -267,18 +283,33 @@ func (q *Queries) ListEpisodeNumbers(ctx context.Context, seriesID int64) ([]Lis
 }
 
 const listEpisodes = `-- name: ListEpisodes :many
-SELECT id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu FROM episodes WHERE series_id = ? ORDER BY id
+SELECT id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu
+FROM episodes WHERE series_id = ? ORDER BY id
 `
 
-func (q *Queries) ListEpisodes(ctx context.Context, seriesID int64) ([]Episode, error) {
+type ListEpisodesRow struct {
+	ID             int64
+	SeriesID       int64
+	Aired          sql.NullString
+	Runtime        sql.NullInt64
+	AbsoluteNumber sql.NullInt64
+	IsMovie        int64
+	Name           sql.NullString
+	NameEng        sql.NullString
+	NameDeu        sql.NullString
+}
+
+// Without overviews: a show's episodes load often, their descriptions are
+// read one at a time.
+func (q *Queries) ListEpisodes(ctx context.Context, seriesID int64) ([]ListEpisodesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEpisodes, seriesID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Episode
+	var items []ListEpisodesRow
 	for rows.Next() {
-		var i Episode
+		var i ListEpisodesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.SeriesID,
@@ -541,24 +572,28 @@ func (q *Queries) SetXEMFetched(ctx context.Context, arg SetXEMFetchedParams) er
 }
 
 const upsertEpisode = `-- name: UpsertEpisode :exec
-INSERT INTO episodes (id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO episodes (id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu, overview,
+    overview_language)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     series_id = excluded.series_id, aired = excluded.aired, runtime = excluded.runtime,
     absolute_number = excluded.absolute_number, is_movie = excluded.is_movie, name = excluded.name,
-    name_eng = excluded.name_eng, name_deu = excluded.name_deu
+    name_eng = excluded.name_eng, name_deu = excluded.name_deu, overview = excluded.overview,
+    overview_language = excluded.overview_language
 `
 
 type UpsertEpisodeParams struct {
-	ID             int64
-	SeriesID       int64
-	Aired          sql.NullString
-	Runtime        sql.NullInt64
-	AbsoluteNumber sql.NullInt64
-	IsMovie        int64
-	Name           sql.NullString
-	NameEng        sql.NullString
-	NameDeu        sql.NullString
+	ID               int64
+	SeriesID         int64
+	Aired            sql.NullString
+	Runtime          sql.NullInt64
+	AbsoluteNumber   sql.NullInt64
+	IsMovie          int64
+	Name             sql.NullString
+	NameEng          sql.NullString
+	NameDeu          sql.NullString
+	Overview         string
+	OverviewLanguage string
 }
 
 func (q *Queries) UpsertEpisode(ctx context.Context, arg UpsertEpisodeParams) error {
@@ -572,6 +607,8 @@ func (q *Queries) UpsertEpisode(ctx context.Context, arg UpsertEpisodeParams) er
 		arg.Name,
 		arg.NameEng,
 		arg.NameDeu,
+		arg.Overview,
+		arg.OverviewLanguage,
 	)
 	return err
 }

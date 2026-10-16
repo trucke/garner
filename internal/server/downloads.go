@@ -37,11 +37,13 @@ func (s *Server) downloadRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
 }
 
-// EpisodeDetail is what Garner has of one episode: its file in the library,
-// if any, and every download, newest first.
+// EpisodeDetail is what Garner has of one episode: TVDB's description, its
+// file in the library, if any, and every download, newest first.
 type EpisodeDetail struct {
-	File      *EpisodeFile     `json:"file"`
-	Downloads []store.Download `json:"downloads"`
+	Overview         string           `json:"overview,omitempty"`
+	OverviewLanguage string           `json:"overview_language,omitempty"`
+	File             *EpisodeFile     `json:"file"`
+	Downloads        []store.Download `json:"downloads"`
 }
 
 // EpisodeFile is an episode's file, as Garner reaches it.
@@ -56,14 +58,16 @@ func (s *Server) handleGetEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if _, err := s.store.SeriesOfEpisode(ctx, id); errors.Is(err, store.ErrNotFound) {
+	var out EpisodeDetail
+	var err error
+	out.Overview, out.OverviewLanguage, err = s.store.EpisodeOverview(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "no such episode")
 		return
 	} else if err != nil {
 		s.internalError(w, "load episode", err)
 		return
 	}
-	var out EpisodeDetail
 	f, found, err := s.store.EpisodeFile(ctx, id)
 	if err != nil {
 		s.internalError(w, "load episode file", err)

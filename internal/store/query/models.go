@@ -75,15 +75,17 @@ type Download struct {
 }
 
 type Episode struct {
-	ID             int64
-	SeriesID       int64
-	Aired          sql.NullString
-	Runtime        sql.NullInt64
-	AbsoluteNumber sql.NullInt64
-	IsMovie        int64
-	Name           sql.NullString
-	NameEng        sql.NullString
-	NameDeu        sql.NullString
+	ID               int64
+	SeriesID         int64
+	Aired            sql.NullString
+	Runtime          sql.NullInt64
+	AbsoluteNumber   sql.NullInt64
+	IsMovie          int64
+	Name             sql.NullString
+	NameEng          sql.NullString
+	NameDeu          sql.NullString
+	Overview         string
+	OverviewLanguage string
 }
 
 type EpisodeFile struct {

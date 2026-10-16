@@ -61,7 +61,7 @@ func TestRefresh(t *testing.T) {
 		if r.URL.Query().Get("page") == "0" {
 			fmt.Fprint(w, `{"status":"success","data":{"episodes":[
 				{"id":901,"seasonNumber":0,"number":1,"name":"Tokubetsu"},
-				{"id":101,"seasonNumber":1,"number":1,"name":"Hajimari","aired":"2020-01-01","runtime":24,"absoluteNumber":1}]},
+				{"id":101,"seasonNumber":1,"number":1,"name":"Hajimari","aired":"2020-01-01","runtime":24,"absoluteNumber":1,"overview":"Genbun."}]},
 				"links":{"next":"page=1"}}`)
 			return
 		}
@@ -69,12 +69,12 @@ func TestRefresh(t *testing.T) {
 		if dropped {
 			ep102 = ""
 		}
-		fmt.Fprintf(w, `{"status":"success","data":{"episodes":[%s{"id":201,"seasonNumber":2,"number":1,"absoluteNumber":3}]},"links":{"next":null}}`, ep102)
+		fmt.Fprintf(w, `{"status":"success","data":{"episodes":[%s{"id":201,"seasonNumber":2,"number":1,"absoluteNumber":3,"overview":"Genbun 2."}]},"links":{"next":null}}`, ep102)
 	})
 	reply("/series/1/episodes/alternate", `{"status":"success","data":{"episodes":[
 		{"id":101,"seasonNumber":1,"number":1},{"id":201,"seasonNumber":1,"number":2},{"id":901,"seasonNumber":2,"number":1}]}}`)
 	reply("/series/1/episodes/official/eng", `{"status":"success","data":{"episodes":[{"id":101,"name":"The Beginning"}]}}`)
-	reply("/series/1/episodes/official/deu", `{"status":"success","data":{"episodes":[{"id":101,"name":"Der Anfang"},{"id":201,"name":null}]}}`)
+	reply("/series/1/episodes/official/deu", `{"status":"success","data":{"episodes":[{"id":101,"name":"Der Anfang","overview":"Auf Deutsch."},{"id":201,"name":null}]}}`)
 	tvdbSrv := httptest.NewServer(tvdb)
 	defer tvdbSrv.Close()
 
@@ -134,6 +134,12 @@ func TestRefresh(t *testing.T) {
 	ep := episodeByID(t, d, 101)
 	if ep.Name != "Hajimari" || ep.NameEng != "The Beginning" || ep.NameDeu != "Der Anfang" || ep.Aired != "2020-01-01" {
 		t.Errorf("episode 101 = %+v", ep)
+	}
+	// Episode overviews as the show's: English, else German, else the original.
+	for id, want := range map[int64]string{101: "Auf Deutsch. (deu)", 201: "Genbun 2. (jpn)"} {
+		if ov, lang, err := st.EpisodeOverview(ctx, id); err != nil || ov+" ("+lang+")" != want {
+			t.Errorf("episode %d overview = %q (%s), %v; want %s", id, ov, lang, err, want)
+		}
 	}
 	if got := episodeByID(t, d, 901).Numbers; got["official"] != (store.Position{Season: 0, Number: 1}) || got["alternate"] != (store.Position{Season: 2, Number: 1}) {
 		t.Errorf("special numbers = %v", got)

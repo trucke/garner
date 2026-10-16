@@ -230,6 +230,7 @@ type tvdbEpisode struct {
 	Name           *string `json:"name"`
 	Aired          *string `json:"aired"`
 	Runtime        *int    `json:"runtime"`
+	Overview       *string `json:"overview"`
 	AbsoluteNumber int     `json:"absoluteNumber"`
 	IsMovie        int     `json:"isMovie"`
 }

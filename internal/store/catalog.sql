@@ -47,12 +47,14 @@ INSERT INTO series_titles (series_id, title, language, season, source, scene_sea
 SELECT title, language, season, source, scene_season, note FROM series_titles WHERE series_id = ? ORDER BY source, season, title;
 
 -- name: UpsertEpisode :exec
-INSERT INTO episodes (id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO episodes (id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu, overview,
+    overview_language)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     series_id = excluded.series_id, aired = excluded.aired, runtime = excluded.runtime,
     absolute_number = excluded.absolute_number, is_movie = excluded.is_movie, name = excluded.name,
-    name_eng = excluded.name_eng, name_deu = excluded.name_deu;
+    name_eng = excluded.name_eng, name_deu = excluded.name_deu, overview = excluded.overview,
+    overview_language = excluded.overview_language;
 
 -- name: ListEpisodeIDs :many
 SELECT id FROM episodes WHERE series_id = ?;
@@ -60,8 +62,14 @@ SELECT id FROM episodes WHERE series_id = ?;
 -- name: DeleteEpisode :exec
 DELETE FROM episodes WHERE id = ?;
 
+-- Without overviews: a show's episodes load often, their descriptions are
+-- read one at a time.
 -- name: ListEpisodes :many
-SELECT * FROM episodes WHERE series_id = ? ORDER BY id;
+SELECT id, series_id, aired, runtime, absolute_number, is_movie, name, name_eng, name_deu
+FROM episodes WHERE series_id = ? ORDER BY id;
+
+-- name: GetEpisodeOverview :one
+SELECT overview, overview_language FROM episodes WHERE id = ?;
 
 -- name: DeleteEpisodeNumbers :exec
 DELETE FROM episode_numbers WHERE series_id = ?;

@@ -235,12 +235,17 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 			if st.Type == "official" {
 				ep.Aired, ep.Runtime, ep.Absolute, ep.IsMovie = deref(e.Aired), derefInt(e.Runtime), e.AbsoluteNumber, e.IsMovie != 0
 				ep.Name = deref(e.Name)
+				if ov := deref(e.Overview); ov != "" {
+					ep.Overview, ep.OverviewLanguage = ov, s.OriginalLanguage
+				}
 			}
 		}
 	}
 	if d.Series.DefaultOrder == "" {
 		d.Series.DefaultOrder = "official"
 	}
+	// Overviews as for the show: English, else German, else the original.
+	translated := map[int64]bool{}
 	for _, lang := range languages {
 		list, ok, err := c.tvdb.episodes(ctx, id, "official", lang)
 		if err != nil {
@@ -258,6 +263,9 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 				ep.NameEng = deref(e.Name)
 			} else {
 				ep.NameDeu = deref(e.Name)
+			}
+			if ov := deref(e.Overview); ov != "" && !translated[e.ID] {
+				ep.Overview, ep.OverviewLanguage, translated[e.ID] = ov, lang, true
 			}
 		}
 	}

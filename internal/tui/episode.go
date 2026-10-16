@@ -405,6 +405,9 @@ func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 	if len(earlier) > 0 {
 		out = append(out, frame("earlier attempts", earlier, w))
 	}
+	if ov := s.detail.Overview; ov != "" {
+		out = append(out, frame(overviewLabel(s.detail.OverviewLanguage), []string{sNormal.Render(clean(ov))}, w))
+	}
 	return out
 }
 
