@@ -42,6 +42,11 @@ type Server struct {
 	// creates its own certificate when it listens beyond loopback.
 	TLSCert string `toml:"tls_cert"`
 	TLSKey  string `toml:"tls_key"`
+	// Proxied means a reverse proxy serves URL with a publicly trusted
+	// certificate and forwards to Listen. Garner then serves plain HTTP,
+	// which only the proxy may reach, and its connection codes let clients
+	// verify the proxy's certificate the usual way.
+	Proxied bool `toml:"proxied"`
 }
 
 // Library names the folders shows are imported into, as Garner reaches
@@ -200,7 +205,14 @@ func (c *Config) validate() error {
 	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 		return errors.New("server.tls_cert and server.tls_key must be set together")
 	}
-	if c.Server.URL == "" {
+	if c.Server.Proxied {
+		if c.Server.TLSCert != "" {
+			return errors.New("server.proxied: the proxy holds the certificate; remove server.tls_cert and server.tls_key")
+		}
+		if u, err := url.Parse(c.Server.URL); err != nil || u.Scheme != "https" || u.Host == "" {
+			return errors.New("server.proxied needs server.url: the proxy's https:// address, such as https://garner.example.com")
+		}
+	} else if c.Server.URL == "" {
 		if !IsLoopback(host) {
 			return errors.New("server.url is required when Garner listens beyond loopback: set the address clients use, such as https://garner.home.lan:7979")
 		}
@@ -217,7 +229,7 @@ func (c *Config) validate() error {
 	if u.Scheme == "http" && (!IsLoopback(host) || c.Server.TLSCert != "") {
 		return errors.New("server.url must use https:// when Garner listens beyond loopback or has a certificate")
 	}
-	if u.Scheme == "https" && IsLoopback(host) && c.Server.TLSCert == "" {
+	if u.Scheme == "https" && IsLoopback(host) && c.Server.TLSCert == "" && !c.Server.Proxied {
 		return errors.New("server.url uses https://, but Garner listens on loopback without a certificate; set server.tls_cert and server.tls_key or use http://")
 	}
 	for name, dir := range map[string]string{"library.tv": c.Library.TV, "library.anime": c.Library.Anime} {

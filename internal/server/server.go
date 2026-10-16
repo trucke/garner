@@ -33,6 +33,7 @@ const (
 	TLSOff   = "off"
 	TLSFiles = "certificate files"
 	TLSOwn   = "own certificate"
+	TLSProxy = "at the proxy"
 )
 
 // Server serves the client API and the admin socket.
@@ -173,6 +174,10 @@ func (s *Server) tlsConfig() (*tls.Config, error) {
 	srv := s.cfg.Server
 	host, _, _ := net.SplitHostPort(srv.Listen)
 	switch {
+	case srv.Proxied:
+		// The proxy holds the certificate; only it may reach this listener.
+		s.tlsMode = TLSProxy
+		return nil, nil
 	case srv.TLSCert != "":
 		cert, err := tls.LoadX509KeyPair(srv.TLSCert, srv.TLSKey)
 		if err != nil {

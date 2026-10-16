@@ -263,8 +263,11 @@ func (a *app) statusCmd() *cobra.Command {
 			lipgloss.Println(good.Render("●") + " " + bold.Render("Garner "+st.Version) + dim.Render(" · running since "+ago(st.Started)))
 			lipgloss.Println()
 			tls := st.TLS
-			if st.TLS == server.TLSOff {
+			switch st.TLS {
+			case server.TLSOff:
 				tls = dim.Render("off (loopback only)")
+			case server.TLSProxy:
+				tls = "at the proxy" + dim.Render(" · Garner serves it plain HTTP")
 			}
 			integrity := good.Render(st.Integrity)
 			if st.Integrity != "ok" {

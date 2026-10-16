@@ -56,3 +56,25 @@ func TestStaysOnHost(t *testing.T) {
 		t.Error("an unknown interface list must count as remote")
 	}
 }
+
+// TestProxied accepts a proxy's https:// address in front of a plain
+// listener beyond loopback, and refuses what would not work behind it.
+func TestProxied(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		srv  Server
+		ok   bool
+	}{
+		{"behind a proxy", Server{Listen: "192.168.1.20:7979", URL: "https://garner.example.com", Proxied: true}, true},
+		{"no proxy address", Server{Listen: "192.168.1.20:7979", Proxied: true}, false},
+		{"plain proxy address", Server{Listen: "192.168.1.20:7979", URL: "http://garner.example.com", Proxied: true}, false},
+		{"own certificate too", Server{Listen: "192.168.1.20:7979", URL: "https://garner.example.com", Proxied: true,
+			TLSCert: "/c.pem", TLSKey: "/k.pem"}, false},
+		{"not proxied, plain beyond loopback", Server{Listen: "192.168.1.20:7979", URL: "http://garner.example.com"}, false},
+	} {
+		c := Config{Server: tc.srv}
+		if err := c.validate(); (err == nil) != tc.ok {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+}

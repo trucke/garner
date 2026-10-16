@@ -25,6 +25,13 @@ listen = "127.0.0.1:7979"
 # tls_cert = "/etc/garner/cert.pem"
 # tls_key = "/etc/garner/key.pem"
 
+# Or put a reverse proxy with a publicly trusted certificate in front: url is
+# the proxy's address, and Garner serves plain HTTP that only the proxy may
+# reach, so firewall the listener.
+# listen = "192.168.1.20:7979"
+# url = "https://garner.example.com"
+# proxied = true
+
 # Library folders, as Garner reaches them. Garner moves downloads here
 # with a rename, so they must be on the same share or filesystem as
 # SABnzbd's completed folder. Garner creates the show and season folders

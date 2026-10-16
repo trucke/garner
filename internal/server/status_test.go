@@ -57,3 +57,14 @@ func TestServices(t *testing.T) {
 		t.Errorf("library = %+v", l)
 	}
 }
+
+// TestProxied serves plain HTTP behind a proxy and puts no pin in the
+// connection codes: clients verify the proxy's public certificate.
+func TestProxied(t *testing.T) {
+	s := &Server{cfg: &config.Config{DataDir: t.TempDir(), Server: config.Server{
+		Listen: "192.168.1.20:7979", URL: "https://garner.example.com", Proxied: true}}}
+	cfg, err := s.tlsConfig()
+	if err != nil || cfg != nil || s.tlsMode != TLSProxy || s.pin != "" {
+		t.Errorf("tls config %v, mode %q, pin %q, %v", cfg, s.tlsMode, s.pin, err)
+	}
+}
