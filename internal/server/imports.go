@@ -37,6 +37,7 @@ func (s *Server) setupImports() error {
 			return err
 		}
 		jf = jellyfin.New(j.URL, j.APIKey.Value(), client)
+		s.jellyfin = jf
 	} else {
 		s.log.Warn("Jellyfin is not configured (jellyfin.url and JELLYFIN_API_KEY); imports are not confirmed")
 	}

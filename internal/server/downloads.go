@@ -22,7 +22,8 @@ func (s *Server) setupDownloads() error {
 	if err != nil {
 		return err
 	}
-	svc := download.New(s.store, sabnzbd.New(c.URL, c.APIKey.Value(), client), c.Category, s.log)
+	s.sabnzbd = sabnzbd.New(c.URL, c.APIKey.Value(), client)
+	svc := download.New(s.store, s.sabnzbd, c.Category, s.log)
 	svc.OnChange = func(d store.Download) { s.events.publish(Event{Type: "download.updated", Data: d}) }
 	s.downloads = svc
 	return nil

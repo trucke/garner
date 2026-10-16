@@ -114,6 +114,19 @@ func (c *Client) EpisodeAt(ctx context.Context, showDir, file string) (ep Episod
 	return ep, false, nil
 }
 
+// Info reports Jellyfin's version and how many shows its libraries hold.
+func (c *Client) Info(ctx context.Context) (version string, shows int, err error) {
+	var info struct{ Version string }
+	if err := c.do(ctx, http.MethodGet, "/System/Info/Public", nil, &info); err != nil {
+		return "", 0, err
+	}
+	var items struct{ TotalRecordCount int }
+	if err := c.do(ctx, http.MethodGet, "/Items?IncludeItemTypes=Series&Recursive=true&Limit=0", nil, &items); err != nil {
+		return info.Version, 0, err
+	}
+	return info.Version, items.TotalRecordCount, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {

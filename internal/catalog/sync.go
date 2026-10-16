@@ -52,6 +52,9 @@ func (c *Catalog) Run(ctx context.Context) {
 	}
 }
 
+// LastSync is when the catalogue sync last ran; zero before the first.
+func (c *Catalog) LastSync(ctx context.Context) (time.Time, error) { return c.lastSync(ctx) }
+
 func (c *Catalog) lastSync(ctx context.Context) (time.Time, error) {
 	v, err := c.store.SyncState(ctx, syncKey)
 	if err != nil || v == "" {

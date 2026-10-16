@@ -192,8 +192,10 @@ func (c *Client) classify(err error) error {
 
 // Status is what the server reports about itself and the token in use.
 type Status struct {
-	Version string `json:"version"`
-	Token   string `json:"token"`
+	Version      string    `json:"version"`
+	Token        string    `json:"token"`
+	TokenCreated time.Time `json:"token_created"`
+	Started      time.Time `json:"started"`
 }
 
 // Status asks the server for its version and the token's name. It is the

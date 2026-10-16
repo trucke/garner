@@ -20,6 +20,9 @@ import (
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/importer"
+	"github.com/trucke/garner/internal/jellyfin"
+	"github.com/trucke/garner/internal/prowlarr"
+	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
@@ -40,12 +43,16 @@ type Server struct {
 	search    *search.Service   // nil without Prowlarr
 	downloads *download.Service // nil without SABnzbd
 	imports   *importer.Service // nil without library folders or ffprobe
-	log       *slog.Logger
-	version   string
-	events    *broker
-	tlsMode   string
-	pin       string // set for TLSOwn
-	started   time.Time
+	// The services' clients, for the status checks; nil when not set up.
+	prowlarr *prowlarr.Client
+	sabnzbd  *sabnzbd.Client
+	jellyfin *jellyfin.Client
+	log      *slog.Logger
+	version  string
+	events   *broker
+	tlsMode  string
+	pin      string // set for TLSOwn
+	started  time.Time
 }
 
 // Run opens the database and serves until ctx is cancelled.

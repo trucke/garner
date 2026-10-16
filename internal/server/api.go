@@ -18,6 +18,7 @@ type tokenKey struct{}
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/status", s.auth(http.HandlerFunc(s.handleStatus)))
+	mux.Handle("GET /api/v1/status/services", s.auth(http.HandlerFunc(s.handleServices)))
 	mux.Handle("GET /api/v1/events", s.auth(http.HandlerFunc(s.handleEvents)))
 	s.catalogRoutes(mux)
 	s.searchRoutes(mux)
@@ -51,7 +52,15 @@ func (s *Server) auth(next http.Handler) http.Handler {
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	tok := r.Context().Value(tokenKey{}).(store.Token)
-	writeJSON(w, http.StatusOK, map[string]string{"version": s.version, "token": tok.Name})
+	out := map[string]any{"version": s.version, "token": tok.Name, "started": s.started}
+	if tokens, err := s.store.Tokens(r.Context()); err == nil {
+		for _, t := range tokens {
+			if t.Name == tok.Name {
+				out["token_created"] = t.Created
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleEvents streams server-sent events. Clients reload state after

@@ -123,3 +123,10 @@ func (c *Client) DownloadSeasonCandidate(ctx context.Context, candidateID int64)
 	var d store.Download
 	return d, c.do(ctx, http.MethodPost, "/api/v1/season-candidates/"+strconv.FormatInt(candidateID, 10)+"/download", nil, &d)
 }
+
+// Services asks the server how the services it uses are doing, and for the
+// library's totals. The server checks each service live.
+func (c *Client) Services(ctx context.Context) (server.Services, error) {
+	var s server.Services
+	return s, c.do(ctx, http.MethodGet, "/api/v1/status/services", nil, &s)
+}

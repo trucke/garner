@@ -96,6 +96,31 @@ func (c *Client) Queue(ctx context.Context, search string) ([]Job, error) {
 	return jobs, nil
 }
 
+// QueueState is SABnzbd's queue as a whole.
+type QueueState struct {
+	Jobs   int
+	Paused bool
+	// Speed is the download speed in bytes per second.
+	Speed float64
+}
+
+// State reports the queue: how many jobs, whether it is paused, and how
+// fast it downloads.
+func (c *Client) State(ctx context.Context) (QueueState, error) {
+	var out struct {
+		Queue struct {
+			Paused   bool   `json:"paused"`
+			KBPerSec string `json:"kbpersec"`
+			Total    int    `json:"noofslots_total"`
+		} `json:"queue"`
+	}
+	if err := c.call(ctx, url.Values{"mode": {"queue"}, "limit": {"1"}}, &out); err != nil {
+		return QueueState{}, err
+	}
+	kb, _ := strconv.ParseFloat(out.Queue.KBPerSec, 64)
+	return QueueState{Jobs: out.Queue.Total, Paused: out.Queue.Paused, Speed: kb * 1024}, nil
+}
+
 // Done is a job in SABnzbd's history: finished, failed or still in
 // post-processing.
 type Done struct {
