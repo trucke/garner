@@ -10,6 +10,25 @@ import (
 	"database/sql"
 )
 
+const cancelDownload = `-- name: CancelDownload :execrows
+UPDATE downloads SET state = 'cancelled', failure = ?, retryable = 0, time_left = '', updated_at = ?
+WHERE id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing')
+`
+
+type CancelDownloadParams struct {
+	Failure   string
+	UpdatedAt int64
+	ID        int64
+}
+
+func (q *Queries) CancelDownload(ctx context.Context, arg CancelDownloadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelDownload, arg.Failure, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countActiveDownloads = `-- name: CountActiveDownloads :one
 SELECT count(*) FROM downloads
 WHERE episode_id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing')
@@ -39,7 +58,7 @@ func (q *Queries) CountFailedDownloadsSince(ctx context.Context, arg CountFailed
 }
 
 const getCandidateLink = `-- name: GetCandidateLink :one
-SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier
+SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id
 WHERE c.id = ?
 `
@@ -53,6 +72,8 @@ type GetCandidateLinkRow struct {
 	Size      int64
 	Verdict   string
 	Tier      string
+	Reasons   string
+	Decisive  int64
 }
 
 func (q *Queries) GetCandidateLink(ctx context.Context, id int64) (GetCandidateLinkRow, error) {
@@ -67,12 +88,14 @@ func (q *Queries) GetCandidateLink(ctx context.Context, id int64) (GetCandidateL
 		&i.Size,
 		&i.Verdict,
 		&i.Tier,
+		&i.Reasons,
+		&i.Decisive,
 	)
 	return i, err
 }
 
 const getDownload = `-- name: GetDownload :one
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes FROM downloads WHERE id = ?
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive FROM downloads WHERE id = ?
 `
 
 func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
@@ -105,14 +128,16 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 		&i.ImportFiles,
 		&i.ImportUpdatedAt,
 		&i.ImportNotes,
+		&i.Reasons,
+		&i.Decisive,
 	)
 	return i, err
 }
 
 const insertDownload = `-- name: InsertDownload :one
-INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, progress,
-    time_left, storage, failure, retryable, stages, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
+INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, state, detail,
+    progress, time_left, storage, failure, retryable, stages, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
 RETURNING id
 `
 
@@ -124,6 +149,8 @@ type InsertDownloadParams struct {
 	Size      int64
 	Verdict   string
 	Tier      string
+	Reasons   string
+	Decisive  int64
 	Manual    int64
 	CreatedAt int64
 	UpdatedAt int64
@@ -138,6 +165,8 @@ func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) 
 		arg.Size,
 		arg.Verdict,
 		arg.Tier,
+		arg.Reasons,
+		arg.Decisive,
 		arg.Manual,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -148,7 +177,7 @@ func (q *Queries) InsertDownload(ctx context.Context, arg InsertDownloadParams) 
 }
 
 const listActiveDownloads = `-- name: ListActiveDownloads :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes FROM downloads WHERE state IN ('submitting', 'queued', 'downloading', 'processing') ORDER BY id
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive FROM downloads WHERE state IN ('submitting', 'queued', 'downloading', 'processing') ORDER BY id
 `
 
 func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
@@ -187,6 +216,8 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 			&i.ImportFiles,
 			&i.ImportUpdatedAt,
 			&i.ImportNotes,
+			&i.Reasons,
+			&i.Decisive,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +233,7 @@ func (q *Queries) ListActiveDownloads(ctx context.Context) ([]Download, error) {
 }
 
 const listCandidateLinks = `-- name: ListCandidateLinks :many
-SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier
+SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id
 WHERE s.episode_id = ? ORDER BY c.rank
 `
@@ -216,6 +247,8 @@ type ListCandidateLinksRow struct {
 	Size      int64
 	Verdict   string
 	Tier      string
+	Reasons   string
+	Decisive  int64
 }
 
 // Candidates of the latest search with their download links, best first.
@@ -237,6 +270,8 @@ func (q *Queries) ListCandidateLinks(ctx context.Context, episodeID int64) ([]Li
 			&i.Size,
 			&i.Verdict,
 			&i.Tier,
+			&i.Reasons,
+			&i.Decisive,
 		); err != nil {
 			return nil, err
 		}
@@ -252,7 +287,7 @@ func (q *Queries) ListCandidateLinks(ctx context.Context, episodeID int64) ([]Li
 }
 
 const listDownloads = `-- name: ListDownloads :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes FROM downloads
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive FROM downloads
 ORDER BY state IN ('submitting', 'queued', 'downloading', 'processing') DESC, id DESC
 LIMIT ?
 `
@@ -294,6 +329,64 @@ func (q *Queries) ListDownloads(ctx context.Context, limit int64) ([]Download, e
 			&i.ImportFiles,
 			&i.ImportUpdatedAt,
 			&i.ImportNotes,
+			&i.Reasons,
+			&i.Decisive,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEpisodeDownloads = `-- name: ListEpisodeDownloads :many
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive FROM downloads WHERE episode_id = ? ORDER BY id DESC
+`
+
+func (q *Queries) ListEpisodeDownloads(ctx context.Context, episodeID int64) ([]Download, error) {
+	rows, err := q.db.QueryContext(ctx, listEpisodeDownloads, episodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Download
+	for rows.Next() {
+		var i Download
+		if err := rows.Scan(
+			&i.ID,
+			&i.EpisodeID,
+			&i.Title,
+			&i.Indexer,
+			&i.Link,
+			&i.Size,
+			&i.Verdict,
+			&i.Tier,
+			&i.Manual,
+			&i.State,
+			&i.Detail,
+			&i.JobID,
+			&i.Progress,
+			&i.TimeLeft,
+			&i.Storage,
+			&i.Failure,
+			&i.Retryable,
+			&i.Stages,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ImportState,
+			&i.ImportDetail,
+			&i.ImportRecovery,
+			&i.ImportFiles,
+			&i.ImportUpdatedAt,
+			&i.ImportNotes,
+			&i.Reasons,
+			&i.Decisive,
 		); err != nil {
 			return nil, err
 		}
@@ -309,9 +402,10 @@ func (q *Queries) ListDownloads(ctx context.Context, limit int64) ([]Download, e
 }
 
 const listFailedTitles = `-- name: ListFailedTitles :many
-SELECT title FROM downloads WHERE episode_id = ? AND state = 'failed'
+SELECT title FROM downloads WHERE episode_id = ? AND state IN ('failed', 'cancelled')
 `
 
+// Releases Garner does not pick again on its own: failed or cancelled.
 func (q *Queries) ListFailedTitles(ctx context.Context, episodeID int64) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listFailedTitles, episodeID)
 	if err != nil {
@@ -335,10 +429,10 @@ func (q *Queries) ListFailedTitles(ctx context.Context, episodeID int64) ([]stri
 	return items, nil
 }
 
-const updateDownload = `-- name: UpdateDownload :exec
+const updateDownload = `-- name: UpdateDownload :execrows
 UPDATE downloads SET state = ?, detail = ?, job_id = ?, progress = ?, time_left = ?, storage = ?, failure = ?,
     retryable = ?, stages = ?, updated_at = ?
-WHERE id = ?
+WHERE id = ? AND state != 'cancelled'
 `
 
 type UpdateDownloadParams struct {
@@ -355,8 +449,10 @@ type UpdateDownloadParams struct {
 	ID        int64
 }
 
-func (q *Queries) UpdateDownload(ctx context.Context, arg UpdateDownloadParams) error {
-	_, err := q.db.ExecContext(ctx, updateDownload,
+// A cancelled download stays cancelled, whatever a poll that started
+// before the cancel saves.
+func (q *Queries) UpdateDownload(ctx context.Context, arg UpdateDownloadParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateDownload,
 		arg.State,
 		arg.Detail,
 		arg.JobID,
@@ -369,5 +465,8 @@ func (q *Queries) UpdateDownload(ctx context.Context, arg UpdateDownloadParams) 
 		arg.UpdatedAt,
 		arg.ID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

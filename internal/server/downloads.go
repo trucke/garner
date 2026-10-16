@@ -33,6 +33,91 @@ func (s *Server) downloadRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/episodes/{id}/download", s.auth(s.needDownloads(s.handleDownloadBest)))
 	mux.Handle("GET /api/v1/downloads", s.auth(http.HandlerFunc(s.handleListDownloads)))
 	mux.Handle("GET /api/v1/downloads/{id}", s.auth(http.HandlerFunc(s.handleGetDownload)))
+	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.auth(s.needDownloads(s.handleCancelDownload)))
+	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
+}
+
+// EpisodeDetail is what Garner has of one episode: its file in the library,
+// if any, and every download, newest first.
+type EpisodeDetail struct {
+	File      *EpisodeFile     `json:"file"`
+	Downloads []store.Download `json:"downloads"`
+}
+
+// EpisodeFile is an episode's file, as Garner reaches it.
+type EpisodeFile struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+func (s *Server) handleGetEpisode(w http.ResponseWriter, r *http.Request) {
+	id, ok := episodeID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	if _, err := s.store.SeriesOfEpisode(ctx, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no such episode")
+		return
+	} else if err != nil {
+		s.internalError(w, "load episode", err)
+		return
+	}
+	var out EpisodeDetail
+	f, found, err := s.store.EpisodeFile(ctx, id)
+	if err != nil {
+		s.internalError(w, "load episode file", err)
+		return
+	}
+	if found {
+		out.File = &EpisodeFile{Path: f.Path, Size: f.Size}
+	}
+	if out.Downloads, err = s.store.EpisodeDownloads(ctx, id); err != nil {
+		s.internalError(w, "list episode downloads", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleCancelDownload stops a queued or downloading release: SABnzbd
+// deletes what it has, and the episode counts as missing again.
+func (s *Server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "invalid download ID")
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	d, err := s.store.GetDownload(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "no such download")
+		return
+	}
+	if err != nil {
+		s.internalError(w, "load download", err)
+		return
+	}
+	switch d.State {
+	case store.Queued, store.Downloading:
+	case store.Submitting:
+		writeError(w, http.StatusConflict, "SABnzbd has not confirmed the download yet; try again in a moment")
+		return
+	case store.Processing:
+		writeError(w, http.StatusConflict, "SABnzbd is already repairing or unpacking it; it can no longer be cancelled")
+		return
+	default:
+		writeError(w, http.StatusConflict, store.ErrNotRunning.Error())
+		return
+	}
+	d, err = s.downloads.Cancel(ctx, d, "cancelled")
+	switch {
+	case errors.Is(err, store.ErrNotRunning):
+		writeError(w, http.StatusConflict, "the download ended before it could be cancelled")
+	case err != nil:
+		s.log.Error("cancel download", "download", id, "err", err)
+		writeError(w, http.StatusBadGateway, "SABnzbd could not cancel it: "+err.Error())
+	default:
+		writeJSON(w, http.StatusOK, d)
+	}
 }
 
 func (s *Server) needDownloads(h http.HandlerFunc) http.Handler {

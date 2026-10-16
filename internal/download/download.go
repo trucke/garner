@@ -108,7 +108,7 @@ func (s *Service) pick(ctx context.Context, episodeID int64) (store.Candidate, e
 func (s *Service) submit(ctx context.Context, episodeID int64, c store.Candidate, manual bool) (store.Download, error) {
 	d, err := s.store.StartDownload(ctx, store.Download{
 		EpisodeID: episodeID, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Size: c.Size,
-		Verdict: c.Verdict, Tier: c.Tier, Manual: manual,
+		Verdict: c.Verdict, Tier: c.Tier, Reasons: c.Reasons, Decisive: c.Decisive, Manual: manual,
 	}, s.now())
 	if err != nil {
 		return d, err
@@ -217,7 +217,9 @@ func (s *Service) poll(ctx context.Context) bool {
 			delete(s.missing, d.ID)
 		}
 		if summary(d) != summary(before) {
-			if err := s.save(ctx, d); err != nil {
+			if err := s.save(ctx, d); errors.Is(err, store.ErrCancelled) {
+				continue // cancelled while this poll ran
+			} else if err != nil {
 				s.log.Error("save download", "download", d.ID, "err", err)
 				continue
 			}
@@ -287,15 +289,21 @@ func (s *Service) Reject(ctx context.Context, d store.Download, reason string) {
 }
 
 // Cancel stops a running download: SABnzbd deletes the job and its files,
-// and the download fails with reason, without a replacement.
-func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) error {
+// and the download ends as cancelled with reason, without a replacement.
+// It returns store.ErrNotRunning when the download ended meanwhile.
+func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) (store.Download, error) {
 	if d.JobID != "" {
 		if err := s.sab.Delete(ctx, d.JobID); err != nil {
-			return err
+			return d, err
 		}
 	}
-	d.State, d.Failure, d.Retryable = store.Failed, reason, false
-	return s.save(ctx, d)
+	d, err := s.store.CancelDownload(ctx, d.ID, reason, s.now())
+	if err != nil {
+		return d, err
+	}
+	s.log.Info("download cancelled", "download", d.ID, "title", d.Title, "reason", reason)
+	s.changed(d)
+	return d, nil
 }
 
 // replace starts the next release after a failure another release may fix.

@@ -92,3 +92,21 @@ func (c *Client) DownloadCandidate(ctx context.Context, candidateID int64) (stor
 	var d store.Download
 	return d, c.do(ctx, http.MethodPost, "/api/v1/candidates/"+strconv.FormatInt(candidateID, 10)+"/download", nil, &d)
 }
+
+// Episode returns an episode's file and downloads.
+func (c *Client) Episode(ctx context.Context, episodeID int64) (server.EpisodeDetail, error) {
+	var e server.EpisodeDetail
+	return e, c.do(ctx, http.MethodGet, "/api/v1/episodes/"+strconv.FormatInt(episodeID, 10), nil, &e)
+}
+
+// CancelDownload stops a queued or downloading release.
+func (c *Client) CancelDownload(ctx context.Context, downloadID int64) (store.Download, error) {
+	var d store.Download
+	return d, c.do(ctx, http.MethodPost, "/api/v1/downloads/"+strconv.FormatInt(downloadID, 10)+"/cancel", nil, &d)
+}
+
+// RetryImport repeats a failed or unconfirmed import.
+func (c *Client) RetryImport(ctx context.Context, downloadID int64) (store.Download, error) {
+	var d store.Download
+	return d, c.do(ctx, http.MethodPost, "/api/v1/downloads/"+strconv.FormatInt(downloadID, 10)+"/import", nil, &d)
+}

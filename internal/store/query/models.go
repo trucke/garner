@@ -70,6 +70,8 @@ type Download struct {
 	ImportFiles     string
 	ImportUpdatedAt int64
 	ImportNotes     string
+	Reasons         string
+	Decisive        int64
 }
 
 type Episode struct {

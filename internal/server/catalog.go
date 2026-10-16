@@ -250,7 +250,8 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i, d := range busy {
-		if err := s.downloads.Cancel(ctx, d, "cancelled: the show was deleted"); err != nil {
+		// One that ended meanwhile needs no cancelling.
+		if _, err := s.downloads.Cancel(ctx, d, "cancelled: the show was deleted"); err != nil && !errors.Is(err, store.ErrNotRunning) {
 			s.log.Error("cancel download", "download", d.ID, "err", err)
 			msg := "could not cancel a download in SABnzbd, so the show stays: " + err.Error()
 			if i > 0 {

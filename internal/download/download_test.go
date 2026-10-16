@@ -44,6 +44,11 @@ func (f *fakeSAB) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"status": "Grabbing", "percentage": "0", "timeleft": "0:00:00", "time_added": time.Now().Unix()})
 		out = map[string]any{"status": true, "nzo_ids": []string{id}}
 	case "queue":
+		if r.PostFormValue("name") == "delete" {
+			f.queue = slices.DeleteFunc(f.queue, func(j map[string]any) bool { return j["nzo_id"] == r.PostFormValue("value") })
+			out = map[string]any{"status": true}
+			break
+		}
 		slots := []map[string]any{}
 		for _, j := range f.queue {
 			if matches(j, "filename") {
@@ -117,7 +122,7 @@ func setup(t *testing.T) (*store.Store, *Service, *fakeSAB) {
 		{"German.DL.WEB-C", "fallback"}, {"1080p.WEB-D", "reject"},
 	} {
 		candidates = append(candidates, store.Candidate{Indexer: "One", Title: show + c.name, Verdict: c.verdict,
-			Link: "http://prowlarr/1/download?apikey=SECRET&file=" + c.name})
+			Link: "http://prowlarr/1/download?apikey=SECRET&file=" + c.name, Reasons: []string{"why " + c.name}, Decisive: 1})
 	}
 	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now().Add(-time.Hour), Outcome: "found",
 		Summary: "Found 2 matching releases", Candidates: candidates}); err != nil {
@@ -218,6 +223,53 @@ func TestRestart(t *testing.T) {
 	}
 	if len(fake.submitted()) != 0 {
 		t.Errorf("submitted %q again after the restart", fake.submitted())
+	}
+}
+
+// TestCancel stops a download: SABnzbd drops the job, a poll that started
+// before the cancel cannot undo it, nothing replaces it, the episode is
+// missing rather than failed, and Garner does not pick the release again.
+func TestCancel(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setup(t)
+	d, err := svc.Best(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Reasons) != 1 || d.Reasons[0] != "why German.DL.1080p.BluRay-A" || d.Decisive != 1 {
+		t.Errorf("the download lost its release's reasons: %q %d", d.Reasons, d.Decisive)
+	}
+	fake.progress("job-1", "Downloading", 40)
+	svc.poll(ctx)
+	stale, _ := st.GetDownload(ctx, d.ID)
+
+	got, err := svc.Cancel(ctx, stale, "cancelled")
+	if err != nil || got.State != store.Cancelled {
+		t.Fatalf("Cancel = %+v, %v", got, err)
+	}
+	fake.mu.Lock()
+	if len(fake.queue) != 0 {
+		t.Errorf("SABnzbd still holds %d jobs", len(fake.queue))
+	}
+	fake.mu.Unlock()
+	if err := st.UpdateDownload(ctx, stale, time.Now()); !errors.Is(err, store.ErrCancelled) {
+		t.Errorf("a stale poll saved over the cancel: %v", err)
+	}
+	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Cancelled {
+		t.Errorf("after the stale save: %s", d.State)
+	}
+	if _, err := svc.Cancel(ctx, got, "cancelled"); !errors.Is(err, store.ErrNotRunning) {
+		t.Errorf("cancelling twice: %v", err)
+	}
+	if len(fake.submitted()) != 1 {
+		t.Errorf("submitted %q; a cancel starts no other release", fake.submitted())
+	}
+	_, states, _ := st.ShowStatus(ctx, 42, time.Now())
+	if i := slices.IndexFunc(states, func(e store.EpisodeStatus) bool { return e.EpisodeID == 101 }); i < 0 || states[i].State == store.EpisodeFailed {
+		t.Errorf("episode after a cancel: %+v", states)
+	}
+	if next, err := svc.Best(ctx, 101); err != nil || next.Title != show+"German.DL.1080p.WEB-B" {
+		t.Errorf("next pick = %q, %v; want the next release, not the cancelled one", next.Title, err)
 	}
 }
 
