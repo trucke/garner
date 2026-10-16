@@ -293,9 +293,12 @@ func (s *activityScreen) view(width, height int) string {
 	var b strings.Builder
 	b.WriteString(header(width, s.sess, "Garner", "Activity") + "\n\n")
 	w := min(width, designWidth)
-	stateWidth := max(10, w-3-1-3-activityShowWidth-3-activityEpWidth-3-3-activitySinceWidth-3)
+	// Narrow: the show names give way to State, down to a minimum.
+	fixed := 3 + 1 + 3 + 3 + activityEpWidth + 3 + 3 + activitySinceWidth + 3
+	showWidth := max(16, min(activityShowWidth, w-fixed-24))
+	stateWidth := max(10, w-fixed-showWidth)
 	head := func(t string, n int, right bool) string { return sSubtle.Render(fit(t, n, right)) }
-	b.WriteString("       " + head("Show", activityShowWidth, false) + "   " + head("Episode", activityEpWidth, false) + "   " +
+	b.WriteString("       " + head("Show", showWidth, false) + "   " + head("Episode", activityEpWidth, false) + "   " +
 		head("State", stateWidth, false) + "   " + head("Since", activitySinceWidth, true) + "\n")
 	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, w-6))) + "\n")
 
@@ -313,7 +316,7 @@ func (s *activityScreen) view(width, height int) string {
 		s.offset = min(max(s.offset, cursor-page+1), cursor)
 		now := time.Now()
 		for _, it := range rows[s.offset:min(len(rows), s.offset+page)] {
-			b.WriteString(activityRow(it, it.Download.EpisodeID == s.selected, stateWidth, w, now) + "\n")
+			b.WriteString(activityRow(it, it.Download.EpisodeID == s.selected, showWidth, stateWidth, w, now) + "\n")
 		}
 	}
 	page := screenLayout(width, height, b.String(), s.bottom())
@@ -331,7 +334,7 @@ func (s *activityScreen) view(width, height int) string {
 	return page
 }
 
-func activityRow(it store.ActivityItem, selected bool, stateWidth, width int, now time.Time) string {
+func activityRow(it store.ActivityItem, selected bool, showWidth, stateWidth, width int, now time.Time) string {
 	bg := selectBg(selected)
 	d := it.Download
 	state := downloadState(d)
@@ -351,10 +354,10 @@ func activityRow(it store.ActivityItem, selected bool, stateWidth, width int, no
 	}
 	gap := bg(lipgloss.NewStyle()).Render("   ")
 	line := gap + bg(glyphStyle).Render(glyph) + gap +
-		bg(text).Render(fit(itemShow(it), activityShowWidth, false)) + gap +
+		bg(text).Render(fit(itemShow(it), showWidth, false)) + gap +
 		bg(text).Render(fit(itemEpisode(it), activityEpWidth, false)) + gap +
 		renderParts(parts, stateWidth, bg)
-	line = fill(line, width-3-activitySinceWidth-3, bg) + bg(sSubtle).Render(fit(when(since(d), now), activitySinceWidth, true))
+	line = fill(line, width-3-activitySinceWidth, bg) + bg(sSubtle).Render(fit(when(since(d), now), activitySinceWidth, true))
 	return fill(line, width-3, bg)
 }
 

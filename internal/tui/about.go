@@ -9,6 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trucke/garner/internal/client"
 	"github.com/trucke/garner/internal/server"
@@ -42,6 +44,7 @@ type aboutScreen struct {
 	services *server.Services
 	err      error // of the services check
 	flash    flash
+	scroll   scroller
 }
 
 func newAbout(sess *session, back screen, path, version string) *aboutScreen {
@@ -94,6 +97,9 @@ func (s *aboutScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		s.flash.clear()
+		if s.scroll.key(msg.String()) {
+			return s, nil
+		}
 		switch msg.String() {
 		case "esc":
 			return s, func() tea.Msg { return switchMsg{s.back} }
@@ -111,8 +117,17 @@ func (s *aboutScreen) view(width, height int) string {
 	b.WriteString("   " + sBold.Render("Garner") + "\n")
 	b.WriteString("   " + sMuted.Render("TV and anime manager") + "\n\n")
 
+	// A field's details move to a line of their own when they do not fit.
 	field := func(label, value, rest string) {
-		b.WriteString("   " + sSubtle.Render(fmt.Sprintf("%-12s", label)) + sNormal.Render(value) + sMuted.Render(rest) + "\n")
+		line := "   " + sSubtle.Render(fmt.Sprintf("%-12s", label)) + sNormal.Render(value)
+		if lipgloss.Width(line+rest) <= w+6 {
+			b.WriteString(line + sMuted.Render(rest) + "\n")
+			return
+		}
+		b.WriteString(line + "\n")
+		if rest = strings.TrimPrefix(rest, " · "); rest != "" {
+			b.WriteString("   " + strings.Repeat(" ", 12) + sMuted.Render(rest) + "\n")
+		}
 	}
 	field("TUI", clean(s.version), " · "+platform())
 	server := sMuted.Render("asking…")
@@ -130,7 +145,13 @@ func (s *aboutScreen) view(width, height int) string {
 	} else {
 		b.WriteString("   " + sSubtle.Render(fmt.Sprintf("%-12s", "Server")) + server + "\n")
 	}
-	field("Connection", clean(homeShort(s.path)), "")
+	for i, l := range wrapPath(clean(homeShort(s.path)), w-12) {
+		label := "Connection"
+		if i > 0 {
+			label = ""
+		}
+		field(label, l, "")
+	}
 	b.WriteString("\n")
 
 	switch {
@@ -160,20 +181,25 @@ func (s *aboutScreen) view(width, height int) string {
 		if sz := size(l.Bytes); sz != "" {
 			episodes += " · " + sz
 		}
-		folders := make([]string, len(l.Folders))
-		for i, f := range l.Folders {
-			folders[i] = clean(f)
-		}
 		row := func(label, value string) string { return pad(sSubtle.Render(label), 10) + sNormal.Render(value) }
-		b.WriteString(indent(frame("library", []string{
-			row("Shows", shows), row("Episodes", episodes), row("Folders", strings.Join(folders, " · ")),
-		}, w), 3) + "\n")
+		rows := []string{row("Shows", shows), row("Episodes", episodes)}
+		// One folder a line, broken only after a slash.
+		label := "Folders"
+		for _, f := range l.Folders {
+			for _, part := range wrapPath(clean(f), w-6-10) {
+				rows, label = append(rows, row(label, part)), ""
+			}
+		}
+		b.WriteString(indent(frame("library", rows, w), 3) + "\n")
 	}
 
 	b.WriteString("\n   " + sSubtle.Render(fmt.Sprintf("%-12s", "Source")) + sNormal.Render(sourceURL) + "\n")
 	// TheTVDB's terms ask for this attribution wherever its data shows.
-	b.WriteString("   " + sMuted.Render("Metadata provided by TheTVDB (https://thetvdb.com). Please consider adding missing information or subscribing.") + "\n")
-	return screenLayout(width, height, b.String(), s.bottom())
+	credit := "Metadata provided by TheTVDB (https://thetvdb.com). Please consider adding missing information or subscribing."
+	for _, l := range strings.Split(ansi.Wrap(credit, w, ""), "\n") {
+		b.WriteString("   " + sMuted.Render(l) + "\n")
+	}
+	return s.scroll.layout(width, height, b.String(), s.bottom())
 }
 
 func (s *aboutScreen) bottom() string {

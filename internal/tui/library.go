@@ -524,8 +524,12 @@ func (s *libraryScreen) columns(width int) columns {
 	// Margins and gaps: 3 + glyph 1 + 3 + name + 3 + episodes + 3 + size
 	// + 3 + status + 3 + state + 3.
 	fixed := 3 + 1 + 3 + 3 + c.episodes + 3 + c.size + 3 + c.statusW + 3 + 3
-	const minState = 24
-	c.name = max(12, min(c.name, width-fixed-minState))
+	// Narrow: the names keep room, State gives way, then Status goes.
+	state := 24
+	if width-fixed-state < min(c.name, minName) {
+		fixed, c.statusW, state = fixed-3-c.statusW, 0, 16
+	}
+	c.name = max(12, min(c.name, width-fixed-state))
 	c.state = max(0, width-fixed-c.name)
 	return c
 }
@@ -549,8 +553,12 @@ func (c columns) head(sort sortKey, reverse bool) string {
 		t, st := label(name, k)
 		return st.Render(fit(t, w, right))
 	}
+	status := ""
+	if c.statusW > 0 {
+		status = field("Status", byStatus, c.statusW, false) + "   "
+	}
 	return "   " + glyph + "   " + field("Show", byName, c.name, false) + "   " + field("Episodes", byEpisodes, c.episodes, true) +
-		"   " + field("Size", bySize, c.size, true) + "   " + field("Status", byStatus, c.statusW, false) + "   " + sSubtle.Render("State")
+		"   " + field("Size", bySize, c.size, true) + "   " + status + sSubtle.Render("State")
 }
 
 func (c columns) row(sh store.Show, selected bool) string {
@@ -569,9 +577,11 @@ func (c columns) row(sh store.Show, selected bool) string {
 	line := gap + bg(glyphStyle).Render(glyph) + gap +
 		bg(main).Render(fit(showName(sh), c.name, false)) + gap +
 		bg(numbers).Render(fit(episodes(sh), c.episodes, true)) + gap +
-		bg(numbers).Render(fit(size(sh.Bytes), c.size, true)) + gap +
-		bg(statusStyle).Render(fit(status(sh.Status), c.statusW, false)) + gap +
-		renderParts(stateParts(sh, time.Now()), c.state, bg)
+		bg(numbers).Render(fit(size(sh.Bytes), c.size, true)) + gap
+	if c.statusW > 0 {
+		line += bg(statusStyle).Render(fit(status(sh.Status), c.statusW, false)) + gap
+	}
+	line += renderParts(stateParts(sh, time.Now()), c.state, bg)
 	if w := lipgloss.Width(line); w < c.width {
 		line += bg(lipgloss.NewStyle()).Render(strings.Repeat(" ", c.width-w))
 	}

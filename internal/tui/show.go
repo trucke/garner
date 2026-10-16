@@ -387,7 +387,7 @@ func (s *showScreen) view(width, height int) string {
 	}
 	d := s.detail
 	now := time.Now()
-	b.WriteString("   " + s.facts(now) + "\n\n")
+	b.WriteString(s.facts(now, width) + "\n\n")
 	cols := showColumns(d, width)
 	b.WriteString(cols.head() + "\n")
 	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, width-6))) + "\n")
@@ -423,7 +423,7 @@ func (s *showScreen) view(width, height int) string {
 	return screenLayout(width, height, b.String(), s.bottom())
 }
 
-func (s *showScreen) facts(now time.Time) string {
+func (s *showScreen) facts(now time.Time, width int) string {
 	d := s.detail
 	typ := "TV"
 	if d.Series.Profile == "anime" {
@@ -437,7 +437,7 @@ func (s *showScreen) facts(now time.Time) string {
 	if b := size(d.Summary.Bytes); b != "" {
 		episodes += " · " + b
 	}
-	return fact("Type", typ) + "      " + fact("Status", st) + "      " + fact("Episodes", episodes)
+	return factLines(width, fact("Type", typ), fact("Status", st), fact("Episodes", episodes))
 }
 
 func (s *showScreen) help() (string, []string) {
@@ -500,6 +500,7 @@ func (s *showScreen) enterLabel() string {
 // state.
 type showCols struct {
 	width, title int
+	size         bool // the Size column, left out when narrow
 }
 
 const airedWidth = len("26 Sep 2026")
@@ -512,14 +513,23 @@ func showColumns(d *server.SeriesDetail, width int) showCols {
 	// Margins and gaps: 3 + glyph 1 + 3 + episode 7 + 3 + title + 3 +
 	// aired + 3 + size 7 + 3 + state.
 	fixed := 3 + 1 + 3 + 7 + 3 + 3 + airedWidth + 3 + 7 + 3
-	const minState = 28
-	c.title = max(10, min(c.title, 40, width-fixed-minState))
+	// Narrow: the titles keep room, State gives way, then Size goes.
+	c.size = true
+	state := 28
+	if width-fixed-state < min(c.title, minName) {
+		c.size, fixed, state = false, fixed-3-7, 20
+	}
+	c.title = max(10, min(c.title, 40, width-fixed-state))
 	return c
 }
 
 func (c showCols) head() string {
+	sz := ""
+	if c.size {
+		sz = sSubtle.Render(fit("Size", 7, true)) + "   "
+	}
 	return "   " + " " + "   " + sSubtle.Render(fit("Episode", 7, false)) + "   " + sSubtle.Render(fit("Title", c.title, false)) +
-		"   " + sSubtle.Render(fit("Aired", airedWidth, false)) + "   " + sSubtle.Render(fit("Size", 7, true)) + "   " + sSubtle.Render("State")
+		"   " + sSubtle.Render(fit("Aired", airedWidth, false)) + "   " + sz + sSubtle.Render("State")
 }
 
 func (c showCols) seasonRow(se season, folded, selected bool) string {
@@ -580,8 +590,10 @@ func (c showCols) episodeRow(e episodeRow, d *server.SeriesDetail, now time.Time
 	line := gap + bg(glyphStyle).Render(glyph) + gap +
 		bg(main).Render(fit(episodeLabel(e), 7, false)) + gap +
 		bg(main).Render(fit(clean(cmp.Or(e.episode.NameEng, e.episode.Name)), c.title, false)) + gap +
-		bg(main).Render(fit(aired, airedWidth, false)) + gap +
-		bg(main).Render(fit(size(st.Size), 7, true)) + gap
+		bg(main).Render(fit(aired, airedWidth, false)) + gap
+	if c.size {
+		line += bg(main).Render(fit(size(st.Size), 7, true)) + gap
+	}
 	stateWidth := max(0, c.width-lipgloss.Width(line))
 	return fill(line+renderParts(episodeParts(e, d, now), stateWidth, bg), c.width, bg)
 }

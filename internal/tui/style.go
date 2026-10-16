@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -90,7 +91,71 @@ func keyBar(pairs ...string) string {
 	for i := 0; i+1 < len(pairs); i += 2 {
 		parts = append(parts, sKey.Render(pairs[i])+" "+sMuted.Render(pairs[i+1]))
 	}
-	return strings.Join(parts, "    ")
+	return strings.Join(parts, keyGap)
+}
+
+// minName is the room a table's name column keeps on a narrow terminal;
+// other columns give way first.
+const minName = 24
+
+// keyGap separates the keys of a key bar.
+const keyGap = "    "
+
+// fitKeys makes a key bar fit width by leaving out whole keys: "j k move"
+// first, then from the right. The Help key and the last one, usually
+// "esc back", stay: Help lists every key. Other lines are cut.
+func fitKeys(bar string, width int) string {
+	parts := strings.Split(bar, keyGap)
+	if lipgloss.Width(bar) <= width || len(parts) < 2 {
+		return ansi.Truncate(bar, width, "")
+	}
+	stays := func(i int) bool { return i == len(parts)-1 || strings.HasPrefix(ansi.Strip(parts[i]), "? ") }
+	var order []int
+	if strings.HasPrefix(ansi.Strip(parts[0]), "j k ") {
+		order = append(order, 0)
+	}
+	for i := len(parts) - 1; i > 0; i-- {
+		if !stays(i) {
+			order = append(order, i)
+		}
+	}
+	left := map[int]bool{}
+	join := func() string {
+		var kept []string
+		for i, p := range parts {
+			if !left[i] {
+				kept = append(kept, p)
+			}
+		}
+		return strings.Join(kept, keyGap)
+	}
+	for _, i := range order {
+		if lipgloss.Width(join()) <= width {
+			break
+		}
+		left[i] = true
+	}
+	return ansi.Truncate(join(), width, "")
+}
+
+// factLines lays labelled facts out on one line, closer together when the
+// line is narrow, and over more lines when they still do not fit.
+func factLines(width int, facts ...string) string {
+	room := width - 3
+	for _, gap := range []string{"      ", "   "} {
+		if line := strings.Join(facts, gap); lipgloss.Width(line) <= room {
+			return "   " + line
+		}
+	}
+	var lines []string
+	for _, f := range facts {
+		if n := len(lines); n > 0 && lipgloss.Width(lines[n-1]+"   "+f) <= room {
+			lines[n-1] += "   " + f
+		} else {
+			lines = append(lines, f)
+		}
+	}
+	return "   " + strings.Join(lines, "\n   ")
 }
 
 // breadcrumb renders the first row: Garner › … › screen, the ends in bold.
@@ -119,7 +184,7 @@ func screenLayout(width, height int, body, bottom string) string {
 	for i, l := range lines {
 		lines[i] = ansi.Truncate(l, width, "")
 	}
-	return strings.Join(append(lines, ansi.Truncate(" "+bottom, width, "")), "\n")
+	return strings.Join(append(lines, " "+fitKeys(bottom, width-1)), "\n")
 }
 
 // indent shifts every line of s right by n cells.
@@ -143,10 +208,10 @@ func overlay(base string, lines []string, width, height int) string {
 	for _, l := range lines {
 		boxWidth = max(boxWidth, lipgloss.Width(l))
 	}
-	boxWidth += 6 // borders and two cells of padding
+	boxWidth = max(6, min(boxWidth+6, width)) // borders and two cells of padding, within the screen
 	box := []string{sBorder.Render("╭" + strings.Repeat("─", boxWidth-2) + "╮")}
 	for _, l := range lines {
-		box = append(box, sBorder.Render("│")+"  "+pad(l, boxWidth-6)+"  "+sBorder.Render("│"))
+		box = append(box, sBorder.Render("│")+"  "+pad(ansi.Truncate(l, boxWidth-6, "…"), boxWidth-6)+"  "+sBorder.Render("│"))
 	}
 	box = append(box, sBorder.Render("╰"+strings.Repeat("─", boxWidth-2)+"╯"))
 
@@ -218,4 +283,70 @@ func (f *flash) expire() tea.Cmd {
 	f.timed = f.seq
 	seq := f.seq
 	return tea.Tick(flashFor, func(time.Time) tea.Msg { return flashDoneMsg{f, seq} })
+}
+
+// scroller moves through content taller than the screen: j k a line,
+// ctrl+d u half a page, gg G to the ends. Screens with tables move their
+// cursor instead.
+type scroller struct {
+	offset, page, max int
+	last              string // the key before, for gg
+}
+
+// key moves the content for a scrolling key and reports whether it was one.
+func (s *scroller) key(key string) bool {
+	prev := s.last
+	s.last = key
+	switch key {
+	case "j", "down":
+		s.offset++
+	case "k", "up":
+		s.offset--
+	case "ctrl+d", "pgdown":
+		s.offset += max(1, s.page/2)
+	case "ctrl+u", "pgup":
+		s.offset -= max(1, s.page/2)
+	case "G", "end":
+		s.offset = s.max
+	case "home":
+		s.offset = 0
+	case "g":
+		if prev == "g" {
+			s.offset, s.last = 0, ""
+		}
+	default:
+		return false
+	}
+	s.offset = min(max(0, s.offset), s.max)
+	return true
+}
+
+// window shows room of the lines from the offset; the first and last line
+// say when there is more above or below.
+func (s *scroller) window(lines []string, room int) []string {
+	room = max(3, room)
+	s.page, s.max = room, max(0, len(lines)-room)
+	s.offset = min(max(0, s.offset), s.max)
+	if s.max == 0 {
+		return lines
+	}
+	view := slices.Clone(lines[s.offset : s.offset+room])
+	if s.offset > 0 {
+		view[0] = "   " + sSubtle.Render("↑ more above")
+	}
+	if s.offset < s.max {
+		view[room-1] = "   " + sSubtle.Render("↓ more below · j k scroll")
+	}
+	return view
+}
+
+// layout is screenLayout for a screen whose content scrolls below its
+// first two lines, the breadcrumb and a blank.
+func (s *scroller) layout(width, height int, body, bottom string) string {
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	const fixed = 2
+	if len(lines) > fixed {
+		lines = append(lines[:fixed:fixed], s.window(lines[fixed:], height-1-fixed)...)
+	}
+	return screenLayout(width, height, strings.Join(lines, "\n"), bottom)
 }

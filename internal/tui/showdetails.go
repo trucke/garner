@@ -54,6 +54,7 @@ type showDetailsScreen struct {
 	choice  int
 	busy    string // what runs, such as "Refreshing from TVDB…"
 	flash   flash
+	scroll  scroller
 }
 
 func newShowDetails(sess *session, show *showScreen, back screen) *showDetailsScreen {
@@ -130,6 +131,9 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	}
 	if d == nil {
 		return nil // still loading
+	}
+	if s.scroll.key(key) {
+		return nil
 	}
 	switch key {
 	case "p":
@@ -222,7 +226,7 @@ func (s *showDetailsScreen) view(width, height int) string {
 		b.WriteString("\n" + indent(frame(overviewLabel(sr.OverviewLanguage), []string{sNormal.Render(clean(sr.Overview))}, w), 3) + "\n")
 	}
 
-	page := screenLayout(width, height, b.String(), s.bottom())
+	page := s.scroll.layout(width, height, b.String(), s.bottom())
 	switch s.overlay {
 	case deleteOverlay:
 		return overlay(page, s.deleteLines(), width, height)
@@ -457,11 +461,15 @@ func ago(t time.Time) string {
 // wrapPath breaks a path after its slashes, so no line ends inside a
 // folder name; paths are never cut. A single name longer than the line
 // breaks where it must.
-func wrapPath(path string, width int) []string {
+func wrapPath(path string, width int) []string { return wrapAfter(path, "/", width) }
+
+// wrapAfter breaks s after each sep where the line is full, such as a file
+// name after its dots.
+func wrapAfter(s, sep string, width int) []string {
 	width = max(10, width)
 	var lines []string
 	line := ""
-	for _, part := range strings.SplitAfter(path, "/") {
+	for _, part := range strings.SplitAfter(s, sep) {
 		if line != "" && ansi.StringWidth(line+part) > width {
 			lines = append(lines, line)
 			line = ""

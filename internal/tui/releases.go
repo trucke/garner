@@ -268,7 +268,7 @@ func (s *releasesScreen) view(width, height int) string {
 		label = fmt.Sprintf("Season %d", s.season)
 	}
 	b.WriteString(header(width, s.sess, "Garner", "Library", clean(s.back.name), label, "Releases") + "\n\n")
-	b.WriteString("   " + s.facts() + "\n\n")
+	b.WriteString(s.facts(width) + "\n\n")
 
 	switch {
 	case s.searching:
@@ -281,7 +281,7 @@ func (s *releasesScreen) view(width, height int) string {
 	return screenLayout(width, height, b.String(), s.bottom())
 }
 
-func (s *releasesScreen) facts() string {
+func (s *releasesScreen) facts(width int) string {
 	parts := episodeFacts(s.episode)
 	if s.season > 0 {
 		parts = s.seasonFacts()
@@ -299,7 +299,7 @@ func (s *releasesScreen) facts() string {
 		}
 		parts = append(parts, fact("Searched", searched))
 	}
-	return strings.Join(parts, "      ")
+	return factLines(width, parts...)
 }
 
 // seasonFacts are the season and how many of its episodes are missing.
@@ -358,23 +358,25 @@ func (s *releasesScreen) table(width, height int) string {
 	for _, c := range all {
 		indexerWidth = max(indexerWidth, min(16, ansi.StringWidth(clean(c.Indexer))))
 	}
-	// Margins and gaps: 3 + glyph 1 + 3 + name + 3 + tier + 3 + audio + 3
-	// + size + 3 + age + 3 + indexer + 3.
-	fixed := 3 + 1 + 3 + 3 + tierWidth + 3 + audioWidth + 3 + sizeWidth + 3 + ageWidth + 3 + indexerWidth + 3
-	nameWidth := len("Release")
+	cols := releaseCols{audio: audioWidth, age: ageWidth, indexer: indexerWidth}
+	longest := len("Release")
 	for _, c := range all {
-		nameWidth = max(nameWidth, ansi.StringWidth(clean(c.Title)))
+		longest = max(longest, ansi.StringWidth(clean(c.Title)))
+	}
+	// Narrow: the names keep room; Indexer, then Age, then Audio go.
+	for _, col := range []*int{&cols.indexer, &cols.age, &cols.audio} {
+		if width-cols.fixed() >= min(longest, minReleaseName) {
+			break
+		}
+		*col = 0
 	}
 	// As wide as the longest name, so the columns stay together.
-	nameWidth = max(20, min(nameWidth, width-fixed))
+	cols.name = max(20, min(longest, width-cols.fixed()))
 	// The rule and the WHY frame end with the table.
-	tableWidth := fixed + nameWidth - 6
+	tableWidth := cols.fixed() + cols.name - 6
 
 	var b strings.Builder
-	head := func(t string, w int, right bool) string { return sSubtle.Render(fit(t, w, right)) }
-	b.WriteString("   " + " " + "   " + head("Release", nameWidth, false) + "   " + head("Tier", tierWidth, false) + "   " +
-		head("Audio", audioWidth, false) + "   " + head("Size", sizeWidth, true) + "   " + head("Age", ageWidth, true) + "   " +
-		head("Indexer", indexerWidth, false) + "\n")
+	b.WriteString(cols.head() + "\n")
 	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, tableWidth))) + "\n")
 
 	// Without an accepted release, the summary says what is missing.
@@ -395,7 +397,7 @@ func (s *releasesScreen) table(width, height int) string {
 		if i > 0 && c.Verdict == "reject" && all[i-1].Verdict != "reject" {
 			lines, keys = append(lines, ""), append(keys, 0)
 		}
-		lines = append(lines, releaseRow(c, nameWidth, indexerWidth, width, c.ID == s.selected))
+		lines = append(lines, cols.row(c, width, c.ID == s.selected))
 		keys = append(keys, c.ID)
 	}
 
@@ -415,7 +417,44 @@ func (s *releasesScreen) table(width, height int) string {
 	return b.String()
 }
 
-func releaseRow(c store.Candidate, nameWidth, indexerWidth, width int, selected bool) string {
+// minReleaseName is the room release names keep on a narrow terminal.
+const minReleaseName = 30
+
+// releaseCols sizes the releases table; Audio, Age and Indexer are 0 when
+// left out on a narrow terminal.
+type releaseCols struct {
+	name, audio, age, indexer int
+}
+
+// fixed is the table's width without the release name: margins, gaps and
+// the columns shown.
+func (cols releaseCols) fixed() int {
+	n := 3 + 1 + 3 + 3 + tierWidth + 3 + sizeWidth + 3
+	for _, w := range []int{cols.audio, cols.age, cols.indexer} {
+		if w > 0 {
+			n += w + 3
+		}
+	}
+	return n
+}
+
+func (cols releaseCols) head() string {
+	head := func(t string, w int, right bool) string { return sSubtle.Render(fit(t, w, right)) + "   " }
+	line := "   " + " " + "   " + head("Release", cols.name, false) + head("Tier", tierWidth, false)
+	if cols.audio > 0 {
+		line += head("Audio", cols.audio, false)
+	}
+	line += head("Size", sizeWidth, true)
+	if cols.age > 0 {
+		line += head("Age", cols.age, true)
+	}
+	if cols.indexer > 0 {
+		line += head("Indexer", cols.indexer, false)
+	}
+	return strings.TrimRight(line, " ")
+}
+
+func (cols releaseCols) row(c store.Candidate, width int, selected bool) string {
 	bg := selectBg(selected)
 	glyph, glyphStyle := "✓", sMint
 	text := sNormal
@@ -438,12 +477,18 @@ func releaseRow(c store.Candidate, nameWidth, indexerWidth, width int, selected 
 	}
 	gap := bg(lipgloss.NewStyle()).Render("   ")
 	line := gap + bg(glyphStyle).Render(glyph) + gap +
-		bg(text).Render(fit(cutMiddle(clean(c.Title), nameWidth), nameWidth, false)) + gap +
-		bg(tierStyle).Render(fit(tier, tierWidth, false)) + gap +
-		bg(text).Render(fit(strings.Join(audio, ", "), audioWidth, false)) + gap +
-		bg(text).Render(fit(size(c.Size), sizeWidth, true)) + gap +
-		bg(text).Render(fit(age, ageWidth, true)) + gap +
-		bg(text).Render(fit(clean(c.Indexer), indexerWidth, false))
+		bg(text).Render(fit(cutMiddle(clean(c.Title), cols.name), cols.name, false)) + gap +
+		bg(tierStyle).Render(fit(tier, tierWidth, false)) + gap
+	if cols.audio > 0 {
+		line += bg(text).Render(fit(strings.Join(audio, ", "), cols.audio, false)) + gap
+	}
+	line += bg(text).Render(fit(size(c.Size), sizeWidth, true))
+	if cols.age > 0 {
+		line += gap + bg(text).Render(fit(age, cols.age, true))
+	}
+	if cols.indexer > 0 {
+		line += gap + bg(text).Render(fit(clean(c.Indexer), cols.indexer, false))
+	}
 	return fill(line, width, bg)
 }
 

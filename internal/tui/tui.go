@@ -63,6 +63,7 @@ type app struct {
 	path          string
 	version       string // of this program
 	help          bool   // the Help overlay is open
+	helpScroll    scroller
 	width, height int
 	sess          *session
 	screen        screen
@@ -159,7 +160,7 @@ func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch key {
 		case "?":
-			a.help = true
+			a.help, a.helpScroll = true, scroller{}
 			return a, nil
 		case "A":
 			if _, there := a.screen.(*activityScreen); !there {
@@ -237,7 +238,16 @@ func (a *app) View() tea.View {
 	if a.width > 0 && a.height > 0 {
 		v.Content = a.screen.view(a.width, a.height)
 		if a.help {
-			v.Content = overlay(v.Content, helpLines(a.screen), a.width, a.height)
+			// The box's borders and a line of margin above and below.
+			all := helpLines(a.screen, a.width-8)
+			lines := a.helpScroll.window(all, a.height-4)
+			// As wide as all its lines, so the box keeps its size while it scrolls.
+			widest := 0
+			for _, l := range all {
+				widest = max(widest, lipgloss.Width(l))
+			}
+			lines[0] = pad(lines[0], widest)
+			v.Content = overlay(v.Content, lines, a.width, a.height)
 		}
 	}
 	return v
@@ -246,6 +256,9 @@ func (a *app) View() tea.View {
 // helpKey handles a key while the Help overlay is open: ? and esc close it,
 // a opens About.
 func (a *app) helpKey(key string) tea.Cmd {
+	if a.helpScroll.key(key) {
+		return nil
+	}
 	switch key {
 	case "?", "esc":
 		a.help = false

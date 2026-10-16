@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trucke/garner/internal/client"
 	"github.com/trucke/garner/internal/inspect"
@@ -53,6 +54,7 @@ type episodeScreen struct {
 	choice         int
 	busy           string
 	flash          flash
+	scroll         scroller
 }
 
 func newEpisode(sess *session, show *showScreen, id int64) *episodeScreen {
@@ -184,6 +186,9 @@ func (s *episodeScreen) redrawWhenSlow() tea.Cmd {
 }
 
 func (s *episodeScreen) key(key string) tea.Cmd {
+	if s.scroll.key(key) {
+		return nil
+	}
 	switch key {
 	case "esc":
 		return func() tea.Msg { return switchMsg{s.back} }
@@ -313,7 +318,7 @@ func (s *episodeScreen) view(width, height int) string {
 	row, _ := s.row()
 	var b strings.Builder
 	b.WriteString(header(width, s.sess, "Garner", "Library", clean(s.show.name), s.label()) + "\n\n")
-	b.WriteString("   " + strings.Join(episodeFacts(row), "      ") + "\n")
+	b.WriteString(factLines(width, episodeFacts(row)...) + "\n")
 	switch {
 	case s.detail == nil && s.err != nil:
 		b.WriteString("\n   " + gFailed + " " + sRed.Render(clean(s.err.Error())))
@@ -332,7 +337,7 @@ func (s *episodeScreen) view(width, height int) string {
 			b.WriteString("\n" + indent(f, 3) + "\n")
 		}
 	}
-	page := screenLayout(width, height, b.String(), s.bottom())
+	page := s.scroll.layout(width, height, b.String(), s.bottom())
 	if s.asking {
 		return overlay(page, s.cancelQuestion(), width, height)
 	}
@@ -368,8 +373,13 @@ func (s *episodeScreen) releaseFacts(d store.Download, w int) string {
 	if attempt > 1 {
 		tail += "      " + fact("Attempt", fmt.Sprint(attempt))
 	}
-	title := cutMiddle(clean(d.Title), max(20, w-len("Release  ")-lipgloss.Width(tail)))
-	return fact("Release", title) + tail
+	// Narrow: the name keeps the line, the rest moves under it.
+	room := w - len("Release  ")
+	if ansi.StringWidth(clean(d.Title))+lipgloss.Width(tail) <= room || room-lipgloss.Width(tail) >= 40 {
+		return fact("Release", cutMiddle(clean(d.Title), max(20, room-lipgloss.Width(tail)))) + tail
+	}
+	return fact("Release", cutMiddle(clean(d.Title), room)) + "\n   " + strings.Repeat(" ", len("Release  ")) +
+		strings.TrimPrefix(tail, "      ")
 }
 
 // frames are the panes under the pipeline, most important first.
@@ -384,7 +394,14 @@ func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 	}
 	if f := s.detail.File; f != nil && (row.status.State == store.EpisodeImported || row.status.State == store.EpisodeAttention) {
 		dir, name := filepath.Split(clean(f.Path))
-		out = append(out, frame("file", []string{sMuted.Render(dir), sNormal.Render(name), sMuted.Render(size(f.Size))}, w))
+		var lines []string
+		for _, l := range wrapPath(dir, w-6) {
+			lines = append(lines, sMuted.Render(l))
+		}
+		for _, l := range wrapAfter(name, ".", w-6) {
+			lines = append(lines, sNormal.Render(l))
+		}
+		out = append(out, frame("file", append(lines, sMuted.Render(size(f.Size))), w))
 	}
 	if ok && !d.Active() && len(d.Import.Notes) > 0 {
 		var notes []string

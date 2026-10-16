@@ -346,6 +346,7 @@ type previewScreen struct {
 	err     error
 	adding  bool
 	flash   flash
+	scroll  scroller
 }
 
 type (
@@ -406,6 +407,9 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.flash.clear()
+		if s.scroll.key(msg.String()) {
+			return s, nil
+		}
 		switch msg.String() {
 		case "esc":
 			return s.back, nil
@@ -490,7 +494,7 @@ func (s *previewScreen) view(width, height int) string {
 			b.WriteString("\n" + indent(frame(overviewLabel(p.OverviewLanguage), []string{sNormal.Render(clean(p.Overview))}, w), 3) + "\n")
 		}
 	}
-	return screenLayout(width, height, b.String(), s.bottom())
+	return s.scroll.layout(width, height, b.String(), s.bottom())
 }
 
 const labelWidth = 12

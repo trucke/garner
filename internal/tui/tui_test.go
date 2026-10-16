@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/server"
@@ -181,5 +184,52 @@ func TestActivityOrder(t *testing.T) {
 	}
 	if want := []int64{4, 3, 2, 1, 5}; !slices.Equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// TestFitKeys leaves out whole keys on a narrow line: "j k move" first,
+// then from the right, keeping Help and the last key.
+func TestFitKeys(t *testing.T) {
+	bar := keyBar("j k", "move", "enter", "open", "a", "add", "d", "delete", "?", "help", "esc", "back")
+	for _, tc := range []struct {
+		width int
+		want  string
+	}{
+		{200, "j k move    enter open    a add    d delete    ? help    esc back"},
+		{60, "enter open    a add    d delete    ? help    esc back"},
+		{41, "enter open    a add    ? help    esc back"},
+		{40, "enter open    ? help    esc back"},
+		{10, "? help    "},
+	} {
+		if got := ansi.Strip(fitKeys(bar, tc.width)); got != tc.want {
+			t.Errorf("width %d: %q, want %q", tc.width, got, tc.want)
+		}
+	}
+}
+
+// TestScroller shows a window of tall content, marks what lies above and
+// below, and reaches the last line.
+func TestScroller(t *testing.T) {
+	var lines []string
+	for i := range 10 {
+		lines = append(lines, fmt.Sprint(i))
+	}
+	var s scroller
+	view := s.window(lines, 4)
+	if len(view) != 4 || view[0] != "0" || !strings.Contains(ansi.Strip(view[3]), "more below") {
+		t.Fatalf("top = %q", view)
+	}
+	s.key("G")
+	view = s.window(lines, 4)
+	if !strings.Contains(ansi.Strip(view[0]), "more above") || view[3] != "9" {
+		t.Errorf("bottom = %q", view)
+	}
+	s.key("g")
+	s.key("g")
+	if view = s.window(lines, 4); view[0] != "0" {
+		t.Errorf("after gg = %q", view)
+	}
+	if view = s.window(lines[:3], 4); len(view) != 3 {
+		t.Errorf("short content = %q", view)
 	}
 }
