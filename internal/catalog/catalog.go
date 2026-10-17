@@ -107,8 +107,9 @@ type SearchResult struct {
 	Added    bool   `json:"added"`
 }
 
-// Add loads a show into the catalogue.
-func (c *Catalog) Add(ctx context.Context, id int64) error {
+// Add loads a show into the catalogue with the monitor mode, such as
+// store.MonitorNew.
+func (c *Catalog) Add(ctx context.Context, id int64, monitor string) error {
 	exists, err := c.store.HasSeries(ctx, id)
 	if err != nil {
 		return err
@@ -116,19 +117,20 @@ func (c *Catalog) Add(ctx context.Context, id int64) error {
 	if exists {
 		return fmt.Errorf("series %d: %w", id, ErrExists)
 	}
-	return c.load(ctx, id, true)
+	return c.load(ctx, id, monitor)
 }
 
 // Refresh reloads a show from TVDB and TheXEM. If TheXEM fails, the show's
 // previous scene data is kept and the failure logged.
 func (c *Catalog) Refresh(ctx context.Context, id int64) error {
-	return c.load(ctx, id, false)
+	return c.load(ctx, id, "")
 }
 
-// load fetches a show and saves it. Unless adding, the show must still be
-// in the catalogue when saving: a show deleted while it loaded stays
-// deleted, and load returns store.ErrNotFound.
-func (c *Catalog) load(ctx context.Context, id int64, adding bool) error {
+// load fetches a show and saves it, adding it with the monitor mode when
+// one is given. Otherwise the show must still be in the catalogue when
+// saving: a show deleted while it loaded stays deleted, and load returns
+// store.ErrNotFound.
+func (c *Catalog) load(ctx context.Context, id int64, monitor string) error {
 	start := time.Now()
 	d, err := c.fetchTVDB(ctx, id)
 	if err != nil {
@@ -145,7 +147,8 @@ func (c *Catalog) load(ctx context.Context, id int64, adding bool) error {
 	d.Scene = scene
 	d.Titles = append(d.Titles, c.applyCorrections(id, titles)...)
 	save := c.store.UpdateSeries
-	if adding {
+	if monitor != "" {
+		d.Series.Monitor = monitor
 		save = c.store.SaveSeries
 	}
 	if err := save(ctx, d, gotScene, time.Now()); err != nil {

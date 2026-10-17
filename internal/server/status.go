@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/trucke/garner/internal/store"
 )
 
 // Services is how the services the server uses are doing, and what the
@@ -36,6 +38,10 @@ type LibraryTotals struct {
 	Aired    int            `json:"aired"`
 	Bytes    int64          `json:"bytes"`
 	Folders  []string       `json:"folders"`
+	// Monitored counts the shows the monitor gets episodes of; MonitorOff
+	// says why it does not run, empty when it does.
+	Monitored  int    `json:"monitored"`
+	MonitorOff string `json:"monitor_off,omitempty"`
 }
 
 // checkTimeout bounds each service check, so a hanging service cannot hold
@@ -54,15 +60,18 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			out.Services[i] = check(ctx)
 		})
 	}
-	shows, err := s.store.Library(ctx, time.Now())
+	shows, err := s.store.Library(ctx, time.Now(), s.monitor != nil)
 	wg.Wait()
 	if err != nil {
 		s.internalError(w, "library totals", err)
 		return
 	}
-	out.Library = LibraryTotals{Shows: len(shows), Profiles: map[string]int{}, Folders: []string{}}
+	out.Library = LibraryTotals{Shows: len(shows), Profiles: map[string]int{}, Folders: []string{}, MonitorOff: s.monitorOff()}
 	for _, sh := range shows {
 		out.Library.Profiles[sh.Profile]++
+		if sh.Monitor != store.MonitorOff {
+			out.Library.Monitored++
+		}
 		out.Library.Imported += sh.Imported
 		out.Library.Aired += sh.Aired
 		out.Library.Bytes += sh.Bytes

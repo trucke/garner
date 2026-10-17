@@ -17,8 +17,8 @@ import (
 	"github.com/trucke/garner/internal/store"
 )
 
-// Show details describes a show in the library, with the delete and
-// profile overlays. Boards "Show · details …" in the Paper file. Its
+// Show details describes a show in the library, with the delete, profile
+// and monitor overlays. Boards "Show · details …" in the Paper file. Its
 // content follows what was agreed for Add show's details page.
 
 type detailsOverlay int
@@ -27,6 +27,7 @@ const (
 	noOverlay detailsOverlay = iota
 	deleteOverlay
 	profileOverlay
+	monitorOverlay
 )
 
 type (
@@ -138,6 +139,8 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	switch key {
 	case "p":
 		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p server.ProfileInfo) bool { return p.Name == d.Series.Profile }))
+	case "m":
+		s.overlay, s.choice = monitorOverlay, max(0, monitorIndex(d.Series.Monitor))
 	case "d":
 		s.overlay, s.choice = deleteOverlay, 0 // the safe choice: cancel
 	case "o":
@@ -167,6 +170,23 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 		}
 		s.busy = a.busy(s.name())
 		return deleteShow(s.sess.client, s.show.id, a.keep)
+	}
+	if s.overlay == monitorOverlay {
+		done, mode := monitorKey(key, &s.choice)
+		if done {
+			s.overlay = noOverlay
+		}
+		if mode == "" || mode == d.Series.Monitor {
+			return nil
+		}
+		s.busy = "Changing which episodes Garner gets…"
+		cl, id := s.sess.client, s.show.id
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			d, err := cl.SetMonitor(ctx, id, mode)
+			return detailChangedMsg{d, err, "Monitor: " + monitorLabel(mode)}
+		}
 	}
 	options := len(d.Profiles)
 	switch key {
@@ -232,6 +252,8 @@ func (s *showDetailsScreen) view(width, height int) string {
 		return overlay(page, s.deleteLines(), width, height)
 	case profileOverlay:
 		return overlay(page, s.profileLines(), width, height)
+	case monitorOverlay:
+		return overlay(page, monitorQuestion("Monitor "+s.name(), s.choice, s.show.detail.MonitorOff, "ok"), width, height)
 	}
 	return page
 }
@@ -241,6 +263,10 @@ func (s *showDetailsScreen) libraryLines(inner int) []string {
 	var lines []string
 	lines = append(lines, field("Profile", d.Series.Profile, sNormal, inner)...)
 	lines = append(lines, field("", clean(d.Rules), sMuted, inner)...)
+	lines = append(lines, field("Monitor", monitorLine(d.Series), sNormal, inner)...)
+	if d.MonitorOff != "" && d.Series.Monitor != store.MonitorOff {
+		lines = append(lines, field("", "The monitor is "+clean(d.MonitorOff)+".", sMuted, inner)...)
+	}
 	lines = append(lines, field("Original", clean(d.LanguageName), sNormal, inner)...)
 	lines = append(lines, field("", clean(d.LanguageNote), sMuted, inner)...)
 	for i, l := range wrapPath(clean(d.Folder), inner-labelWidth) {
@@ -258,6 +284,20 @@ func (s *showDetailsScreen) libraryLines(inner int) []string {
 	lines = append(lines, field("Added", d.Series.Added.Local().Format("2 Jan 2006"), sNormal, inner)...)
 	lines = append(lines, field("Updated", "from TVDB "+ago(d.Series.Fetched), sNormal, inner)...)
 	return lines
+}
+
+// monitorLine says which episodes the monitor gets, such as "new episodes,
+// those airing from 17 Oct 2026 on".
+func monitorLine(sr store.Series) string {
+	switch sr.Monitor {
+	case store.MonitorNew:
+		return "new episodes, those airing from " + sr.MonitorSince.Local().Format("2 Jan 2006") + " on"
+	case store.MonitorAll:
+		return "all missing episodes"
+	case store.MonitorOff:
+		return "off; Garner gets only what you search for"
+	}
+	return clean(sr.Monitor)
 }
 
 func (s *showDetailsScreen) deleteLines() []string {
@@ -367,8 +407,9 @@ func (s *showDetailsScreen) captures() bool { return s.overlay != noOverlay || s
 
 func (s *showDetailsScreen) help() (string, []string) {
 	return "Show details", []string{
-		"p", "change the profile", "r", "refresh from TVDB",
-		"o", "open on TVDB", "d", "delete the show",
+		"p", "change the profile", "m", "choose the episodes Garner gets",
+		"r", "refresh from TVDB", "o", "open on TVDB",
+		"d", "delete the show",
 	}
 }
 
@@ -379,7 +420,7 @@ func (s *showDetailsScreen) bottom() string {
 	case s.flash.text != "":
 		return s.flash.text
 	}
-	return keyBar("p", "change profile", "r", "refresh from TVDB", "o", "open on TVDB", "d", "delete show", "?", "help", "esc", "back")
+	return keyBar("p", "change profile", "m", "monitor", "r", "refresh from TVDB", "o", "open on TVDB", "d", "delete show", "?", "help", "esc", "back")
 }
 
 // titleBlock is the heading of a details page: the English name, the

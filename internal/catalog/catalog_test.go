@@ -113,7 +113,7 @@ func TestRefresh(t *testing.T) {
 	season := 2
 	c.corrections = corrections{Title: []titleCorrection{{Series: 1, Title: "Show II", Season: &season, Reason: "aired as season 2"}}}
 
-	if err := c.Add(ctx, 1); err != nil {
+	if err := c.Add(ctx, 1, store.MonitorNew); err != nil {
 		t.Fatal(err)
 	}
 	d, err := st.LoadSeries(ctx, 1)
@@ -156,7 +156,7 @@ func TestRefresh(t *testing.T) {
 	if len(issues) != 1 || issues[0].Kind != "missing_episode" || !strings.Contains(issues[0].Message, "TVDB S02E02") {
 		t.Errorf("issues = %+v", issues)
 	}
-	if err := c.Add(ctx, 1); err == nil {
+	if err := c.Add(ctx, 1, store.MonitorNew); err == nil {
 		t.Error("adding the show twice succeeded")
 	}
 

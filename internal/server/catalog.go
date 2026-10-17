@@ -1,9 +1,11 @@
 package server
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +39,9 @@ type SeriesDetail struct {
 	// for the audio.
 	LanguageName string `json:"language_name"`
 	LanguageNote string `json:"language_note"`
+	// MonitorOff says why the monitor does not run, whatever the show's
+	// mode; empty when it runs.
+	MonitorOff string `json:"monitor_off,omitempty"`
 }
 
 // ProfileInfo names a profile and its rules.
@@ -100,7 +105,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // handleListSeries lists the shows with a summary of each: episode counts,
 // size, next air date and the most urgent episode.
 func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Library(r.Context(), time.Now())
+	list, err := s.store.Library(r.Context(), time.Now(), s.monitor != nil)
 	if err != nil {
 		s.internalError(w, "list series", err)
 		return
@@ -111,15 +116,23 @@ func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
+// handleAddSeries adds a show. monitor says which of its episodes the
+// monitor gets; new ones when left out.
 func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TVDBID int64 `json:"tvdb_id"`
+		TVDBID  int64  `json:"tvdb_id"`
+		Monitor string `json:"monitor"`
 	}
 	if err := readJSON(r, &req); err != nil || req.TVDBID <= 0 {
-		writeError(w, http.StatusBadRequest, `expected {"tvdb_id": <number>}`)
+		writeError(w, http.StatusBadRequest, `expected {"tvdb_id": <number>, "monitor": "new", "all" or "off"}`)
 		return
 	}
-	err := s.catalog.Add(r.Context(), req.TVDBID)
+	req.Monitor = cmp.Or(req.Monitor, store.MonitorNew)
+	if !slices.Contains(store.MonitorModes, req.Monitor) {
+		writeError(w, http.StatusBadRequest, `monitor must be "new", "all" or "off"`)
+		return
+	}
+	err := s.catalog.Add(r.Context(), req.TVDBID, req.Monitor)
 	switch {
 	case errors.Is(err, catalog.ErrExists):
 		writeError(w, http.StatusConflict, err.Error())
@@ -177,7 +190,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 		s.internalError(w, "load series", err)
 		return
 	}
-	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now())
+	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.monitor != nil)
 	if err != nil {
 		s.internalError(w, "summarise series", err)
 		return
@@ -187,7 +200,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 	detail := SeriesDetail{
 		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
 		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
-		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID),
+		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(),
 	}
 	for _, p := range []selection.Profile{selection.Anime, selection.TV} {
 		detail.Profiles = append(detail.Profiles, ProfileInfo{Name: p.Name, Rules: p.Describe()})

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/trucke/garner/internal/store/query"
@@ -58,7 +57,8 @@ type Focus struct {
 	Aired     string `json:"aired,omitempty"`
 	// Download is the episode's latest download, when it has one.
 	Download *Download `json:"download,omitempty"`
-	// Summary and NextRetry come from the episode's latest search.
+	// Summary comes from the episode's latest search; NextRetry is when
+	// the monitor searches it again, unset when it does not get it.
 	Summary   string     `json:"summary,omitempty"`
 	NextRetry *time.Time `json:"next_retry,omitempty"`
 }
@@ -77,27 +77,30 @@ type EpisodeStatus struct {
 	Attempts int `json:"attempts,omitempty"`
 	// Download is the latest download when it explains the state.
 	Download *Download `json:"download,omitempty"`
-	// Summary and NextRetry come from the latest search.
+	// Summary comes from the latest search; NextRetry is when the monitor
+	// searches again, unset when it does not get the episode.
 	Summary   string     `json:"summary,omitempty"`
 	NextRetry *time.Time `json:"next_retry,omitempty"`
 }
 
 type searchOutcome struct {
-	searched  time.Time
-	summary   string
-	nextRetry *time.Time
+	searched time.Time
+	outcome  string
+	summary  string
 }
 
-// Library summarises every show in the catalogue as of now.
-func (s *Store) Library(ctx context.Context, now time.Time) ([]Show, error) {
-	shows, _, err := s.summarise(ctx, now, 0)
+// Library summarises every show in the catalogue as of now. monitoring
+// says whether the monitor runs, so missing episodes it gets carry its next
+// search.
+func (s *Store) Library(ctx context.Context, now time.Time, monitoring bool) ([]Show, error) {
+	shows, _, err := s.summarise(ctx, now, 0, monitoring)
 	return shows, err
 }
 
 // ShowStatus summarises one show and lists what Garner has of each of its
-// episodes.
-func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time) (Show, []EpisodeStatus, error) {
-	shows, states, err := s.summarise(ctx, now, seriesID)
+// episodes, as Library does.
+func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time, monitoring bool) (Show, []EpisodeStatus, error) {
+	shows, states, err := s.summarise(ctx, now, seriesID, monitoring)
 	if err != nil {
 		return Show{}, nil, err
 	}
@@ -109,71 +112,22 @@ func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time) (
 
 // summarise works out every episode's state. With only set, it covers that
 // show alone and also returns the episodes' states.
-func (s *Store) summarise(ctx context.Context, now time.Time, only int64) ([]Show, []EpisodeStatus, error) {
-	series, err := s.ListSeries(ctx)
+func (s *Store) summarise(ctx context.Context, now time.Time, only int64, monitoring bool) ([]Show, []EpisodeStatus, error) {
+	f, err := s.loadFacts(ctx, only)
 	if err != nil {
 		return nil, nil, err
 	}
-	if only > 0 {
-		series = slices.DeleteFunc(series, func(sr Series) bool { return sr.ID != only })
-	}
-	episodes, err := s.q.ListLibraryEpisodes(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	fileRows, err := s.q.ListEpisodeFiles(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	files := make(map[int64]query.ListEpisodeFilesRow, len(fileRows))
-	for _, f := range fileRows {
-		files[f.EpisodeID] = f
-	}
-	downloadRows, err := s.q.ListLatestDownloads(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	latest, err := downloadsFromRows(downloadRows)
-	if err != nil {
-		return nil, nil, err
-	}
-	downloads := make(map[int64]*Download, len(latest))
-	for i := range latest {
-		downloads[latest[i].EpisodeID] = &latest[i]
-	}
-	countRows, err := s.q.CountDownloadsByEpisode(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	attempts := make(map[int64]int, len(countRows))
-	for _, r := range countRows {
-		attempts[r.EpisodeID] = int(r.Attempts)
-	}
-	searchRows, err := s.q.ListSearchOutcomes(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	searches := make(map[int64]searchOutcome, len(searchRows))
-	for _, r := range searchRows {
-		o := searchOutcome{searched: time.Unix(r.SearchedAt, 0), summary: r.Summary}
-		if r.NextRetryAt.Valid {
-			t := time.Unix(r.NextRetryAt.Int64, 0)
-			o.nextRetry = &t
-		}
-		searches[r.EpisodeID] = o
-	}
-
 	today := now.Format(time.DateOnly)
-	shows := make([]Show, len(series))
-	index := make(map[int64]int, len(series))
-	paths := make([]map[string]bool, len(series))
-	for i, sr := range series {
+	shows := make([]Show, len(f.series))
+	index := make(map[int64]int, len(f.series))
+	paths := make([]map[string]bool, len(f.series))
+	for i, sr := range f.series {
 		shows[i] = Show{Series: sr, Counts: map[string]int{}}
 		index[sr.ID] = i
 		paths[i] = map[string]bool{}
 	}
 	var states []EpisodeStatus
-	for _, e := range episodes {
+	for _, e := range f.episodes {
 		i, ok := index[e.SeriesID]
 		if !ok {
 			continue
@@ -181,7 +135,7 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64) ([]Sho
 		sh := &shows[i]
 		aired := e.Aired.Valid && e.Aired.String != "" && e.Aired.String <= today
 		regular := e.Season.Valid && e.Season.Int64 > 0
-		file, hasFile := files[e.ID]
+		file, hasFile := f.files[e.ID]
 		if hasFile && !paths[i][file.Path] {
 			paths[i][file.Path] = true
 			sh.Bytes += file.Size
@@ -196,23 +150,32 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64) ([]Sho
 			sh.NextAired = e.Aired.String
 		}
 
-		d := downloads[e.ID]
-		search, searched := searches[e.ID]
+		d := f.downloads[e.ID]
+		search, searched := f.searches[e.ID]
 		state := episodeState(hasFile, d, search, searched, aired)
 		if state == EpisodeUpcoming && !regular || state == EpisodeNotSearched && !regular {
 			// Specials nobody asked for are not missing.
 			state = ""
 		}
+		var next *time.Time
+		if monitoring && regular && wants(state, d) && sh.Monitors(e.Aired.String) {
+			own, ran := f.monitored[e.ID]
+			t := nextSearch(e.Aired.String, own, ran, d)
+			if t.IsZero() {
+				t = now // due: the monitor gets to it soon
+			}
+			next = &t
+		}
 		if only > 0 {
-			st := EpisodeStatus{EpisodeID: e.ID, State: state, Attempts: attempts[e.ID]}
+			st := EpisodeStatus{EpisodeID: e.ID, State: state, Attempts: f.attempts[e.ID], NextRetry: next}
 			if hasFile {
 				st.Size, st.Tier = file.Size, file.Tier
 			}
-			if explains(state) {
+			if explains(state, d) {
 				st.Download = d
 			}
 			if searched {
-				st.Summary, st.NextRetry = search.summary, search.nextRetry
+				st.Summary = search.summary
 			}
 			states = append(states, st)
 		}
@@ -222,25 +185,29 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64) ([]Sho
 		if state != EpisodeUpcoming {
 			sh.Counts[state]++
 		}
-		f := &Focus{EpisodeID: e.ID, Season: int(e.Season.Int64), Number: int(e.Number.Int64), State: state, Aired: e.Aired.String}
-		if explains(state) {
-			f.Download = d
+		focus := &Focus{EpisodeID: e.ID, Season: int(e.Season.Int64), Number: int(e.Number.Int64), State: state, Aired: e.Aired.String, NextRetry: next}
+		if explains(state, d) {
+			focus.Download = d
 		}
 		if searched {
-			f.Summary, f.NextRetry = search.summary, search.nextRetry
+			focus.Summary = search.summary
 		}
-		if moreUrgent(f, sh.Focus) {
-			sh.Focus = f
+		if moreUrgent(focus, sh.Focus) {
+			sh.Focus = focus
 		}
 	}
 	return shows, states, nil
 }
 
-// explains reports whether an episode's latest download explains its state.
-func explains(state string) bool {
+// explains reports whether an episode's latest download explains its
+// state; a cancelled one explains why the monitor leaves a missing episode
+// alone.
+func explains(state string, d *Download) bool {
 	switch state {
 	case EpisodeDownloading, EpisodeProcessing, EpisodeImporting, EpisodeFailed, EpisodeAttention:
 		return true
+	case EpisodeWaiting, EpisodeNotSearched:
+		return leftToYou(d)
 	}
 	return false
 }
@@ -393,6 +360,10 @@ func (s *Store) ChangeProfile(ctx context.Context, seriesID int64, profile strin
 		return err
 	}
 	if err := q.ClearSeriesSeasonSearches(ctx, seriesID); err != nil {
+		return err
+	}
+	// The monitor searches the show anew, by the new rules.
+	if err := q.ClearSeriesMonitorSearches(ctx, seriesID); err != nil {
 		return err
 	}
 	return tx.Commit()

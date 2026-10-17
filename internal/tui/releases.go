@@ -386,7 +386,7 @@ func (s *releasesScreen) table(width, height int) string {
 	if !usable {
 		line := "   " + gWaiting + " " + sNormal.Render(clean(s.search.Summary))
 		if s.search.NextRetry != nil {
-			line += sMuted.Render(" · next search " + when(*s.search.NextRetry, time.Now()))
+			line += sMuted.Render(" · " + nextSearch(*s.search.NextRetry, time.Now()))
 		}
 		lines, keys = append(lines, line), append(keys, 0)
 		if len(all) > 0 {

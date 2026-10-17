@@ -30,6 +30,15 @@ type Config struct {
 	Prowlarr Service `toml:"prowlarr"`
 	SABnzbd  SABnzbd `toml:"sabnzbd"`
 	Jellyfin Service `toml:"jellyfin"`
+	Monitor  Monitor `toml:"monitor"`
+}
+
+// Monitor is the background search: it searches the episodes monitored
+// shows miss and downloads the best release it accepts.
+type Monitor struct {
+	// Enabled turns it on for every show; each show's own mode then says
+	// which of its episodes it gets.
+	Enabled bool `toml:"enabled"`
 }
 
 // Server configures how clients reach Garner.
@@ -138,6 +147,7 @@ func Load(path string, explicit bool) (*Config, error) {
 		FFprobe: "ffprobe",
 		Server:  Server{Listen: "127.0.0.1:7979"},
 		SABnzbd: SABnzbd{Category: "tv"},
+		Monitor: Monitor{Enabled: true},
 	}
 	base := "."
 	meta, err := toml.DecodeFile(path, cfg)

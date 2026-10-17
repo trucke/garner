@@ -265,6 +265,10 @@ func writeGarnerConfig() error {
 		Prowlarr service `toml:"prowlarr"`
 		SABnzbd  service `toml:"sabnzbd"`
 		Jellyfin service `toml:"jellyfin"`
+		// Off, so the dev server downloads only what you ask for.
+		Monitor struct {
+			Enabled bool `toml:"enabled"`
+		} `toml:"monitor"`
 	}{DataDir: path("garner")}
 	cfg.Server.Listen = "127.0.0.1:7979"
 	cfg.Library.TV, cfg.Library.Anime = path("media/library/tv"), path("media/library/anime")

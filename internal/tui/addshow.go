@@ -57,7 +57,9 @@ type addScreen struct {
 	selected  int64
 	offset    int
 	rowsShown int
-	adding    string // the show being added
+	adding    string                // the show being added
+	asking    *catalog.SearchResult // the show the monitor question is about
+	choice    int
 	flash     flash
 }
 
@@ -123,6 +125,17 @@ func (s *addScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.flash.clear()
+		if r := s.asking; r != nil {
+			done, mode := monitorKey(msg.String(), &s.choice)
+			if done {
+				s.asking = nil
+			}
+			if mode == "" {
+				return s, nil
+			}
+			s.adding = resultName(*r)
+			return s, addShow(s.sess.client, r.ID, s.adding, mode)
+		}
 		switch msg.String() {
 		case "esc":
 			return s.back, s.back.init()
@@ -141,8 +154,8 @@ func (s *addScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if r.Added {
 				return s, func() tea.Msg { return addedMsg{id: r.ID, name: resultName(r), already: true} }
 			}
-			s.adding = resultName(r)
-			return s, addShow(s.sess.client, r.ID, s.adding)
+			s.asking, s.choice = &r, 0
+			return s, nil
 		case "enter":
 			q := strings.TrimSpace(s.input.Value())
 			if s.err != nil && q == s.shown {
@@ -240,7 +253,11 @@ func (s *addScreen) view(width, height int) string {
 			b.WriteString("\n   " + sMuted.Render(fmt.Sprintf("TVDB found %d; these are the first %d. Search more precisely to narrow it down.", s.page.Total, len(rs))))
 		}
 	}
-	return screenLayout(width, height, b.String(), s.bottom(width, q))
+	page := screenLayout(width, height, b.String(), s.bottom(width, q))
+	if s.asking != nil {
+		return overlay(page, monitorQuestion("Add "+resultName(*s.asking), s.choice, "", "add"), width, height)
+	}
+	return page
 }
 
 func (s *addScreen) bottom(width int, q string) string {
@@ -345,6 +362,8 @@ type previewScreen struct {
 	preview *catalog.Preview
 	err     error
 	adding  bool
+	asking  bool // the monitor question is open
+	choice  int
 	flash   flash
 	scroll  scroller
 }
@@ -407,6 +426,17 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.flash.clear()
+		if s.asking {
+			done, mode := monitorKey(msg.String(), &s.choice)
+			if done {
+				s.asking = false
+			}
+			if mode == "" {
+				return s, nil
+			}
+			s.adding = true
+			return s, addShow(s.sess.client, s.result.ID, s.name(), mode)
+		}
 		if s.scroll.key(msg.String()) {
 			return s, nil
 		}
@@ -423,8 +453,7 @@ func (s *previewScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			}
 		case "a":
 			if s.preview != nil && !s.preview.Added {
-				s.adding = true
-				return s, addShow(s.sess.client, s.result.ID, s.name())
+				s.asking, s.choice = true, 0
 			}
 		}
 	}
@@ -494,7 +523,11 @@ func (s *previewScreen) view(width, height int) string {
 			b.WriteString("\n" + indent(frame(overviewLabel(p.OverviewLanguage), []string{sNormal.Render(clean(p.Overview))}, w), 3) + "\n")
 		}
 	}
-	return s.scroll.layout(width, height, b.String(), s.bottom())
+	page := s.scroll.layout(width, height, b.String(), s.bottom())
+	if s.asking {
+		return overlay(page, monitorQuestion("Add "+s.name(), s.choice, "", "add"), width, height)
+	}
+	return page
 }
 
 const labelWidth = 12
@@ -607,6 +640,8 @@ func (s *previewScreen) bottom() string {
 
 func (s *previewScreen) flashed() *flash { return &s.flash }
 
+func (s *previewScreen) captures() bool { return s.asking }
+
 func (s *previewScreen) help() (string, []string) {
 	return "Add show", []string{"a", "add to the library", "o", "open on TVDB"}
 }
@@ -616,13 +651,13 @@ func (s *addScreen) captures() bool { return true }
 
 func (s *addScreen) flashed() *flash { return &s.flash }
 
-// addShow adds a show. It loads every episode from TVDB and TheXEM, which
-// takes a few seconds.
-func addShow(cl *client.Client, id int64, name string) tea.Cmd {
+// addShow adds a show with the monitor mode. It loads every episode from
+// TVDB and TheXEM, which takes a few seconds.
+func addShow(cl *client.Client, id int64, name, monitor string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		return addResultMsg{id, name, cl.Add(ctx, id)}
+		return addResultMsg{id, name, cl.Add(ctx, id, monitor)}
 	}
 }
 

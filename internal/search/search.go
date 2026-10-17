@@ -19,15 +19,6 @@ import (
 	"github.com/trucke/garner/internal/store"
 )
 
-// Retry delays when a search found nothing to accept. Recent episodes get
-// new releases often; older ones rarely.
-const (
-	retryRecent = 6 * time.Hour
-	retryOld    = 24 * time.Hour
-	retryFailed = time.Hour
-	recent      = 14 * 24 * time.Hour
-)
-
 // Service runs searches.
 type Service struct {
 	store    *store.Store
@@ -146,7 +137,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	}
 	sr.Outcome, sr.Summary = outcome(selection.Summary(profile, evals), evals, sr.Indexers)
 	if sr.Outcome != "found" {
-		retry := start.Add(retryDelay(sr.Outcome, ep.Aired, start))
+		retry := start.Add(store.RetryDelay(sr.Outcome, ep.Aired, start))
 		sr.NextRetry = &retry
 	}
 	if err := s.store.SaveSearch(ctx, sr); err != nil {
@@ -381,24 +372,6 @@ func outcome(summary string, evals []selection.Evaluation, indexers []store.Sear
 		}
 	}
 	return result, summary
-}
-
-// retryDelay is when to search again. An episode that has not aired yet
-// waits for its air date.
-func retryDelay(outcome, aired string, now time.Time) time.Duration {
-	if outcome == "failed" {
-		return retryFailed
-	}
-	d, err := time.Parse(time.DateOnly, aired)
-	switch {
-	case err != nil:
-		return retryRecent
-	case d.After(now):
-		return d.Sub(now)
-	case now.Sub(d) < recent:
-		return retryRecent
-	}
-	return retryOld
 }
 
 // runtimeOf is how long the episodes run, each by its own runtime or the

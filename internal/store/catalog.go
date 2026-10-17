@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -39,6 +40,10 @@ type Series struct {
 	OverviewLanguage string `json:"overview_language,omitempty"`
 	// HasDetails is false for a show loaded before those facts were kept.
 	HasDetails bool `json:"has_details"`
+	// Monitor is which episodes the monitor gets: MonitorNew, MonitorAll or
+	// MonitorOff. New episodes are those airing from MonitorSince on.
+	Monitor      string    `json:"monitor"`
+	MonitorSince time.Time `json:"monitor_since"`
 }
 
 // Order is an episode order TVDB offers, such as aired or Netflix.
@@ -143,6 +148,7 @@ func (s *Store) saveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 		// loaded before the details were kept.
 		Network: sql.NullString{String: sr.Network, Valid: true}, LastAired: nullString(sr.LastAired),
 		Overview: nullString(sr.Overview), OverviewLanguage: nullString(sr.OverviewLanguage),
+		Monitor: cmp.Or(sr.Monitor, MonitorNew), MonitorSince: now.Unix(),
 	}); err != nil {
 		return fmt.Errorf("save series: %w", err)
 	}
@@ -344,6 +350,7 @@ func seriesFromRow(r query.Series) Series {
 		Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
 		Network: r.Network.String, LastAired: r.LastAired.String, Overview: r.Overview.String,
 		OverviewLanguage: r.OverviewLanguage.String, HasDetails: r.Network.Valid,
+		Monitor: r.Monitor, MonitorSince: time.Unix(r.MonitorSince, 0),
 	}
 	if r.XemFetchedAt.Valid {
 		t := time.Unix(r.XemFetchedAt.Int64, 0)

@@ -56,3 +56,10 @@ paths = { "/data/usenet" = "/srv/media/usenet" }
 url = "http://jellyfin.home.lan:8096"
 # The same for Jellyfin's library folders.
 paths = { "/data/library" = "/srv/media/library" }
+
+# The monitor searches the episodes your shows miss and downloads the best
+# release it accepts; each show says which episodes it gets: new ones (the
+# default), all missing ones, or none. Turn it off to download only what
+# you ask for.
+[monitor]
+enabled = true

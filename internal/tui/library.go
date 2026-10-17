@@ -695,13 +695,19 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 		if d == nil {
 			return []part{{"failed", sRed}}
 		}
+		var parts []part
 		switch d.Import.State {
 		case store.ImportFailed:
-			return []part{{"import failed", sRed}, sep, {clean(d.Import.Detail), sMuted}}
+			parts = []part{{"import failed", sRed}, sep, {clean(d.Import.Detail), sMuted}}
 		case store.ImportRejected:
-			return []part{{"rejected", sRed}, sep, {clean(d.Import.Detail), sMuted}}
+			parts = []part{{"rejected", sRed}, sep, {clean(d.Import.Detail), sMuted}}
+		default:
+			parts = []part{{"download failed", sRed}, sep, {clean(d.Failure), sMuted}}
 		}
-		return []part{{"download failed", sRed}, sep, {clean(d.Failure), sMuted}}
+		if nextRetry != nil {
+			parts = append(parts, sep, part{nextSearch(*nextRetry, now), sMuted})
+		}
+		return parts
 	case store.EpisodeAttention:
 		detail := ""
 		if d != nil {
@@ -749,19 +755,33 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 			return []part{{"importing into the media library…", sMuted}}
 		}
 		return []part{{"checking the file", sMuted}}
-	case store.EpisodeWaiting:
+	case store.EpisodeWaiting, store.EpisodeNotSearched:
+		if d != nil && d.State == store.Cancelled {
+			// The monitor leaves it to you until you download it.
+			return []part{{"missing · download cancelled", sMuted}}
+		}
+		if state == store.EpisodeNotSearched {
+			return []part{{"missing", sMuted}}
+		}
 		text := "missing"
 		if summary != "" {
 			text += " · " + lowerFirst(clean(summary))
 		}
 		if nextRetry != nil {
-			text += " · next search " + when(*nextRetry, now)
+			text += " · " + nextSearch(*nextRetry, now)
 		}
 		return []part{{text, sMuted}}
-	case store.EpisodeNotSearched:
-		return []part{{"missing", sMuted}}
 	}
 	return nil
+}
+
+// nextSearch says when the monitor searches again; "soon" once the time
+// has come, while it works through the episodes before.
+func nextSearch(t, now time.Time) string {
+	if !t.After(now) {
+		return "next search soon"
+	}
+	return "next search " + when(t, now)
 }
 
 // lowerFirst lets a server sentence continue a line: "Found 21 matching

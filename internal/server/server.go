@@ -21,7 +21,9 @@ import (
 	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/importer"
 	"github.com/trucke/garner/internal/jellyfin"
+	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/prowlarr"
+	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
@@ -44,6 +46,7 @@ type Server struct {
 	search    *search.Service   // nil without Prowlarr
 	downloads *download.Service // nil without SABnzbd
 	imports   *importer.Service // nil without library folders or ffprobe
+	monitor   *monitor.Service  // nil when off or without searching and downloading
 	// The services' clients, for the status checks; nil when not set up.
 	prowlarr *prowlarr.Client
 	sabnzbd  *sabnzbd.Client
@@ -77,6 +80,7 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	if err := s.setupImports(); err != nil {
 		return err
 	}
+	s.setupMonitor()
 	tlsConf, err := s.tlsConfig()
 	if err != nil {
 		return err
@@ -131,6 +135,9 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	if s.imports != nil {
 		go s.imports.Run(ctx)
 	}
+	if s.monitor != nil {
+		go s.monitor.Run(ctx)
+	}
 	errc := make(chan error, 2)
 	go func() { errc <- public.Serve(ln) }()
 	go func() { errc <- admin.Serve(adminLn) }()
@@ -165,9 +172,44 @@ func (s *Server) setupCatalog() error {
 	if err != nil {
 		return err
 	}
-	c.OnChange = func(id int64) { s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}}) }
+	c.OnChange = func(id int64) {
+		s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}})
+		// New air dates may make episodes due.
+		s.wakeMonitor()
+	}
 	s.catalog = c
 	return nil
+}
+
+// monitorOff says why the monitor does not run, to follow "The monitor
+// is"; empty when it runs.
+func (s *Server) monitorOff() string {
+	switch {
+	case !s.cfg.Monitor.Enabled:
+		return "turned off in garner.toml"
+	case s.search == nil || s.downloads == nil:
+		return "off until Prowlarr and SABnzbd are set up"
+	}
+	return ""
+}
+
+func (s *Server) setupMonitor() {
+	if off := s.monitorOff(); off != "" {
+		s.log.Info("the monitor is off: Garner searches and downloads only when asked", "reason", off)
+		return
+	}
+	var rules func(int64) map[release.Service]string
+	if s.catalog != nil {
+		rules = s.catalog.ServiceOrders
+	}
+	s.monitor = monitor.New(s.store, s.search, s.downloads, rules, s.log)
+}
+
+// wakeMonitor has the monitor look now, when it runs.
+func (s *Server) wakeMonitor() {
+	if s.monitor != nil {
+		s.monitor.Wake()
+	}
 }
 
 func (s *Server) tlsConfig() (*tls.Config, error) {

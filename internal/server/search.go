@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -64,6 +66,7 @@ func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "search episode", err)
 		return
 	}
+	sr.NextRetry = s.nextSearch(r.Context(), id)
 	writeJSON(w, http.StatusOK, sr)
 }
 
@@ -108,9 +111,31 @@ func (s *Server) handleGetSearch(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "load search", err)
 		return
 	}
+	sr.NextRetry = s.nextSearch(r.Context(), id)
 	writeJSON(w, http.StatusOK, sr)
 }
 
+// nextSearch is when the monitor searches an episode again; nil when it
+// does not get the episode, or the answer is unknown.
+func (s *Server) nextSearch(ctx context.Context, episodeID int64) *time.Time {
+	seriesID, err := s.store.SeriesOfEpisode(ctx, episodeID)
+	if err != nil {
+		return nil
+	}
+	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.monitor != nil)
+	if err != nil {
+		s.log.Warn("next search", "episode", episodeID, "err", err)
+		return nil
+	}
+	for _, st := range states {
+		if st.EpisodeID == episodeID {
+			return st.NextRetry
+		}
+	}
+	return nil
+}
+
+// handleUpdateSeries changes a show's profile, its monitor mode, or both.
 func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 	id, ok := seriesID(w, r)
 	if !ok {
@@ -118,12 +143,23 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Profile string `json:"profile"`
+		Monitor string `json:"monitor"`
 	}
-	if err := readJSON(r, &req); err != nil || req.Profile != selection.TV.Name && req.Profile != selection.Anime.Name {
-		writeError(w, http.StatusBadRequest, `expected {"profile": "tv"} or {"profile": "anime"}`)
+	err := readJSON(r, &req)
+	switch {
+	case err != nil || req.Profile == "" && req.Monitor == "",
+		req.Profile != "" && req.Profile != selection.TV.Name && req.Profile != selection.Anime.Name,
+		req.Monitor != "" && !slices.Contains(store.MonitorModes, req.Monitor):
+		writeError(w, http.StatusBadRequest, `expected {"profile": "tv" or "anime"}, {"monitor": "new", "all" or "off"}, or both`)
 		return
 	}
-	err := s.store.ChangeProfile(r.Context(), id, req.Profile)
+	ctx := r.Context()
+	if req.Profile != "" {
+		err = s.store.ChangeProfile(ctx, id, req.Profile)
+	}
+	if err == nil && req.Monitor != "" {
+		err = s.store.SetMonitor(ctx, id, req.Monitor, time.Now())
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
 		return
@@ -132,6 +168,9 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "update series", err)
 		return
 	}
+	s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}})
+	// Episodes may be due now: a new mode, or cleared searches.
+	s.wakeMonitor()
 	s.writeSeries(w, r, id, http.StatusOK)
 }
 

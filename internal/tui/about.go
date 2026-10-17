@@ -182,7 +182,11 @@ func (s *aboutScreen) view(width, height int) string {
 			episodes += " · " + sz
 		}
 		row := func(label, value string) string { return pad(sSubtle.Render(label), 10) + sNormal.Render(value) }
-		rows := []string{row("Shows", shows), row("Episodes", episodes)}
+		monitor := fmt.Sprintf("on · gets episodes of %d of %d shows", l.Monitored, l.Shows)
+		if l.MonitorOff != "" {
+			monitor = clean(l.MonitorOff)
+		}
+		rows := []string{row("Shows", shows), row("Episodes", episodes), row("Monitor", monitor)}
 		// One folder a line, broken only after a slash.
 		label := "Folders"
 		for _, f := range l.Folders {

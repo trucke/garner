@@ -72,7 +72,7 @@ func (q *Queries) GetEpisodeOverview(ctx context.Context, id int64) (GetEpisodeO
 }
 
 const getSeries = `-- name: GetSeries :one
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language FROM series WHERE id = ?
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language, monitor, monitor_since FROM series WHERE id = ?
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
@@ -100,6 +100,8 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 		&i.LastAired,
 		&i.Overview,
 		&i.OverviewLanguage,
+		&i.Monitor,
+		&i.MonitorSince,
 	)
 	return i, err
 }
@@ -381,7 +383,7 @@ func (q *Queries) ListSceneNumbers(ctx context.Context, seriesID int64) ([]ListS
 }
 
 const listSeries = `-- name: ListSeries :many
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language FROM series ORDER BY coalesce(name_eng, name)
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language, monitor, monitor_since FROM series ORDER BY coalesce(name_eng, name)
 `
 
 func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
@@ -415,6 +417,8 @@ func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
 			&i.LastAired,
 			&i.Overview,
 			&i.OverviewLanguage,
+			&i.Monitor,
+			&i.MonitorSince,
 		); err != nil {
 			return nil, err
 		}
@@ -616,8 +620,8 @@ func (q *Queries) UpsertEpisode(ctx context.Context, arg UpsertEpisodeParams) er
 const upsertSeries = `-- name: UpsertSeries :exec
 INSERT INTO series (id, slug, name, name_eng, name_deu, original_language, original_country, status, year,
     first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile,
-    network, last_aired, overview, overview_language)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    network, last_aired, overview, overview_language, monitor, monitor_since)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     profile = coalesce(series.profile, excluded.profile),
     slug = excluded.slug, name = excluded.name, name_eng = excluded.name_eng, name_deu = excluded.name_deu,
@@ -650,8 +654,12 @@ type UpsertSeriesParams struct {
 	LastAired        sql.NullString
 	Overview         sql.NullString
 	OverviewLanguage sql.NullString
+	Monitor          string
+	MonitorSince     int64
 }
 
+// The monitor mode is chosen when adding a show; refreshes keep it, as
+// they keep a changed profile.
 func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) error {
 	_, err := q.db.ExecContext(ctx, upsertSeries,
 		arg.ID,
@@ -674,6 +682,8 @@ func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) erro
 		arg.LastAired,
 		arg.Overview,
 		arg.OverviewLanguage,
+		arg.Monitor,
+		arg.MonitorSince,
 	)
 	return err
 }

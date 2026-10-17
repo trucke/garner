@@ -36,6 +36,23 @@ SELECT d.* FROM downloads d JOIN episodes e ON e.id = d.episode_id
 WHERE e.series_id = ?
     AND (d.state IN ('submitting', 'queued', 'downloading', 'processing') OR d.import_state IN ('pending', 'moving'));
 
+-- A changed mode counts from now: new episodes are those airing from now on.
+-- name: SetSeriesMonitor :execrows
+UPDATE series SET
+    monitor_since = CASE WHEN monitor = sqlc.arg(monitor) THEN monitor_since ELSE sqlc.arg(since) END,
+    monitor = sqlc.arg(monitor)
+WHERE id = sqlc.arg(id);
+
+-- name: SaveMonitorSearch :exec
+INSERT INTO monitor_searches (episode_id, searched_at, outcome) VALUES (?, ?, ?)
+ON CONFLICT (episode_id) DO UPDATE SET searched_at = excluded.searched_at, outcome = excluded.outcome;
+
+-- name: ListMonitorSearches :many
+SELECT episode_id, searched_at, outcome FROM monitor_searches;
+
+-- name: ClearSeriesMonitorSearches :exec
+DELETE FROM monitor_searches WHERE episode_id IN (SELECT id FROM episodes WHERE series_id = ?);
+
 -- name: DeleteSeries :execrows
 DELETE FROM series WHERE id = ?;
 

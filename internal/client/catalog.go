@@ -30,10 +30,11 @@ func (c *Client) Preview(ctx context.Context, id int64) (catalog.Preview, error)
 	return p, c.do(ctx, http.MethodGet, "/api/v1/search/"+strconv.FormatInt(id, 10), nil, &p)
 }
 
-// Add loads a show into the library. It takes as long as loading the show's
-// episodes from TVDB and TheXEM does, usually a few seconds.
-func (c *Client) Add(ctx context.Context, id int64) error {
-	return c.do(ctx, http.MethodPost, "/api/v1/series", map[string]int64{"tvdb_id": id}, nil)
+// Add loads a show into the library; monitor says which of its episodes
+// the monitor gets. It takes as long as loading the show's episodes from
+// TVDB and TheXEM does, usually a few seconds.
+func (c *Client) Add(ctx context.Context, id int64, monitor string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/series", map[string]any{"tvdb_id": id, "monitor": monitor}, nil)
 }
 
 // Series returns a show with what Garner has of each episode.
@@ -47,6 +48,12 @@ func (c *Client) Series(ctx context.Context, id int64) (server.SeriesDetail, err
 func (c *Client) SetProfile(ctx context.Context, id int64, profile string) (server.SeriesDetail, error) {
 	var d server.SeriesDetail
 	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"profile": profile}, &d)
+}
+
+// SetMonitor changes which of a show's episodes the monitor gets.
+func (c *Client) SetMonitor(ctx context.Context, id int64, mode string) (server.SeriesDetail, error) {
+	var d server.SeriesDetail
+	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"monitor": mode}, &d)
 }
 
 // Refresh reloads a show from TVDB and TheXEM.

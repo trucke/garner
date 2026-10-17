@@ -189,6 +189,23 @@ func TestDownload(t *testing.T) {
 	}
 }
 
+// TestReplaceAccepted checks that a failed accepted release, as the monitor
+// starts them, is replaced by accepted ones only, never by a last resort.
+func TestReplaceAccepted(t *testing.T) {
+	ctx := context.Background()
+	_, svc, fake := setup(t)
+	if _, err := svc.Accepted(ctx, 101); err != nil {
+		t.Fatal(err)
+	}
+	fake.finish("job-1", "Failed", "Aborted, cannot be completed", "")
+	svc.poll(ctx)
+	fake.finish("job-2", "Failed", "Aborted, cannot be completed", "")
+	svc.poll(ctx)
+	if got := fake.submitted(); len(got) != 2 || got[1] != show+"German.DL.1080p.WEB-B" {
+		t.Fatalf("submitted %q; want A, then B, and no last resort", got)
+	}
+}
+
 // TestRestart covers a crash between recording a download and SABnzbd's
 // answer: the job is found by name instead of submitted again, and a job
 // SABnzbd never got ends as failed.
@@ -264,7 +281,7 @@ func TestCancel(t *testing.T) {
 	if len(fake.submitted()) != 1 {
 		t.Errorf("submitted %q; a cancel starts no other release", fake.submitted())
 	}
-	_, states, _ := st.ShowStatus(ctx, 42, time.Now())
+	_, states, _ := st.ShowStatus(ctx, 42, time.Now(), false)
 	if i := slices.IndexFunc(states, func(e store.EpisodeStatus) bool { return e.EpisodeID == 101 }); i < 0 || states[i].State == store.EpisodeFailed {
 		t.Errorf("episode after a cancel: %+v", states)
 	}

@@ -10,6 +10,15 @@ import (
 	"database/sql"
 )
 
+const clearSeriesMonitorSearches = `-- name: ClearSeriesMonitorSearches :exec
+DELETE FROM monitor_searches WHERE episode_id IN (SELECT id FROM episodes WHERE series_id = ?)
+`
+
+func (q *Queries) ClearSeriesMonitorSearches(ctx context.Context, seriesID int64) error {
+	_, err := q.db.ExecContext(ctx, clearSeriesMonitorSearches, seriesID)
+	return err
+}
+
 const clearSeriesSearches = `-- name: ClearSeriesSearches :exec
 DELETE FROM searches
 WHERE episode_id IN (SELECT id FROM episodes WHERE series_id = ?)
@@ -224,6 +233,33 @@ func (q *Queries) ListLibraryEpisodes(ctx context.Context) ([]ListLibraryEpisode
 	return items, nil
 }
 
+const listMonitorSearches = `-- name: ListMonitorSearches :many
+SELECT episode_id, searched_at, outcome FROM monitor_searches
+`
+
+func (q *Queries) ListMonitorSearches(ctx context.Context) ([]MonitorSearch, error) {
+	rows, err := q.db.QueryContext(ctx, listMonitorSearches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MonitorSearch
+	for rows.Next() {
+		var i MonitorSearch
+		if err := rows.Scan(&i.EpisodeID, &i.SearchedAt, &i.Outcome); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSearchOutcomes = `-- name: ListSearchOutcomes :many
 SELECT episode_id, searched_at, outcome, summary, next_retry_at FROM searches
 `
@@ -389,4 +425,42 @@ func (q *Queries) ListSeriesFiles(ctx context.Context, seriesID int64) ([]ListSe
 		return nil, err
 	}
 	return items, nil
+}
+
+const saveMonitorSearch = `-- name: SaveMonitorSearch :exec
+INSERT INTO monitor_searches (episode_id, searched_at, outcome) VALUES (?, ?, ?)
+ON CONFLICT (episode_id) DO UPDATE SET searched_at = excluded.searched_at, outcome = excluded.outcome
+`
+
+type SaveMonitorSearchParams struct {
+	EpisodeID  int64
+	SearchedAt int64
+	Outcome    string
+}
+
+func (q *Queries) SaveMonitorSearch(ctx context.Context, arg SaveMonitorSearchParams) error {
+	_, err := q.db.ExecContext(ctx, saveMonitorSearch, arg.EpisodeID, arg.SearchedAt, arg.Outcome)
+	return err
+}
+
+const setSeriesMonitor = `-- name: SetSeriesMonitor :execrows
+UPDATE series SET
+    monitor_since = CASE WHEN monitor = ?1 THEN monitor_since ELSE ?2 END,
+    monitor = ?1
+WHERE id = ?3
+`
+
+type SetSeriesMonitorParams struct {
+	Monitor string
+	Since   int64
+	ID      int64
+}
+
+// A changed mode counts from now: new episodes are those airing from now on.
+func (q *Queries) SetSeriesMonitor(ctx context.Context, arg SetSeriesMonitorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSeriesMonitor, arg.Monitor, arg.Since, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

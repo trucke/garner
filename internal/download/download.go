@@ -84,16 +84,26 @@ func (s *Service) SeasonCandidate(ctx context.Context, candidateID int64) (store
 // Best downloads the best release of the episode's latest search that has
 // not failed before.
 func (s *Service) Best(ctx context.Context, episodeID int64) (store.Download, error) {
-	c, err := s.pick(ctx, episodeID)
+	c, err := s.pick(ctx, episodeID, "accept", "fallback")
 	if err != nil {
 		return store.Download{}, err
 	}
 	return s.submit(ctx, episodeID, c, false)
 }
 
-// pick returns the best candidate that has not failed: accepted releases
-// first, last resorts only when no accepted one is left.
-func (s *Service) pick(ctx context.Context, episodeID int64) (store.Candidate, error) {
+// Accepted is Best without last resorts: what the monitor downloads on its
+// own. A last resort waits for someone to choose it.
+func (s *Service) Accepted(ctx context.Context, episodeID int64) (store.Download, error) {
+	c, err := s.pick(ctx, episodeID, "accept")
+	if err != nil {
+		return store.Download{}, err
+	}
+	return s.submit(ctx, episodeID, c, false)
+}
+
+// pick returns the best candidate with one of the verdicts, in their order,
+// that has not failed or been cancelled.
+func (s *Service) pick(ctx context.Context, episodeID int64, verdicts ...string) (store.Candidate, error) {
 	candidates, err := s.store.CandidateLinks(ctx, episodeID)
 	if err != nil {
 		return store.Candidate{}, err
@@ -102,7 +112,7 @@ func (s *Service) pick(ctx context.Context, episodeID int64) (store.Candidate, e
 	if err != nil {
 		return store.Candidate{}, err
 	}
-	for _, verdict := range []string{"accept", "fallback"} {
+	for _, verdict := range verdicts {
 		for _, c := range candidates {
 			if c.Verdict == verdict && !slices.Contains(failed, c.Title) {
 				return c, nil
@@ -317,6 +327,9 @@ func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) (
 }
 
 // replace starts the next release after a failure another release may fix.
+// The replacement is never a step down: an accepted release, such as the
+// monitor's, is replaced by accepted ones only; last resorts follow only a
+// release that was not accepted.
 func (s *Service) replace(ctx context.Context, failed store.Download) {
 	sr, err := s.store.LoadSearch(ctx, failed.EpisodeID)
 	if err != nil {
@@ -328,7 +341,11 @@ func (s *Service) replace(ctx context.Context, failed store.Download) {
 		s.log.Warn("not trying another release", "episode", failed.EpisodeID, "failed", n, "err", err)
 		return
 	}
-	c, err := s.pick(ctx, failed.EpisodeID)
+	verdicts := []string{"accept", "fallback"}
+	if failed.Verdict == "accept" {
+		verdicts = verdicts[:1]
+	}
+	c, err := s.pick(ctx, failed.EpisodeID, verdicts...)
 	if err != nil {
 		s.log.Info("no other release to try", "episode", failed.EpisodeID, "err", err)
 		return

@@ -104,6 +104,12 @@ type EpisodeNumber struct {
 	Number    int64
 }
 
+type MonitorSearch struct {
+	EpisodeID  int64
+	SearchedAt int64
+	Outcome    string
+}
+
 type SceneNumber struct {
 	SeriesID      int64
 	TvdbSeason    int64
@@ -181,6 +187,8 @@ type Series struct {
 	LastAired        sql.NullString
 	Overview         sql.NullString
 	OverviewLanguage sql.NullString
+	Monitor          string
+	MonitorSince     int64
 }
 
 type SeriesOrder struct {

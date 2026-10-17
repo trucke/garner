@@ -16,10 +16,13 @@ import (
 type Search struct {
 	EpisodeID int64 `json:"episode_id"`
 	// Season is set instead for a season search, which keeps only packs.
-	Season     int             `json:"season,omitempty"`
-	Searched   time.Time       `json:"searched"`
-	Outcome    string          `json:"outcome"` // found, fallback, nothing or failed
-	Summary    string          `json:"summary"`
+	Season   int       `json:"season,omitempty"`
+	Searched time.Time `json:"searched"`
+	Outcome  string    `json:"outcome"` // found, fallback, nothing or failed
+	Summary  string    `json:"summary"`
+	// NextRetry is stored as the search's own retry, for the record; the
+	// server answers with the monitor's next search instead, unset when
+	// the monitor does not get the episode.
 	NextRetry  *time.Time      `json:"next_retry,omitempty"`
 	Indexers   []SearchIndexer `json:"indexers"`
 	Candidates []Candidate     `json:"candidates"`
