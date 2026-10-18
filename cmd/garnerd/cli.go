@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -213,10 +215,13 @@ func (a *app) backupCmd() *cobra.Command {
 }
 
 func (a *app) statusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the running server's state",
-		Args:  cobra.NoArgs,
+		Long: "Show the running server's state. With --json, for scripts: work.idle says whether a\n" +
+			"restart would interrupt nothing, as an upgrade needs.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			admin, err := a.admin()
 			if err != nil {
@@ -225,6 +230,11 @@ func (a *app) statusCmd() *cobra.Command {
 			st, err := admin.Status(cmd.Context())
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				out := json.NewEncoder(os.Stdout)
+				out.SetIndent("", "  ")
+				return out.Encode(st)
 			}
 			lipgloss.Println(good.Render("●") + " " + bold.Render("Garner "+st.Version) + dim.Render(" · running since "+ago(st.Started)))
 			lipgloss.Println()
@@ -254,9 +264,29 @@ func (a *app) statusCmd() *cobra.Command {
 				[2]string{"Database", size(st.Size) + " · integrity " + integrity + dim.Render(" · "+st.Database)},
 				[2]string{"Last backup", backup},
 				[2]string{"Tokens", fmt.Sprintf("%d · %s", st.Tokens, plural(st.Streams, "open connection"))},
+				[2]string{"Work", work(st.Work)},
 			)
 			fields(rows...)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the state as JSON")
+	return cmd
+}
+
+// work says what runs, such as "2 downloads · 1 import", or "idle".
+func work(w server.Work) string {
+	if w.Downloads+w.Imports+w.Searches == 0 {
+		return "idle"
+	}
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		noun string
+	}{{w.Downloads, "download"}, {w.Imports, "import"}, {w.Searches, "show search"}} {
+		if p.n > 0 {
+			parts = append(parts, plural(p.n, p.noun))
+		}
+	}
+	return strings.Join(parts, " · ")
 }

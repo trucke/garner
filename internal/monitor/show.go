@@ -84,6 +84,13 @@ func (m *Service) SearchShow(seriesID int64) error {
 	return nil
 }
 
+// ShowSearches counts the show searches asked for or running.
+func (m *Service) ShowSearches() int {
+	m.shows.mu.Lock()
+	defer m.shows.mu.Unlock()
+	return len(m.shows.progress)
+}
+
 // ShowSearch returns the progress of a show's search, while it is asked
 // for or runs.
 func (m *Service) ShowSearch(seriesID int64) (api.ShowProgress, bool) { return m.shows.get(seriesID) }

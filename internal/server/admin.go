@@ -51,16 +51,18 @@ type BackupInfo struct {
 
 // Status describes the running server.
 type Status struct {
-	Version    string      `json:"version"`
-	URL        string      `json:"url"`
-	TLS        string      `json:"tls"`
-	Pin        string      `json:"pin,omitempty"`
-	Started    time.Time   `json:"started"`
-	Database   string      `json:"database"`
-	Size       int64       `json:"size"`
-	Integrity  string      `json:"integrity"`
-	Tokens     int64       `json:"tokens"`
-	Streams    int         `json:"streams"`
+	Version   string    `json:"version"`
+	URL       string    `json:"url"`
+	TLS       string    `json:"tls"`
+	Pin       string    `json:"pin,omitempty"`
+	Started   time.Time `json:"started"`
+	Database  string    `json:"database"`
+	Size      int64     `json:"size"`
+	Integrity string    `json:"integrity"`
+	Tokens    int64     `json:"tokens"`
+	Streams   int       `json:"streams"`
+	// Work is what a restart would interrupt.
+	Work       Work        `json:"work"`
 	LastBackup *BackupInfo `json:"last_backup,omitempty"`
 }
 
@@ -147,8 +149,47 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, BackupInfo(b))
 }
 
+// Work counts what runs: downloads with SABnzbd, imports that check or
+// move files, and searches of a show's missing episodes. Idle means a
+// restart interrupts none of it: downloads do not count, as SABnzbd runs
+// them and Garner follows them again after a restart, as it does an import
+// waiting for Jellyfin.
+type Work struct {
+	Downloads int  `json:"downloads"`
+	Imports   int  `json:"imports"`
+	Searches  int  `json:"searches"`
+	Idle      bool `json:"idle"`
+}
+
+func (s *Server) work(ctx context.Context) (Work, error) {
+	downloads, err := s.store.ActiveDownloads(ctx)
+	if err != nil {
+		return Work{}, err
+	}
+	imports, err := s.store.DueImports(ctx)
+	if err != nil {
+		return Work{}, err
+	}
+	w := Work{Downloads: len(downloads)}
+	for _, d := range imports {
+		if d.Import.State == store.ImportPending || d.Import.State == store.ImportMoving {
+			w.Imports++
+		}
+	}
+	if s.monitor != nil {
+		w.Searches = s.monitor.ShowSearches()
+	}
+	w.Idle = w.Imports+w.Searches == 0
+	return w, nil
+}
+
 func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	st, err := s.store.Status(r.Context())
+	if err != nil {
+		s.internalError(w, "status", err)
+		return
+	}
+	work, err := s.work(r.Context())
 	if err != nil {
 		s.internalError(w, "status", err)
 		return
@@ -156,6 +197,7 @@ func (s *Server) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
 	out := Status{
 		Version: s.version, URL: s.cfg.Server.URL, TLS: s.tlsMode, Pin: s.pin, Started: s.started,
 		Database: st.Path, Size: st.Size, Integrity: st.Integrity, Tokens: st.Tokens, Streams: s.events.count(),
+		Work: work,
 	}
 	if st.LastBackup != nil {
 		b := BackupInfo(*st.LastBackup)
