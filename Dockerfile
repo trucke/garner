@@ -40,13 +40,6 @@ ARG VERSION=dev
 # musl selects Turso's library for Alpine; timetzdata embeds time zones.
 RUN CGO_ENABLED=0 go build -tags musl,timetzdata -trimpath \
       -ldflags "-s -w -X main.version=${VERSION}" -o /out/garnerd ./cmd/garnerd
-# Turso unpacks its native library on first use, unless the file is already
-# there with the right checksum. Unpacking it here means the container
-# never writes executable code at runtime.
-RUN dir="$(go list -m -f '{{.Dir}}' github.com/tursodatabase/turso-go-platform-libs)/libs/linux_$(go env GOARCH)_musl" \
- && hash="$(cut -c1-8 "$dir/libturso_sync_sdk_kit.so.sha256")" \
- && mkdir -p "/out/lib/turso-go/$hash" \
- && cp "$dir/libturso_sync_sdk_kit.so" "/out/lib/turso-go/$hash/"
 
 FROM ${ALPINE}
 ARG VERSION=dev
@@ -57,9 +50,8 @@ LABEL org.opencontainers.image.title="Garner" \
 RUN apk add --no-cache libgcc
 COPY --from=ffprobe /src/ffprobe /usr/local/bin/ffprobe
 COPY --from=build /out/garnerd /usr/local/bin/garnerd
-COPY --from=build /out/lib /usr/local/lib/garner
-ENV TURSO_GO_CACHE_DIR=/usr/local/lib/garner \
-    GARNER_CONFIG=/config/garner.toml
+# garnerd unpacks Turso's library into the data directory on first start.
+ENV GARNER_CONFIG=/config/garner.toml
 USER 1000:1000
 WORKDIR /data
 EXPOSE 7979

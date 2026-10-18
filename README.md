@@ -45,7 +45,7 @@ The second indexer allows API use from two devices: production Prowlarr and the 
 | User | UID and GID 1000 |
 | Root filesystem | Can be read-only |
 | `/config/garner.toml` | Configuration, read-only (`GARNER_CONFIG`) |
-| `/data` | Database, backups and TLS key; set `data_dir = "/data"`. Use local disk, not a network share. Must be writable by UID 1000 in the container: with rootless Podman, run with `--userns=keep-id` so it maps to your own user, or set the owner with `podman unshare chown 1000:1000 <dir>` |
+| `/data` | Database, backups, TLS key and the database engine's library, which `garnerd` unpacks on first start; set `data_dir = "/data"`. Use local disk, not a network share. Must be writable by UID 1000 in the container: with rootless Podman, run with `--userns=keep-id` so it maps to your own user, or set the owner with `podman unshare chown 1000:1000 <dir>` |
 | Media | Mount the share at the paths in `library`, `sabnzbd.paths` and `jellyfin.paths` |
 | Secrets | Environment variables or `*_FILE`, as in `garner.example.toml` |
 | Port | 7979 |

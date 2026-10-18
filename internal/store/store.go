@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode"
@@ -54,10 +55,14 @@ func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error)
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	// Turso extracts its engine library on first use; keep it out of shared
-	// cache directories.
+	// Turso unpacks its engine library on first use. It goes into the data
+	// directory, a folder per Turso version, and once the database is open
+	// the folders of other versions go. A cache directory set from outside
+	// is left alone.
+	libs, version := "", tursoVersion()
 	if os.Getenv("TURSO_GO_CACHE_DIR") == "" {
-		os.Setenv("TURSO_GO_CACHE_DIR", filepath.Join(dataDir, "lib"))
+		libs = filepath.Join(dataDir, "lib")
+		os.Setenv("TURSO_GO_CACHE_DIR", filepath.Join(libs, version))
 	}
 	path := filepath.Join(dataDir, FileName)
 	inner, err := turso.NewConnector(path)
@@ -76,12 +81,54 @@ func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error)
 		}
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	if libs != "" && version != "" {
+		removeOtherLibraries(libs, version, log)
+	}
 	s := &Store{db: db, q: query.New(db), path: path, log: log}
 	if err := s.migrate(ctx, dataDir); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// tursoVersion is the version of the Turso library package this program
+// was built with; empty when the build does not say.
+func tursoVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, m := range info.Deps {
+		if m.Path != "github.com/tursodatabase/turso-go-platform-libs" {
+			continue
+		}
+		if m.Replace != nil {
+			m = m.Replace
+		}
+		return m.Version
+	}
+	return ""
+}
+
+// removeOtherLibraries removes everything in libs but the folder of the
+// Turso version in use: libraries of earlier versions, unpacked before an
+// upgrade. Only the process holding the database lock calls it.
+func removeOtherLibraries(libs, keep string, log *slog.Logger) {
+	entries, err := os.ReadDir(libs)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.Name() == keep {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(libs, e.Name())); err != nil {
+			log.Warn("could not remove an earlier database library", "folder", e.Name(), "err", err)
+			continue
+		}
+		log.Info("removed an earlier database library", "folder", e.Name())
+	}
 }
 
 // Close closes the database.
