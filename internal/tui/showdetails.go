@@ -486,6 +486,8 @@ func ago(t time.Time) string {
 	switch {
 	case d < time.Minute:
 		return "just now"
+	case d < 2*time.Minute:
+		return "a minute ago"
 	case d < time.Hour:
 		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
 	case d < 2*time.Hour:
