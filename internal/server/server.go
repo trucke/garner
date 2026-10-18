@@ -46,7 +46,7 @@ type Server struct {
 	search    *search.Service   // nil without Prowlarr
 	downloads *download.Service // nil without SABnzbd
 	imports   *importer.Service // nil without library folders or ffprobe
-	monitor   *monitor.Service  // nil when off or without searching and downloading
+	monitor   *monitor.Service  // nil without searching and downloading; runs show searches even when the monitor is off
 	// The services' clients, for the status checks; nil when not set up.
 	prowlarr *prowlarr.Client
 	sabnzbd  *sabnzbd.Client
@@ -193,16 +193,22 @@ func (s *Server) monitorOff() string {
 	return ""
 }
 
+// monitoring reports whether the monitor gets episodes on its own.
+func (s *Server) monitoring() bool { return s.monitorOff() == "" }
+
 func (s *Server) setupMonitor() {
 	if off := s.monitorOff(); off != "" {
 		s.log.Info("the monitor is off: Garner searches and downloads only when asked", "reason", off)
+	}
+	if s.search == nil || s.downloads == nil {
 		return
 	}
 	var rules func(int64) map[release.Service]string
 	if s.catalog != nil {
 		rules = s.catalog.ServiceOrders
 	}
-	s.monitor = monitor.New(s.store, s.search, s.downloads, rules, s.log)
+	s.monitor = monitor.New(s.store, s.search, s.downloads, s.monitoring(), rules, s.log)
+	s.monitor.OnShowProgress = func(p monitor.ShowProgress) { s.events.publish(Event{Type: "series.search", Data: p}) }
 }
 
 // wakeMonitor has the monitor look now, when it runs.

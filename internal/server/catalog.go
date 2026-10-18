@@ -12,6 +12,7 @@ import (
 
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/importer"
+	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
@@ -42,6 +43,9 @@ type SeriesDetail struct {
 	// MonitorOff says why the monitor does not run, whatever the show's
 	// mode; empty when it runs.
 	MonitorOff string `json:"monitor_off,omitempty"`
+	// Searching is the search of every missing episode, while it is asked
+	// for or runs.
+	Searching *monitor.ShowProgress `json:"searching,omitempty"`
 }
 
 // ProfileInfo names a profile and its rules.
@@ -105,7 +109,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // handleListSeries lists the shows with a summary of each: episode counts,
 // size, next air date and the most urgent episode.
 func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Library(r.Context(), time.Now(), s.monitor != nil)
+	list, err := s.store.Library(r.Context(), time.Now(), s.monitoring())
 	if err != nil {
 		s.internalError(w, "list series", err)
 		return
@@ -190,7 +194,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 		s.internalError(w, "load series", err)
 		return
 	}
-	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.monitor != nil)
+	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.monitoring())
 	if err != nil {
 		s.internalError(w, "summarise series", err)
 		return
@@ -207,6 +211,11 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 	}
 	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series, profile); err == nil {
 		detail.Folder = folder
+	}
+	if s.monitor != nil {
+		if p, ok := s.monitor.ShowSearch(id); ok {
+			detail.Searching = &p
+		}
 	}
 	writeJSON(w, status, detail)
 }

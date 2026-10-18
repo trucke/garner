@@ -110,29 +110,46 @@ func ended(d Download) time.Time {
 	return d.Updated
 }
 
-// wants reports whether the monitor gets an episode in this state with
-// this latest download: missing (never searched, waiting, or failed), and
-// not cancelled.
-func wants(state string, d *Download) bool {
-	return (state == EpisodeNotSearched || state == EpisodeWaiting || state == EpisodeFailed) && !leftToYou(d)
+// missingState reports whether an aired episode in this state is missing:
+// never searched, waiting, or failed. A running download or import is not.
+func missingState(state string) bool {
+	return state == EpisodeNotSearched || state == EpisodeWaiting || state == EpisodeFailed
 }
 
-// Wanted is a missing episode the monitor gets.
+// wants reports whether the monitor gets an episode in this state with this
+// latest download: missing, and not cancelled.
+func wants(state string, d *Download) bool { return missingState(state) && !leftToYou(d) }
+
+// Wanted is a missing episode.
 type Wanted struct {
 	EpisodeID int64
 	SeriesID  int64
 	// Season and Number are in the show's default order.
 	Season, Number int
 	Aired          string
-	// Next is when to search it; zero when it was never searched.
+	// Next is when the monitor searches it; zero when it never did.
 	Next time.Time
 }
 
 // Wanted lists the aired episodes that monitored shows miss, with when the
-// monitor searches each. Episodes with a running download or import are
-// not missing; those whose download was cancelled are left to the user.
+// monitor searches each. Those whose download was cancelled are left to
+// the user.
 func (s *Store) Wanted(ctx context.Context, now time.Time) ([]Wanted, error) {
-	f, err := s.loadFacts(ctx, 0)
+	return s.missing(ctx, now, 0, func(sr Series, aired string, d *Download) bool {
+		return sr.Monitors(aired) && !leftToYou(d)
+	})
+}
+
+// Missing lists a show's aired episodes that are not in the library,
+// whatever its monitor mode, cancelled ones included.
+func (s *Store) Missing(ctx context.Context, now time.Time, seriesID int64) ([]Wanted, error) {
+	return s.missing(ctx, now, seriesID, func(Series, string, *Download) bool { return true })
+}
+
+// missing lists the aired regular episodes that are missing and that keep
+// accepts, of every show or of only that one.
+func (s *Store) missing(ctx context.Context, now time.Time, only int64, keep func(sr Series, aired string, d *Download) bool) ([]Wanted, error) {
+	f, err := s.loadFacts(ctx, only)
 	if err != nil {
 		return nil, err
 	}
@@ -145,13 +162,13 @@ func (s *Store) Wanted(ctx context.Context, now time.Time) ([]Wanted, error) {
 	for _, e := range f.episodes {
 		sr, ok := series[e.SeriesID]
 		aired := e.Aired.String
-		if !ok || !e.Season.Valid || e.Season.Int64 < 1 || aired == "" || aired > today || !sr.Monitors(aired) {
+		if !ok || !e.Season.Valid || e.Season.Int64 < 1 || aired == "" || aired > today {
 			continue
 		}
 		_, hasFile := f.files[e.ID]
 		d := f.downloads[e.ID]
 		search, searched := f.searches[e.ID]
-		if !wants(episodeState(hasFile, d, search, searched, true), d) {
+		if !missingState(episodeState(hasFile, d, search, searched, true)) || !keep(sr, aired, d) {
 			continue
 		}
 		own, ran := f.monitored[e.ID]

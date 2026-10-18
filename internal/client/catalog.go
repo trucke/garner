@@ -56,6 +56,17 @@ func (c *Client) SetMonitor(ctx context.Context, id int64, mode string) (server.
 	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"monitor": mode}, &d)
 }
 
+// SearchShow asks the server to search every missing episode of a show
+// and download the best release of each that meets its rules. It returns
+// how many episodes are missing; series.search events follow the search.
+func (c *Client) SearchShow(ctx context.Context, id int64) (int, error) {
+	var out struct {
+		Episodes int `json:"episodes"`
+	}
+	err := c.do(ctx, http.MethodPost, "/api/v1/series/"+strconv.FormatInt(id, 10)+"/search", nil, &out)
+	return out.Episodes, err
+}
+
 // Refresh reloads a show from TVDB and TheXEM.
 func (c *Client) Refresh(ctx context.Context, id int64) (server.SeriesDetail, error) {
 	var d server.SeriesDetail

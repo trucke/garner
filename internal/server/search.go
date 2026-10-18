@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/httpx"
+	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/search"
@@ -45,6 +46,7 @@ func (s *Server) searchRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleSearchEpisode)))
 	mux.Handle("GET /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleGetSearch)))
 	mux.Handle("POST /api/v1/series/{id}/seasons/{season}/search", s.auth(http.HandlerFunc(s.handleSearchSeason)))
+	mux.Handle("POST /api/v1/series/{id}/search", s.auth(http.HandlerFunc(s.handleSearchShow)))
 	mux.Handle("PATCH /api/v1/series/{id}", s.auth(http.HandlerFunc(s.handleUpdateSeries)))
 }
 
@@ -97,6 +99,45 @@ func (s *Server) handleSearchSeason(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sr)
 }
 
+// handleSearchShow asks for every missing episode of a show to be searched
+// and the best release of each that meets its rules to be downloaded. It
+// answers at once with how many episodes are missing; series.search events
+// follow the search, which runs after the ones asked for before.
+func (s *Server) handleSearchShow(w http.ResponseWriter, r *http.Request) {
+	if s.monitor == nil {
+		writeError(w, http.StatusServiceUnavailable, "searching and downloading need Prowlarr and SABnzbd: set prowlarr.url, sabnzbd.url and their API keys")
+		return
+	}
+	id, ok := seriesID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	exists, err := s.store.HasSeries(ctx, id)
+	if err != nil {
+		s.internalError(w, "search show", err)
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "series is not in the catalogue")
+		return
+	}
+	missing, err := s.store.Missing(ctx, time.Now(), id)
+	if err != nil {
+		s.internalError(w, "search show", err)
+		return
+	}
+	if len(missing) == 0 {
+		writeJSON(w, http.StatusOK, map[string]int{"episodes": 0})
+		return
+	}
+	if err := s.monitor.SearchShow(id); errors.Is(err, monitor.ErrSearching) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]int{"episodes": len(missing)})
+}
+
 func (s *Server) handleGetSearch(w http.ResponseWriter, r *http.Request) {
 	id, ok := episodeID(w, r)
 	if !ok {
@@ -122,7 +163,7 @@ func (s *Server) nextSearch(ctx context.Context, episodeID int64) *time.Time {
 	if err != nil {
 		return nil
 	}
-	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.monitor != nil)
+	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.monitoring())
 	if err != nil {
 		s.log.Warn("next search", "episode", episodeID, "err", err)
 		return nil

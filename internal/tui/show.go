@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trucke/garner/internal/client"
+	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/server"
 	"github.com/trucke/garner/internal/store"
 )
@@ -48,6 +49,10 @@ type showScreen struct {
 	page    int
 	flash   flash
 	lastKey string
+	// asking is the question before searching every missing episode;
+	// choice 1 is Search.
+	asking bool
+	choice int
 }
 
 type rowKey struct {
@@ -134,8 +139,20 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			if json.Unmarshal(msg.Data, &deleted) == nil && deleted.ID == s.id {
 				return s, func() tea.Msg { return switchMsg{s.back} }
 			}
+		case "series.search":
+			var p monitor.ShowProgress
+			if json.Unmarshal(msg.Data, &p) == nil {
+				return s, s.progressed(p)
+			}
+		}
+	case searchShowMsg:
+		if msg.from == s {
+			return s, s.searched(msg)
 		}
 	case tea.KeyPressMsg:
+		if s.asking {
+			return s, s.searchKey(msg.String())
+		}
 		return s, s.key(msg.String())
 	}
 	return s, nil
@@ -324,7 +341,7 @@ func (s *showScreen) key(key string) tea.Cmd {
 		}
 		return func() tea.Msg { return switchMsg{next} }
 	case "S":
-		s.flash.info(sMuted.Render("Searching every missing episode is not available yet."))
+		s.askSearch()
 	case "i":
 		if s.detail != nil {
 			next := newShowDetails(s.sess, s, s)
@@ -420,7 +437,11 @@ func (s *showScreen) view(width, height int) string {
 			b.WriteString(cols.episodeRow(episodes[key.episode], d, now, key == s.cursor) + "\n")
 		}
 	}
-	return screenLayout(width, height, b.String(), s.bottom())
+	page := screenLayout(width, height, b.String(), s.bottom())
+	if s.asking {
+		return overlay(page, s.searchQuestion(), width, height)
+	}
+	return page
 }
 
 func (s *showScreen) facts(now time.Time, width int) string {
@@ -437,13 +458,17 @@ func (s *showScreen) facts(now time.Time, width int) string {
 	if b := size(d.Summary.Bytes); b != "" {
 		episodes += " · " + b
 	}
-	return factLines(width, fact("Type", typ), fact("Status", st), fact("Episodes", episodes))
+	facts := []string{fact("Type", typ), fact("Status", st), fact("Episodes", episodes)}
+	if f := searchFact(d.Searching); f != "" {
+		facts = append(facts, f)
+	}
+	return factLines(width, facts...)
 }
 
 func (s *showScreen) help() (string, []string) {
 	return "Show", []string{
 		"enter", "open the episode", "s", "search the episode, or the season for packs",
-		"h l", "fold, unfold the season", "S", "search every missing episode (not built yet)",
+		"h l", "fold, unfold the season", "S", "search every missing episode and download",
 		"tab", "next season", "i", "show details",
 	}
 }
@@ -456,8 +481,7 @@ func (s *showScreen) bottom() string {
 	if _, ok := s.cursorEpisode(); ok {
 		search = "new search"
 	}
-	// S search missing joins the bar once it is built; Help lists it.
-	keys := []string{"h l", "fold", "tab", "season", "s", search, "i", "show details", "A", "activity", "?", "help", "esc", "back"}
+	keys := []string{"h l", "fold", "tab", "season", "s", search, "S", "search missing", "i", "show details", "A", "activity", "?", "help", "esc", "back"}
 	if label := s.enterLabel(); label != "" {
 		keys = append([]string{"enter", label}, keys...)
 	}
@@ -689,3 +713,6 @@ func fill(line string, width int, bg func(lipgloss.Style) lipgloss.Style) string
 }
 
 func (s *showScreen) flashed() *flash { return &s.flash }
+
+// captures: the search question takes every key, ? and A included.
+func (s *showScreen) captures() bool { return s.asking }

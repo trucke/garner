@@ -119,6 +119,23 @@ func TestWanted(t *testing.T) {
 		t.Fatalf("wanted %v: %v\nwant %v", ids, got, want)
 	}
 
+	// Searching a show's missing episodes takes every aired one without a
+	// file, whatever its mode, cancelled ones included.
+	for series, want := range map[int64][]int64{1: {101, 102, 103, 104, 108, 109}, 3: {301}} {
+		missing, err := st.Missing(ctx, now, series)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []int64
+		for _, w := range missing {
+			ids = append(ids, w.EpisodeID)
+		}
+		slices.Sort(ids)
+		if !slices.Equal(ids, want) {
+			t.Errorf("missing of show %d: %v, want %v", series, ids, want)
+		}
+	}
+
 	// The episode states carry the next search only while the monitor runs,
 	// and a cancelled episode carries its download instead.
 	for _, monitoring := range []bool{true, false} {

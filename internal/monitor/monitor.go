@@ -1,7 +1,8 @@
 // Package monitor gets the episodes that monitored shows miss: it searches
-// each one when it is due and downloads the best release it accepts. From
-// there the download service follows the download and replaces a failed
-// release, and the importer moves the file into the library.
+// each one when it is due and downloads the best release it accepts. It
+// also searches every missing episode of a show when asked to, the same
+// way. From there the download service follows the download and replaces a
+// failed release, and the importer moves the file into the library.
 package monitor
 
 import (
@@ -34,27 +35,36 @@ const (
 	recent = 14 * 24 * time.Hour
 )
 
-// Service runs the monitor.
+// Service runs the monitor and the searches of shows asked for, one
+// search at a time.
 type Service struct {
 	store     *store.Store
 	search    *search.Service
 	downloads *download.Service
+	// auto runs the monitor's own rounds; without it, only the shows
+	// asked for are searched.
+	auto bool
 	// rules returns a show's reviewed streaming-service order rules.
 	rules  func(seriesID int64) map[release.Service]string
 	log    *slog.Logger
 	now    func() time.Time
 	wake   chan struct{}
 	paused map[int64]time.Time // by episode: until when
+	shows  showQueue
+	// OnShowProgress is called when a show's search was asked for, after
+	// each of its episodes, and when it ends.
+	OnShowProgress func(ShowProgress)
 }
 
-// New returns a monitor. rules may be nil.
-func New(st *store.Store, s *search.Service, d *download.Service, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
+// New returns a service that runs the monitor's rounds when auto is set.
+// rules may be nil.
+func New(st *store.Store, s *search.Service, d *download.Service, auto bool, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
 	if rules == nil {
 		rules = func(int64) map[release.Service]string { return nil }
 	}
 	return &Service{
-		store: st, search: s, downloads: d, rules: rules, log: log, now: time.Now,
-		wake: make(chan struct{}, 1), paused: map[int64]time.Time{},
+		store: st, search: s, downloads: d, auto: auto, rules: rules, log: log, now: time.Now,
+		wake: make(chan struct{}, 1), paused: map[int64]time.Time{}, shows: showQueue{progress: map[int64]ShowProgress{}},
 	}
 }
 
@@ -66,11 +76,20 @@ func (m *Service) Wake() {
 	}
 }
 
-// Run looks for due episodes every minute and when woken, until ctx is
-// cancelled.
+// Run searches the shows asked for, and looks for due episodes every
+// minute and when woken, until ctx is cancelled. A show asked for goes
+// ahead of the rest of a round.
 func (m *Service) Run(ctx context.Context) {
 	for {
-		m.round(ctx)
+		for id, ok := m.shows.next(); ok && ctx.Err() == nil; id, ok = m.shows.next() {
+			m.searchShow(ctx, id)
+		}
+		if m.auto {
+			m.round(ctx)
+		}
+		if m.shows.waiting() {
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -94,8 +113,8 @@ func (m *Service) round(ctx context.Context) {
 	held := map[int64]map[int64]bool{} // by show; looked up when needed
 	searched, started := 0, 0
 	for _, w := range todo {
-		if ctx.Err() != nil {
-			return
+		if ctx.Err() != nil || m.shows.waiting() {
+			break // the rest stays due for the next round
 		}
 		h, ok := held[w.SeriesID]
 		if !ok {
