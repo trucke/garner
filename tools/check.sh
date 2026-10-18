@@ -2,11 +2,8 @@
 # Checks the working copy in place: formatting, vet, the generated database
 # code and known vulnerabilities; the tests on macOS, and again on Linux in
 # the Go image the container is built with; and builds for Linux x86. With jj, every file that is not ignored belongs to the
-# working-copy commit, so the folder is what gets committed.
-#
-# When all of it passes, a git note on the working copy's tree records it;
-# the production deploy requires one. After a push, jj's new empty change
-# has the pushed commit's tree, so the pass counts for that commit too.
+# working-copy commit, so the folder is what gets committed. Run it before
+# every push.
 #
 # Usage: mise run check
 set -euo pipefail
@@ -74,6 +71,4 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags "$tags" -o /dev/null ./cmd/
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /dev/null ./cmd/garner || fail "garner does not build for Linux x86"
 
 [ "$(tree)" = "$checked" ] || fail "files changed while checking; run mise run check again"
-git notes --ref=garner-check add -f \
-	-m "Passed mise run check on $(hostname -s) at $(date -u +%Y-%m-%dT%H:%M:%SZ) with $(go env GOVERSION)" "$checked"
-printf '\n✓ Passed; recorded on tree %s\n' "${checked:0:12}"
+printf '\n✓ Passed\n'

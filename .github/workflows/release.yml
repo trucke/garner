@@ -1,0 +1,101 @@
+# Builds a release when `mise run release vX.Y.Z` pushes its tag: the server
+# image on ghcr.io, then, with GoReleaser, the terminal interface for macOS
+# and Linux and the GitHub release. The tag's commit passed
+# `mise run check` before it was pushed, so nothing is tested here.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # the GitHub release
+      packages: write # the image and its build cache, and removing old ones
+    env:
+      TAG: ${{ github.ref_name }}
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Check the tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::$TAG is not a version such as v1.2.3"
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser's notes need the previous tag
+          persist-credentials: false
+
+      # mise run release tags only commits on main; a tag pushed some other
+      # way must at least be on main.
+      - name: Check that the tag is on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::$TAG is not on main; release with mise run release"
+            exit 1
+          }
+
+      - name: Read the tool versions from mise.toml
+        id: tools
+        run: |
+          echo "go=$(sed -n 's/^go = "\(.*\)"$/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+          echo "goreleaser=$(sed -n 's/^goreleaser = "\(.*\)"$/\1/p' mise.toml)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.tools.outputs.go }}
+          cache: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # The build cache lives on ghcr.io, so FFprobe is compiled only when
+      # the Dockerfile's FFmpeg changes; GitHub's own cache expires after a
+      # week without use. One image, no attestations, so the digest names
+      # exactly what a server runs.
+      - name: Build and push the server image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          build-args: |
+            VERSION=${{ env.TAG }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+          provenance: false
+          sbom: false
+
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: v${{ steps.tools.outputs.goreleaser }}
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          IMAGE_REF: ${{ env.IMAGE }}:${{ env.TAG }}@${{ steps.image.outputs.digest }}
+
+      # The container registry is free for now; keeping twenty versions
+      # (images and their build cache) stays small if that changes. The
+      # release is out by now, so a failure here must not fail it.
+      - name: Remove old images
+        continue-on-error: true
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        with:
+          package-name: garner
+          package-type: container
+          min-versions-to-keep: 20

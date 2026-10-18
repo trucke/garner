@@ -3,6 +3,7 @@ go = "1.27.2"
 sqlc = "1.31.1"
 air = "1.67.4"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+goreleaser = "2.18.3"
 
 [tasks.build]
 description = "Build bin/garner (the terminal interface) and bin/garnerd (the server)"
@@ -22,11 +23,17 @@ description = "Build bin/garner and open the terminal interface"
 raw = true
 run = ["go build -o bin/garner ./cmd/garner", "./bin/garner"]
 
-# Checks the working copy on macOS and on Linux and records a pass that
-# the production deploy requires.
+# Checks the working copy on macOS and on Linux; run it before every push.
 [tasks.check]
-description = "Check the working copy on macOS and Linux before committing or deploying"
+description = "Check the working copy on macOS and Linux; run it before every push"
 run = "bash tools/check.sh"
+
+# Releases a commit of main, the newest by default:
+# mise run release vX.Y.Z [revision]. GitHub then builds the image and,
+# with GoReleaser, the terminal interface and the release.
+[tasks.release]
+description = "Release a commit of main as a version: tag it and let GitHub build the image and the release"
+run = "bash tools/release.sh"
 
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"

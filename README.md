@@ -31,9 +31,35 @@ The development stack downloads from its own Usenet account with 8 connections. 
 
 The second indexer allows API use from two devices: production Prowlarr and the development stack's Prowlarr. Never set up a third Prowlarr with it.
 
-`mise run check` checks the working copy: formatting, vet, the generated database code and known vulnerabilities; the tests on macOS and again on Linux in the Go image the container is built with; and builds for Linux x86. A pass is recorded as a git note (`refs/notes/garner-check`) on the working copy's tree. The real-case tests from the private `garner-research` repository are not part of it; run them as `AGENTS.md` describes.
+`mise run check` checks the working copy: formatting, vet, the generated database code and known vulnerabilities; the tests on macOS and again on Linux in the Go image the container is built with; and builds for Linux x86. Run it before every push. The real-case tests from the private `garner-research` repository are not part of it; run them as `AGENTS.md` describes.
 
 `mise run build` builds both programs without starting the server. `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
+
+## Releases
+
+Versions follow semantic versioning: `v0.x.y` until Garner is ready for others.
+`mise run release v0.2.0 [revision]` tags a commit of `main`, the newest by default, and pushes the
+tag. The commit must be on `main` on GitHub and newer than the previous release; every push passed
+`mise run check`, so it is checked. GitHub's release workflow (`.github/workflows/release.yml`)
+then builds:
+
+* the server image, `ghcr.io/trucke/garner:v0.2.0`, private while the repository is. Its build cache
+  lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes;
+* with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS (Apple silicon) and Linux
+  (x86) with their SHA-256 sums, and the GitHub release with the image reference and the commits
+  since the previous version.
+
+`goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without
+publishing anything. The workflow keeps the twenty newest image versions, build cache included.
+
+To install the terminal interface from a release, pick the file for the machine, `darwin-arm64` for a
+Mac with Apple silicon or `linux-amd64` for Linux on x86:
+
+```bash
+mkdir -p ~/.local/bin
+gh release download v0.2.0 -R trucke/garner -p 'garner-*-darwin-arm64' -O ~/.local/bin/garner
+chmod +x ~/.local/bin/garner
+```
 
 ## Container image
 

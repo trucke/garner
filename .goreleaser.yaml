@@ -1,0 +1,33 @@
+# GoReleaser builds a release's terminal interface for macOS on Apple
+# silicon and Linux on x86, and creates the GitHub release with it. The
+# release workflow builds the server image first and passes its reference
+# as IMAGE_REF. Try a release without publishing anything:
+#   goreleaser release --snapshot --clean
+version: 2
+project_name: garner
+
+builds:
+  - id: garner
+    main: ./cmd/garner
+    binary: garner
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Tag }} -X main.commit={{ .FullCommit }}"]
+    targets: [darwin_arm64, linux_amd64_v1]
+
+archives:
+  - formats: [binary]
+    name_template: "garner-{{ .Tag }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: SHA256SUMS
+
+changelog:
+  use: git
+  sort: asc
+  format: "{{ .Message }}"
+
+release:
+  name_template: "Garner {{ .Tag }}"
+  header: |
+    Server image: `{{ envOrDefault "IMAGE_REF" "not built in this run" }}`
