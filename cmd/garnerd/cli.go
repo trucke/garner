@@ -1,5 +1,4 @@
-// Package cli is Garner's command line.
-package cli
+package main
 
 import (
 	"context"
@@ -8,53 +7,30 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"syscall"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
 	charmlog "charm.land/log/v2"
-	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 
 	"github.com/trucke/garner/internal/config"
-	"github.com/trucke/garner/internal/connect"
 	"github.com/trucke/garner/internal/server"
-	"github.com/trucke/garner/internal/tui"
 )
 
-// Execute runs the command line and returns the exit code.
-func Execute(version string) int {
-	if version == "" {
-		version = buildVersion()
-	}
+// execute runs the command line and returns the exit code.
+func execute(version string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := newRoot(version).ExecuteContext(ctx); err != nil {
 		if errors.Is(err, server.ErrNotRunning) {
-			err = fmt.Errorf("Garner isn't running. Start it with %s.", code("garner serve"))
+			err = fmt.Errorf("Garner isn't running. Start it with %s.", code("garnerd serve"))
 		}
 		printError(err)
 		return 1
 	}
 	return 0
-}
-
-func buildVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "dev"
-	}
-	if v := info.Main.Version; v != "" && v != "(devel)" {
-		return v
-	}
-	for _, s := range info.Settings {
-		if s.Key == "vcs.revision" && len(s.Value) >= 12 {
-			return "dev-" + s.Value[:12]
-		}
-	}
-	return "dev"
 }
 
 type app struct {
@@ -65,24 +41,14 @@ type app struct {
 func newRoot(version string) *cobra.Command {
 	a := &app{version: version}
 	root := &cobra.Command{
-		Use:   "garner",
-		Short: "Self-hosted TV and anime manager",
-		Long: "Self-hosted TV and anime manager.\n\nRun garner without a command to open the terminal interface. It keeps\n" +
-			"its connection in $GARNER_CONNECTION or ~/.config/garner/connection.",
+		Use:   "garnerd",
+		Short: "Garner's server",
+		Long: "Garner's server. garnerd serve runs it; the other commands manage the server\n" +
+			"running on this machine. The terminal interface is the separate program garner.",
 		Version:       version,
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
-				return errors.New("garner opens a terminal interface; run it in a terminal, or see garner --help")
-			}
-			path, err := connect.DefaultPath()
-			if err != nil {
-				return err
-			}
-			return tui.Run(cmd.Context(), path, a.version)
-		},
 	}
 	root.PersistentFlags().StringVarP(&a.configPath, "config", "c", "", "config file (default $GARNER_CONFIG or "+config.DefaultPath+")")
 	root.AddCommand(a.serveCmd(), a.tokenCmd(), a.backupCmd(), a.statusCmd())
@@ -173,7 +139,7 @@ func (a *app) tokenCmd() *cobra.Command {
 					return err
 				}
 				if len(tokens) == 0 {
-					lipgloss.Println("No tokens yet. Create one with " + code("garner token create NAME") + ".")
+					lipgloss.Println("No tokens yet. Create one with " + code("garnerd token create NAME") + ".")
 					return nil
 				}
 				t := table.New().

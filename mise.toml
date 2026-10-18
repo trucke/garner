@@ -4,10 +4,10 @@ sqlc = "1.31.1"
 air = "1.67.4"
 
 [tasks.build]
-description = "Build bin/garner"
-run = "go build -o bin/garner ./cmd/garner"
+description = "Build bin/garner (the terminal interface) and bin/garnerd (the server)"
+run = ["go build -o bin/garner ./cmd/garner", "go build -o bin/garnerd ./cmd/garnerd"]
 
-# Air (.air.toml) builds bin/garner, runs it and rebuilds and restarts it
+# Air (.air.toml) builds bin/garnerd, runs it and rebuilds and restarts it
 # on every code change. Garner uses the garner.toml that devstack writes;
 # the stack's API keys come from its secrets folder, the TVDB key from
 # Infisical.
@@ -18,9 +18,8 @@ run = "infisical run --env=dev --silent -- air"
 
 [tasks.tui]
 description = "Build bin/garner and open the terminal interface"
-depends = ["build"]
 raw = true
-run = "./bin/garner"
+run = ["go build -o bin/garner ./cmd/garner", "./bin/garner"]
 
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"

@@ -16,7 +16,7 @@ data_dir = "data"
 listen = "127.0.0.1:7979"
 
 # To serve other machines, listen beyond loopback and set the address clients
-# use. Garner then serves HTTPS with its own certificate; `garner token create`
+# use. Garner then serves HTTPS with its own certificate; `garnerd token create`
 # prints a connection code that lets clients verify it.
 # listen = "0.0.0.0:7979"
 # url = "https://garner.home.lan:7979"

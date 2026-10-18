@@ -1,4 +1,4 @@
-# Garner's container image: the server, plus an FFprobe that can only read
+# Garner's container image: the server, garnerd, plus an FFprobe that can only read
 # the files Garner imports. Build with `mise run image`.
 #
 # Base images are pinned by index digest and FFmpeg by checksum; update them
@@ -39,7 +39,7 @@ COPY internal internal
 ARG VERSION=dev
 # musl selects Turso's library for Alpine; timetzdata embeds time zones.
 RUN CGO_ENABLED=0 go build -tags musl,timetzdata -trimpath \
-      -ldflags "-s -w -X main.version=${VERSION}" -o /out/garner ./cmd/garner
+      -ldflags "-s -w -X main.version=${VERSION}" -o /out/garnerd ./cmd/garnerd
 # Turso unpacks its native library on first use, unless the file is already
 # there with the right checksum. Unpacking it here means the container
 # never writes executable code at runtime.
@@ -56,12 +56,12 @@ LABEL org.opencontainers.image.title="Garner" \
 # Turso's library needs libgcc_s.
 RUN apk add --no-cache libgcc
 COPY --from=ffprobe /src/ffprobe /usr/local/bin/ffprobe
-COPY --from=build /out/garner /usr/local/bin/garner
+COPY --from=build /out/garnerd /usr/local/bin/garnerd
 COPY --from=build /out/lib /usr/local/lib/garner
 ENV TURSO_GO_CACHE_DIR=/usr/local/lib/garner \
     GARNER_CONFIG=/config/garner.toml
 USER 1000:1000
 WORKDIR /data
 EXPOSE 7979
-ENTRYPOINT ["/usr/local/bin/garner"]
+ENTRYPOINT ["/usr/local/bin/garnerd"]
 CMD ["serve"]

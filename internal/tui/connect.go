@@ -240,7 +240,7 @@ func (s *connectScreen) view(width, height int) string {
 	b.WriteString(frame("connect", []string{
 		sBold.Render("1") + "  " + sNormal.Render("On the server, create a connection code for this machine:"),
 		"",
-		"     " + sCommand.Render(" garner token create "+tokenName()+" "),
+		"     " + sCommand.Render(" garnerd token create "+tokenName()+" "),
 		"",
 		sBold.Render("2") + "  " + sNormal.Render("Paste the code it prints here:"),
 		"",

@@ -4,8 +4,8 @@ root = "."
 tmp_dir = "bin/air"
 
 [build]
-cmd = "go build -o ./bin/garner ./cmd/garner"
-entrypoint = ["./bin/garner", "serve"]
+cmd = "go build -o ./bin/garnerd ./cmd/garnerd"
+entrypoint = ["./bin/garnerd", "serve"]
 # SQL migrations and corrections.toml are embedded, so they need a rebuild
 # too. After changing a query, run `mise run generate`; the generated Go
 # code then triggers the rebuild.
