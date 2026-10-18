@@ -37,15 +37,19 @@ RUN go mod download
 COPY cmd cmd
 COPY internal internal
 ARG VERSION=dev
+ARG COMMIT=
 # musl selects Turso's library for Alpine; timetzdata embeds time zones.
 RUN CGO_ENABLED=0 go build -tags musl,timetzdata -trimpath \
-      -ldflags "-s -w -X main.version=${VERSION}" -o /out/garnerd ./cmd/garnerd
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/garnerd ./cmd/garnerd
 
 FROM ${ALPINE}
 ARG VERSION=dev
+ARG COMMIT=
+# The source label links the image on ghcr.io to the repository.
 LABEL org.opencontainers.image.title="Garner" \
       org.opencontainers.image.source="https://github.com/trucke/garner" \
-      org.opencontainers.image.version="${VERSION}"
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}"
 # Turso's library needs libgcc_s.
 RUN apk add --no-cache libgcc
 COPY --from=ffprobe /src/ffprobe /usr/local/bin/ffprobe

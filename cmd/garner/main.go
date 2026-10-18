@@ -18,8 +18,9 @@ import (
 	"github.com/trucke/garner/internal/tui"
 )
 
-// version is set at build time with -ldflags "-X main.version=…".
-var version string
+// version and commit are set for a release with -ldflags "-X
+// main.version=… -X main.commit=…".
+var version, commit string
 
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -28,7 +29,7 @@ func main() {
 			"$GARNER_CONNECTION or ~/.config/garner/connection.\n\nUsage: garner [--version]\n")
 	}
 	flag.Parse()
-	v := buildinfo.Version(version)
+	v := buildinfo.Version(version, commit)
 	switch {
 	case *showVersion:
 		fmt.Println("garner", v)

@@ -3,12 +3,16 @@ package buildinfo
 
 import "runtime/debug"
 
-// Version is set, when the build set it with -ldflags "-X main.version=…";
-// otherwise the module version, or "dev-" and the commit of a build from a
-// checkout.
-func Version(set string) string {
-	if set != "" {
-		return set
+// Version names a build: the release, such as "v0.1.0 (1cfab60)", when the
+// build set version and commit with -ldflags "-X main.version=… -X
+// main.commit=…"; otherwise the module version, or "dev-" and the commit
+// of a build from a checkout.
+func Version(version, commit string) string {
+	if version != "" {
+		if len(commit) >= 7 {
+			return version + " (" + commit[:7] + ")"
+		}
+		return version
 	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok {

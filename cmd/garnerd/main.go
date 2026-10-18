@@ -8,9 +8,10 @@ import (
 	"github.com/trucke/garner/internal/buildinfo"
 )
 
-// version is set at build time with -ldflags "-X main.version=…".
-var version string
+// version and commit are set for a release with -ldflags "-X
+// main.version=… -X main.commit=…".
+var version, commit string
 
 func main() {
-	os.Exit(execute(buildinfo.Version(version)))
+	os.Exit(execute(buildinfo.Version(version, commit)))
 }
