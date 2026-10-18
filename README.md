@@ -31,6 +31,8 @@ The development stack downloads from its own Usenet account with 8 connections. 
 
 The second indexer allows API use from two devices: production Prowlarr and the development stack's Prowlarr. Never set up a third Prowlarr with it.
 
+`mise run check` checks the working copy: formatting, vet, the generated database code and known vulnerabilities; the tests on macOS and again on Linux in the Go image the container is built with; and builds for Linux x86. A pass is recorded as a git note (`refs/notes/garner-check`) on the working copy's tree. The real-case tests from the private `garner-research` repository are not part of it; run them as `AGENTS.md` describes.
+
 `mise run build` builds both programs without starting the server. `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
 
 ## Container image

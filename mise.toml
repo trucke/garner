@@ -2,6 +2,7 @@
 go = "1.27.2"
 sqlc = "1.31.1"
 air = "1.67.4"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
 
 [tasks.build]
 description = "Build bin/garner (the terminal interface) and bin/garnerd (the server)"
@@ -20,6 +21,12 @@ run = "infisical run --env=dev --silent -- air"
 description = "Build bin/garner and open the terminal interface"
 raw = true
 run = ["go build -o bin/garner ./cmd/garner", "./bin/garner"]
+
+# Checks the working copy on macOS and on Linux and records a pass that
+# the production deploy requires.
+[tasks.check]
+description = "Check the working copy on macOS and Linux before committing or deploying"
+run = "bash tools/check.sh"
 
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"
