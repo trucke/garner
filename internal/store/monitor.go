@@ -9,28 +9,6 @@ import (
 	"github.com/trucke/garner/internal/store/query"
 )
 
-// Monitor modes: which of a show's episodes the monitor gets on its own.
-const (
-	MonitorNew = "new" // those airing from the day the mode was chosen
-	MonitorAll = "all" // every aired episode not in the library
-	MonitorOff = "off" // none; Garner searches when asked
-)
-
-// MonitorModes lists the modes, the default first.
-var MonitorModes = []string{MonitorNew, MonitorAll, MonitorOff}
-
-// Monitors reports whether the monitor gets the show's episode that airs on
-// aired, a date.
-func (sr Series) Monitors(aired string) bool {
-	switch sr.Monitor {
-	case MonitorAll:
-		return true
-	case MonitorNew:
-		return aired != "" && aired >= sr.MonitorSince.Local().Format(time.DateOnly)
-	}
-	return false
-}
-
 // SetMonitor changes which of a show's episodes the monitor gets. A mode
 // chosen anew counts from now.
 func (s *Store) SetMonitor(ctx context.Context, seriesID int64, mode string, now time.Time) error {

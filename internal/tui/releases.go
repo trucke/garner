@@ -16,9 +16,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/search"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Releases shows what a search found for one episode, ranked, with the
@@ -28,11 +27,11 @@ import (
 type (
 	releasesMsg struct {
 		from   *releasesScreen
-		search store.Search
+		search api.Search
 		err    error
 	}
 	startedMsg struct {
-		download store.Download
+		download api.Download
 		err      error
 	}
 )
@@ -43,8 +42,8 @@ type releasesScreen struct {
 	episode episodeRow
 	// season is set for a season search, which lists packs only.
 	season    int
-	search    *store.Search
-	progress  *search.Progress
+	search    *api.Search
+	progress  *api.SearchProgress
 	searching bool
 	// cancel stops the running search, so leaving the screen cannot let
 	// its late result replace a newer search's.
@@ -118,7 +117,7 @@ func (s *releasesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.search = &msg.search
-		if c := s.candidates(); len(c) > 0 && !slices.ContainsFunc(c, func(c store.Candidate) bool { return c.ID == s.selected }) {
+		if c := s.candidates(); len(c) > 0 && !slices.ContainsFunc(c, func(c api.Candidate) bool { return c.ID == s.selected }) {
 			s.selected, s.offset = c[0].ID, 0
 		}
 		if fresh {
@@ -143,7 +142,7 @@ func (s *releasesScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		return s, func() tea.Msg { return switchMsg{next} }
 	case eventMsg:
 		if msg.Type == "search.progress" {
-			var p search.Progress
+			var p api.SearchProgress
 			if json.Unmarshal(msg.Data, &p) != nil || !s.searching {
 				break
 			}
@@ -231,23 +230,23 @@ func (s *releasesScreen) download() tea.Cmd {
 
 // candidates are the releases in display order: accepted, then last
 // resorts, then rejected, each by rank.
-func (s *releasesScreen) candidates() []store.Candidate {
+func (s *releasesScreen) candidates() []api.Candidate {
 	if s.search == nil {
 		return nil
 	}
 	order := map[string]int{"accept": 0, "fallback": 1, "reject": 2}
 	c := slices.Clone(s.search.Candidates)
-	slices.SortStableFunc(c, func(a, b store.Candidate) int {
+	slices.SortStableFunc(c, func(a, b api.Candidate) int {
 		return cmp.Or(cmp.Compare(order[a.Verdict], order[b.Verdict]), cmp.Compare(a.Rank, b.Rank))
 	})
 	return c
 }
 
-func (s *releasesScreen) cursor() (store.Candidate, bool) {
+func (s *releasesScreen) cursor() (api.Candidate, bool) {
 	c := s.candidates()
-	i := slices.IndexFunc(c, func(c store.Candidate) bool { return c.ID == s.selected })
+	i := slices.IndexFunc(c, func(c api.Candidate) bool { return c.ID == s.selected })
 	if i < 0 {
-		return store.Candidate{}, false
+		return api.Candidate{}, false
 	}
 	return c[i], true
 }
@@ -257,7 +256,7 @@ func (s *releasesScreen) move(n int) {
 	if len(c) == 0 {
 		return
 	}
-	i := max(0, slices.IndexFunc(c, func(c store.Candidate) bool { return c.ID == s.selected }))
+	i := max(0, slices.IndexFunc(c, func(c api.Candidate) bool { return c.ID == s.selected }))
 	s.selected = c[min(len(c)-1, max(0, i+n))].ID
 }
 
@@ -311,7 +310,7 @@ func (s *releasesScreen) seasonFacts() []string {
 		}
 		missing := 0
 		for _, e := range se.episodes {
-			if e.status.State == store.EpisodeNotSearched || e.status.State == store.EpisodeWaiting {
+			if e.status.State == api.EpisodeNotSearched || e.status.State == api.EpisodeWaiting {
 				missing++
 			}
 		}
@@ -380,7 +379,7 @@ func (s *releasesScreen) table(width, height int) string {
 	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, tableWidth))) + "\n")
 
 	// Without an accepted release, the summary says what is missing.
-	usable := slices.ContainsFunc(all, func(c store.Candidate) bool { return c.Verdict == "accept" })
+	usable := slices.ContainsFunc(all, func(c api.Candidate) bool { return c.Verdict == "accept" })
 	var lines []string // rows and gaps, for scrolling
 	var keys []int64   // the candidate on each line, 0 for text
 	if !usable {
@@ -454,7 +453,7 @@ func (cols releaseCols) head() string {
 	return strings.TrimRight(line, " ")
 }
 
-func (cols releaseCols) row(c store.Candidate, width int, selected bool) string {
+func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 	bg := selectBg(selected)
 	glyph, glyphStyle := "✓", sMint
 	text := sNormal

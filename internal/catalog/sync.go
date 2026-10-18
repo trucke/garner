@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -142,15 +143,9 @@ func (c *Catalog) due(s store.Series, last time.Time, changed map[int64]bool) bo
 		s.XEMFetched == nil || time.Since(*s.XEMFetched) >= xemMaxAge
 }
 
-// Issue is a problem with imported data that needs a review.
-type Issue struct {
-	Kind    string `json:"kind"`
-	Message string `json:"message"`
-}
-
 // Issues checks a show's imported scene numbering against TVDB.
-func Issues(d store.SeriesData) []Issue {
-	out := []Issue{}
+func Issues(d store.SeriesData) []api.Issue {
+	out := []api.Issue{}
 	episodes := map[int64]store.Episode{}
 	for _, e := range d.Episodes {
 		episodes[e.ID] = e
@@ -159,7 +154,7 @@ func Issues(d store.SeriesData) []Issue {
 	var example store.SceneNumber
 	for _, n := range d.Scene {
 		if n.EpisodeID == nil {
-			out = append(out, Issue{Kind: "missing_episode", Message: fmt.Sprintf(
+			out = append(out, api.Issue{Kind: "missing_episode", Message: fmt.Sprintf(
 				"TheXEM maps scene S%02dE%02d to TVDB S%02dE%02d, which TVDB does not list",
 				n.Scene.Season, n.Scene.Number, n.TVDB.Season, n.TVDB.Number)})
 			continue
@@ -173,13 +168,13 @@ func Issues(d store.SeriesData) []Issue {
 	}
 	if absolute > 0 {
 		e := episodes[*example.EpisodeID]
-		out = append(out, Issue{Kind: "absolute_differs", Message: fmt.Sprintf(
+		out = append(out, api.Issue{Kind: "absolute_differs", Message: fmt.Sprintf(
 			"TheXEM's absolute numbers differ from TVDB's for %d episodes, first at S%02dE%02d (TheXEM %d, TVDB %d)",
 			absolute, example.TVDB.Season, example.TVDB.Number, example.TVDBAbsolute, e.Absolute)})
 	}
 	for _, t := range d.Titles {
 		if t.Source == "xem" && t.SceneSeason != nil && t.Season == nil {
-			out = append(out, Issue{Kind: "ambiguous_title", Message: fmt.Sprintf("title %q: %s", t.Title, t.Note)})
+			out = append(out, api.Issue{Kind: "ambiguous_title", Message: fmt.Sprintf("title %q: %s", t.Title, t.Note)})
 		}
 	}
 	return out

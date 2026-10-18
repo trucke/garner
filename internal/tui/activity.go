@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Activity lists what runs, what waits for the user, and what ended within
@@ -23,14 +23,14 @@ import (
 
 type activityMsg struct {
 	from  *activityScreen
-	items []store.ActivityItem
+	items []api.ActivityItem
 	err   error
 }
 
 type activityScreen struct {
 	sess  *session
 	back  screen
-	items []store.ActivityItem
+	items []api.ActivityItem
 	err   error
 	// A reload asked for while one runs follows it.
 	loading, dirty bool
@@ -77,7 +77,7 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.err = msg.err
 		default:
 			s.err, s.items = nil, msg.items
-			if rows := s.rows(); len(rows) > 0 && !slices.ContainsFunc(rows, func(it store.ActivityItem) bool { return it.Download.EpisodeID == s.selected }) {
+			if rows := s.rows(); len(rows) > 0 && !slices.ContainsFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }) {
 				s.selected, s.offset = rows[0].Download.EpisodeID, 0
 			}
 		}
@@ -86,7 +86,7 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.dirty = false
 			cmd = s.reload()
 		}
-		var waiting []*store.Download
+		var waiting []*api.Download
 		for i := range s.items {
 			waiting = append(waiting, &s.items[i].Download)
 		}
@@ -107,7 +107,7 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case client.EventConnected, "series.deleted":
 			return s, s.reload()
 		case "download.updated":
-			var d store.Download
+			var d api.Download
 			if json.Unmarshal(msg.Data, &d) != nil {
 				return s, s.reload()
 			}
@@ -128,8 +128,8 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 // apply takes a changed download from an event: progress changes in
 // place; anything else loads the list again, which may add or drop a row.
-func (s *activityScreen) apply(d store.Download) tea.Cmd {
-	i := slices.IndexFunc(s.items, func(it store.ActivityItem) bool { return it.Download.ID == d.ID })
+func (s *activityScreen) apply(d api.Download) tea.Cmd {
+	i := slices.IndexFunc(s.items, func(it api.ActivityItem) bool { return it.Download.ID == d.ID })
 	if i < 0 || s.items[i].Download.State != d.State || s.items[i].Download.Import.State != d.Import.State {
 		return s.reload()
 	}
@@ -204,32 +204,32 @@ func (s *activityScreen) answer(key string) tea.Cmd {
 
 // cancellable reports whether x can stop the download: SABnzbd queues or
 // downloads it.
-func cancellable(d store.Download) bool {
-	return d.State == store.Queued || d.State == store.Downloading
+func cancellable(d api.Download) bool {
+	return d.State == api.Queued || d.State == api.Downloading
 }
 
 // activityRank orders the rows: what needs the user first, then what runs,
 // furthest along first, then what ended.
 var activityRank = map[string]int{
-	store.EpisodeFailed: 0, store.EpisodeAttention: 1, store.EpisodeImporting: 2, store.EpisodeProcessing: 3,
-	store.EpisodeDownloading: 4, store.EpisodeImported: 5, store.Cancelled: 5,
+	api.EpisodeFailed: 0, api.EpisodeAttention: 1, api.EpisodeImporting: 2, api.EpisodeProcessing: 3,
+	api.EpisodeDownloading: 4, api.EpisodeImported: 5, api.Cancelled: 5,
 }
 
 // rows are the items in display order: by state, then the newest first.
-func (s *activityScreen) rows() []store.ActivityItem {
+func (s *activityScreen) rows() []api.ActivityItem {
 	rows := slices.Clone(s.items)
-	slices.SortStableFunc(rows, func(a, b store.ActivityItem) int {
+	slices.SortStableFunc(rows, func(a, b api.ActivityItem) int {
 		return cmp.Or(cmp.Compare(activityRank[downloadState(a.Download)], activityRank[downloadState(b.Download)]),
 			since(b.Download).Compare(since(a.Download)))
 	})
 	return rows
 }
 
-func (s *activityScreen) cursor() (store.ActivityItem, bool) {
+func (s *activityScreen) cursor() (api.ActivityItem, bool) {
 	rows := s.rows()
-	i := slices.IndexFunc(rows, func(it store.ActivityItem) bool { return it.Download.EpisodeID == s.selected })
+	i := slices.IndexFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected })
 	if i < 0 {
-		return store.ActivityItem{}, false
+		return api.ActivityItem{}, false
 	}
 	return rows[i], true
 }
@@ -239,34 +239,34 @@ func (s *activityScreen) move(n int) {
 	if len(rows) == 0 {
 		return
 	}
-	i := max(0, slices.IndexFunc(rows, func(it store.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
+	i := max(0, slices.IndexFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
 	s.selected = rows[min(len(rows)-1, max(0, i+n))].Download.EpisodeID
 }
 
 // downloadState is the state a download puts its episode in, as the
 // library names them; a cancelled one is "cancelled".
-func downloadState(d store.Download) string {
+func downloadState(d api.Download) string {
 	switch {
-	case d.State == store.Cancelled:
-		return store.Cancelled
-	case d.State == store.Processing:
-		return store.EpisodeProcessing
+	case d.State == api.Cancelled:
+		return api.Cancelled
+	case d.State == api.Processing:
+		return api.EpisodeProcessing
 	case d.Active():
-		return store.EpisodeDownloading
-	case d.State == store.Completed && (d.Import.State == "" || d.Import.State == store.ImportPending ||
-		d.Import.State == store.ImportMoving || d.Import.State == store.ImportScanning):
-		return store.EpisodeImporting
-	case d.Import.State == store.ImportUnverified:
-		return store.EpisodeAttention
-	case d.Import.State == store.ImportDone:
-		return store.EpisodeImported
+		return api.EpisodeDownloading
+	case d.State == api.Completed && (d.Import.State == "" || d.Import.State == api.ImportPending ||
+		d.Import.State == api.ImportMoving || d.Import.State == api.ImportScanning):
+		return api.EpisodeImporting
+	case d.Import.State == api.ImportUnverified:
+		return api.EpisodeAttention
+	case d.Import.State == api.ImportDone:
+		return api.EpisodeImported
 	}
-	return store.EpisodeFailed
+	return api.EpisodeFailed
 }
 
 // since is when the row's state began: when the download started while it
 // runs, otherwise when it last changed.
-func since(d store.Download) time.Time {
+func since(d api.Download) time.Time {
 	if d.Active() {
 		return d.Created
 	}
@@ -276,9 +276,9 @@ func since(d store.Download) time.Time {
 	return d.Updated
 }
 
-func itemShow(it store.ActivityItem) string { return clean(cmp.Or(it.SeriesNameEng, it.SeriesName)) }
+func itemShow(it api.ActivityItem) string { return clean(cmp.Or(it.SeriesNameEng, it.SeriesName)) }
 
-func itemEpisode(it store.ActivityItem) string {
+func itemEpisode(it api.ActivityItem) string {
 	return fmt.Sprintf("S%02dE%02d", it.Season, it.Number)
 }
 
@@ -312,7 +312,7 @@ func (s *activityScreen) view(width, height int) string {
 		b.WriteString("\n   " + sMuted.Render("Nothing running. Finished downloads stay here for a day."))
 	default:
 		page := max(3, height-activityTop-1)
-		cursor := max(0, slices.IndexFunc(rows, func(it store.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
+		cursor := max(0, slices.IndexFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
 		s.offset = min(max(s.offset, cursor-page+1), cursor)
 		now := time.Now()
 		for _, it := range rows[s.offset:min(len(rows), s.offset+page)] {
@@ -334,7 +334,7 @@ func (s *activityScreen) view(width, height int) string {
 	return page
 }
 
-func activityRow(it store.ActivityItem, selected bool, showWidth, stateWidth, width int, now time.Time) string {
+func activityRow(it api.ActivityItem, selected bool, showWidth, stateWidth, width int, now time.Time) string {
 	bg := selectBg(selected)
 	d := it.Download
 	state := downloadState(d)
@@ -342,11 +342,11 @@ func activityRow(it store.ActivityItem, selected bool, showWidth, stateWidth, wi
 	text := sNormal
 	var parts []part
 	switch state {
-	case store.EpisodeImported:
+	case api.EpisodeImported:
 		// Done: nothing to do, so subtle, as on the show screen.
 		text = sSubtle
 		parts = []part{{strings.TrimPrefix(clean(d.Tier)+" · "+size(d.Size), " · "), sSubtle}}
-	case store.Cancelled:
+	case api.Cancelled:
 		glyph, glyphStyle, text = "✗", sSubtle, sSubtle
 		parts = []part{{"cancelled", sSubtle}}
 	default:

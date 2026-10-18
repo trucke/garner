@@ -10,44 +10,6 @@ import (
 	"github.com/trucke/garner/internal/store/query"
 )
 
-// Import states.
-const (
-	ImportPending    = "pending"    // waiting for the file check
-	ImportMoving     = "moving"     // checked; files are being moved
-	ImportScanning   = "scanning"   // moved; waiting for Jellyfin to list them
-	ImportDone       = "imported"   // Jellyfin identified every file as intended
-	ImportUnverified = "unverified" // moved, but Jellyfin did not confirm the episodes
-	ImportRejected   = "rejected"   // the file check found the release bad
-	ImportFailed     = "failed"     // a path or permission problem; see the recovery step
-)
-
-// Import is the move of a finished download into the library.
-type Import struct {
-	State  string `json:"state,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	// Recovery says what to do when the import failed.
-	Recovery string       `json:"recovery,omitempty"`
-	Files    []ImportFile `json:"files"`
-	// Notes are worth showing, such as subtitle files moved or files left
-	// in SABnzbd's folder.
-	Notes   []string  `json:"notes"`
-	Updated time.Time `json:"updated,omitzero"`
-}
-
-// ImportFile is one video file of a download.
-type ImportFile struct {
-	// Source and Target are as Garner reaches them.
-	Source   string  `json:"source"`
-	Target   string  `json:"target,omitempty"`
-	Episodes []int64 `json:"episodes"`
-	Size     int64   `json:"size"`
-	// Check is the file check's outcome, as inspect.Result.
-	Check json.RawMessage `json:"check,omitempty"`
-	// Jellyfin is how Jellyfin identified the file.
-	Jellyfin string `json:"jellyfin,omitempty"`
-	Verified bool   `json:"verified,omitempty"`
-}
-
 // MarkImportPending queues a completed download for import, once.
 func (s *Store) MarkImportPending(ctx context.Context, downloadID int64, now time.Time) error {
 	return s.q.MarkImportPending(ctx, query.MarkImportPendingParams{ImportUpdatedAt: now.Unix(), ID: downloadID})

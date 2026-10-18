@@ -12,8 +12,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/server"
 )
 
 // About shows the versions, the connection, how the services the server
@@ -30,7 +30,7 @@ type (
 	}
 	aboutServicesMsg struct {
 		from     *aboutScreen
-		services server.Services
+		services api.Services
 		err      error
 	}
 )
@@ -41,7 +41,7 @@ type aboutScreen struct {
 	path     string // the connection file
 	version  string // of this program
 	status   *client.Status
-	services *server.Services
+	services *api.Services
 	err      error // of the services check
 	flash    flash
 	scroll   scroller

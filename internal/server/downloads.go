@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/sabnzbd"
@@ -40,28 +41,13 @@ func (s *Server) downloadRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
 }
 
-// EpisodeDetail is what Garner has of one episode: TVDB's description, its
-// file in the library, if any, and every download, newest first.
-type EpisodeDetail struct {
-	Overview         string           `json:"overview,omitempty"`
-	OverviewLanguage string           `json:"overview_language,omitempty"`
-	File             *EpisodeFile     `json:"file"`
-	Downloads        []store.Download `json:"downloads"`
-}
-
-// EpisodeFile is an episode's file, as Garner reaches it.
-type EpisodeFile struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
-}
-
 func (s *Server) handleGetEpisode(w http.ResponseWriter, r *http.Request) {
 	id, ok := episodeID(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	var out EpisodeDetail
+	var out api.EpisodeDetail
 	var err error
 	out.Overview, out.OverviewLanguage, err = s.store.EpisodeOverview(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -77,7 +63,7 @@ func (s *Server) handleGetEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found {
-		out.File = &EpisodeFile{Path: f.Path, Size: f.Size}
+		out.File = &api.EpisodeFile{Path: f.Path, Size: f.Size}
 	}
 	if out.Downloads, err = s.store.EpisodeDownloads(ctx, id); err != nil {
 		s.internalError(w, "list episode downloads", err)

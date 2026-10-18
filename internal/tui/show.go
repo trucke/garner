@@ -15,10 +15,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/monitor"
-	"github.com/trucke/garner/internal/server"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Show lists a show's episodes by season. Boards "Show" and "Show · 8
@@ -27,7 +25,7 @@ import (
 type (
 	seriesMsg struct {
 		from   *showScreen
-		detail server.SeriesDetail
+		detail api.SeriesDetail
 		err    error
 	}
 )
@@ -37,7 +35,7 @@ type showScreen struct {
 	back    screen
 	id      int64
 	name    string
-	detail  *server.SeriesDetail
+	detail  *api.SeriesDetail
 	err     error
 	loading bool
 	dirty   bool
@@ -68,9 +66,9 @@ type season struct {
 }
 
 type episodeRow struct {
-	episode store.Episode
-	pos     store.Position
-	status  store.EpisodeStatus
+	episode api.Episode
+	pos     api.Position
+	status  api.EpisodeStatus
 }
 
 func newShow(sess *session, back screen, id int64, name, message string) *showScreen {
@@ -119,7 +117,7 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, s.reload()
 		}
 		if s.detail != nil {
-			var waiting []*store.Download
+			var waiting []*api.Download
 			for _, st := range s.detail.States {
 				waiting = append(waiting, st.Download)
 			}
@@ -130,7 +128,7 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case client.EventConnected, "search.finished", "series.updated":
 			return s, s.reload()
 		case "download.updated":
-			var d store.Download
+			var d api.Download
 			if json.Unmarshal(msg.Data, &d) != nil || s.holds(d.EpisodeID) {
 				return s, s.reload()
 			}
@@ -140,7 +138,7 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 				return s, func() tea.Msg { return switchMsg{s.back} }
 			}
 		case "series.search":
-			var p monitor.ShowProgress
+			var p api.ShowProgress
 			if json.Unmarshal(msg.Data, &p) == nil {
 				return s, s.progressed(p)
 			}
@@ -164,10 +162,10 @@ func (s *showScreen) holds(episodeID int64) bool {
 	if s.detail == nil {
 		return true
 	}
-	return slices.ContainsFunc(s.detail.Episodes, func(e store.Episode) bool { return e.ID == episodeID })
+	return slices.ContainsFunc(s.detail.Episodes, func(e api.Episode) bool { return e.ID == episodeID })
 }
 
-func (s *showScreen) setDetail(d server.SeriesDetail) {
+func (s *showScreen) setDetail(d api.SeriesDetail) {
 	s.detail = &d
 	s.name = cmp.Or(d.Series.NameEng, d.Series.Name)
 	if s.sess.folded == nil {
@@ -199,7 +197,7 @@ func (s *showScreen) initialFolding() map[int]bool {
 	for _, se := range seasons {
 		for _, e := range se.episodes {
 			// Up to waiting and not searched: what needs something.
-			if r, ok := stateRank[e.status.State]; ok && r <= stateRank[store.EpisodeNotSearched] && r < rank {
+			if r, ok := stateRank[e.status.State]; ok && r <= stateRank[api.EpisodeNotSearched] && r < rank {
 				open, rank = se.number, r
 				s.cursor = rowKey{se.number, e.episode.ID}
 			}
@@ -220,7 +218,7 @@ func (s *showScreen) seasons() []season {
 	if s.detail == nil {
 		return nil
 	}
-	states := make(map[int64]store.EpisodeStatus, len(s.detail.States))
+	states := make(map[int64]api.EpisodeStatus, len(s.detail.States))
 	for _, st := range s.detail.States {
 		states[st.EpisodeID] = st
 	}
@@ -229,7 +227,7 @@ func (s *showScreen) seasons() []season {
 	for _, e := range s.detail.Episodes {
 		pos, ok := e.Numbers[order]
 		if !ok {
-			pos = store.Position{}
+			pos = api.Position{}
 		}
 		se := bySeason[pos.Season]
 		if se == nil {
@@ -494,9 +492,9 @@ func (s *showScreen) bottom() string {
 func (s *showScreen) open(e episodeRow) tea.Cmd {
 	var next screen
 	switch e.status.State {
-	case store.EpisodeNotSearched, store.EpisodeWaiting:
-		next = newReleases(s.sess, s, e, e.status.State == store.EpisodeNotSearched)
-	case store.EpisodeUpcoming:
+	case api.EpisodeNotSearched, api.EpisodeWaiting:
+		next = newReleases(s.sess, s, e, e.status.State == api.EpisodeNotSearched)
+	case api.EpisodeUpcoming:
 		s.flash.info(sMuted.Render(episodeLabel(e) + " has not aired yet; s searches anyway."))
 		return nil
 	default:
@@ -510,11 +508,11 @@ func (s *showScreen) open(e episodeRow) tea.Cmd {
 func (s *showScreen) enterLabel() string {
 	e, ok := s.cursorEpisode()
 	switch {
-	case !ok, e.status.State == store.EpisodeUpcoming:
+	case !ok, e.status.State == api.EpisodeUpcoming:
 		return ""
-	case e.status.State == store.EpisodeNotSearched:
+	case e.status.State == api.EpisodeNotSearched:
 		return "search"
-	case e.status.State == store.EpisodeWaiting:
+	case e.status.State == api.EpisodeWaiting:
 		return "releases"
 	}
 	return "details"
@@ -529,7 +527,7 @@ type showCols struct {
 
 const airedWidth = len("26 Sep 2026")
 
-func showColumns(d *server.SeriesDetail, width int) showCols {
+func showColumns(d *api.SeriesDetail, width int) showCols {
 	c := showCols{width: width, title: len("Title")}
 	for _, e := range d.Episodes {
 		c.title = max(c.title, ansi.StringWidth(clean(cmp.Or(e.NameEng, e.Name))))
@@ -576,10 +574,10 @@ func seasonCounts(se season) string {
 	imported, aired, toCome := 0, 0, 0
 	for _, e := range se.episodes {
 		switch {
-		case e.status.State == store.EpisodeImported:
+		case e.status.State == api.EpisodeImported:
 			imported++
 			aired++
-		case e.status.State == store.EpisodeUpcoming:
+		case e.status.State == api.EpisodeUpcoming:
 			toCome++
 		case e.status.State != "":
 			aired++
@@ -598,11 +596,11 @@ func seasonCounts(se season) string {
 	return s
 }
 
-func (c showCols) episodeRow(e episodeRow, d *server.SeriesDetail, now time.Time, selected bool) string {
+func (c showCols) episodeRow(e episodeRow, d *api.SeriesDetail, now time.Time, selected bool) string {
 	bg := selectBg(selected)
 	st := e.status
 	main := sNormal
-	if st.State == store.EpisodeImported || st.State == "" {
+	if st.State == api.EpisodeImported || st.State == "" {
 		main = sSubtle
 	}
 	glyph, glyphStyle := episodeGlyph(st.State)
@@ -623,10 +621,10 @@ func (c showCols) episodeRow(e episodeRow, d *server.SeriesDetail, now time.Time
 }
 
 // episodeParts describes an episode's state in the table.
-func episodeParts(e episodeRow, d *server.SeriesDetail, now time.Time) []part {
+func episodeParts(e episodeRow, d *api.SeriesDetail, now time.Time) []part {
 	st := e.status
 	switch st.State {
-	case store.EpisodeImported:
+	case api.EpisodeImported:
 		if st.Tier == "" {
 			return []part{{"in the library", sSubtle}}
 		}
@@ -635,7 +633,7 @@ func episodeParts(e episodeRow, d *server.SeriesDetail, now time.Time) []part {
 			return []part{{clean(st.Tier), sAmber}}
 		}
 		return []part{{clean(st.Tier), sSubtle}}
-	case store.EpisodeUpcoming:
+	case api.EpisodeUpcoming:
 		if e.episode.Aired == "" || e.episode.Aired != d.Summary.NextAired {
 			return nil
 		}
@@ -658,19 +656,19 @@ func episodeParts(e episodeRow, d *server.SeriesDetail, now time.Time) []part {
 
 func episodeGlyph(state string) (string, lipgloss.Style) {
 	switch state {
-	case store.EpisodeImported:
+	case api.EpisodeImported:
 		return "✓", sMint
-	case store.EpisodeFailed:
+	case api.EpisodeFailed:
 		return "✗", sRed
-	case store.EpisodeAttention:
+	case api.EpisodeAttention:
 		return "▲", sAmber
-	case store.EpisodeDownloading:
+	case api.EpisodeDownloading:
 		return "◐", sAmber
-	case store.EpisodeProcessing, store.EpisodeImporting:
+	case api.EpisodeProcessing, api.EpisodeImporting:
 		return "●", sAmber
-	case store.EpisodeWaiting, store.EpisodeNotSearched:
+	case api.EpisodeWaiting, api.EpisodeNotSearched:
 		return "○", sSubtle
-	case store.EpisodeUpcoming:
+	case api.EpisodeUpcoming:
 		return "·", sSubtle
 	}
 	return " ", sSubtle
@@ -687,8 +685,8 @@ func seasonGlyph(se season) (string, lipgloss.Style) {
 	}
 	if best == "" {
 		for _, e := range se.episodes {
-			if e.status.State == store.EpisodeImported {
-				return episodeGlyph(store.EpisodeImported)
+			if e.status.State == api.EpisodeImported {
+				return episodeGlyph(api.EpisodeImported)
 			}
 		}
 	}

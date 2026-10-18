@@ -3,7 +3,7 @@ package tui
 import (
 	"slices"
 
-	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/api"
 )
 
 // The monitor question asks which of a show's episodes Garner gets on its
@@ -11,9 +11,9 @@ import (
 
 // monitorModes are the choices, the default first, as the server names them.
 var monitorModes = []struct{ mode, label, means string }{
-	{store.MonitorNew, "new episodes", "those that air from today on"},
-	{store.MonitorAll, "all missing", "every aired episode not in the library"},
-	{store.MonitorOff, "off", "none; only what you search for"},
+	{api.MonitorNew, "new episodes", "those that air from today on"},
+	{api.MonitorAll, "all missing", "every aired episode not in the library"},
+	{api.MonitorOff, "off", "none; only what you search for"},
 }
 
 // monitorLabel names a show's mode, such as "new episodes".

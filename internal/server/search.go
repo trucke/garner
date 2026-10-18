@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/prowlarr"
@@ -34,7 +35,7 @@ func (s *Server) setupSearch() error {
 	}
 	s.prowlarr = prowlarr.New(p.URL, p.APIKey.Value(), client)
 	svc := search.New(s.store, s.prowlarr, rules, s.log)
-	svc.OnProgress = func(p search.Progress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
+	svc.OnProgress = func(p api.SearchProgress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
 	svc.OnDone = func(sr store.Search) {
 		s.events.publish(Event{Type: "search.finished", Data: map[string]any{"episode_id": sr.EpisodeID, "outcome": sr.Outcome}})
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/store"
 )
@@ -31,17 +32,17 @@ func TestServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Server{cfg: &config.Config{Library: config.Library{TV: "/media/tv"}}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
-	api := httptest.NewServer(s.Routes())
-	defer api.Close()
+	srv := httptest.NewServer(s.Routes())
+	defer srv.Close()
 	token, _ := st.CreateToken(ctx, "test")
-	req, _ := http.NewRequest(http.MethodGet, api.URL+"/api/v1/status/services", nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/status/services", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	var got Services
+	var got api.Services
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}

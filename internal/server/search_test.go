@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/prowlarr"
@@ -76,7 +77,7 @@ func TestSearchAndDownload(t *testing.T) {
 	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
 	s.search = search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, log)
 	var progress []string
-	s.search.OnProgress = func(p search.Progress) {
+	s.search.OnProgress = func(p api.SearchProgress) {
 		var states []string
 		for _, ix := range p.Indexers {
 			states = append(states, fmt.Sprintf("%s:%v:%d", ix.Name, ix.Done, ix.Results))

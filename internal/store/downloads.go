@@ -20,66 +20,6 @@ var (
 	ErrNotRunning = errors.New("the download is no longer running")
 )
 
-// Download states.
-const (
-	Submitting  = "submitting" // recorded, SABnzbd not yet confirmed
-	Queued      = "queued"
-	Downloading = "downloading"
-	Processing  = "processing" // SABnzbd repairs, unpacks or moves the files
-	Completed   = "completed"
-	Failed      = "failed"
-	Cancelled   = "cancelled" // stopped on request; not a failure of the release
-)
-
-// Download is a release handed to SABnzbd.
-type Download struct {
-	ID        int64  `json:"id"`
-	EpisodeID int64  `json:"episode_id"`
-	Title     string `json:"title"`
-	Indexer   string `json:"indexer"`
-	// Link holds Prowlarr's API key; it is never sent to clients.
-	Link    string `json:"-"`
-	Size    int64  `json:"size"`
-	Verdict string `json:"verdict"`
-	Tier    string `json:"tier,omitempty"`
-	// Reasons and Decisive are the release's search result: why it was
-	// chosen, the first Decisive of them deciding.
-	Reasons  []string `json:"reasons"`
-	Decisive int      `json:"decisive"`
-	Manual   bool     `json:"manual"`
-	State    string   `json:"state"`
-	// Detail is SABnzbd's own status or running step, such as "Repairing".
-	Detail   string  `json:"detail,omitempty"`
-	JobID    string  `json:"job_id,omitempty"`
-	Progress float64 `json:"progress"`
-	TimeLeft string  `json:"time_left,omitempty"`
-	// Storage is where SABnzbd put the files, as SABnzbd sees its disk.
-	Storage string `json:"storage,omitempty"`
-	Failure string `json:"failure,omitempty"`
-	// Retryable means another release may succeed where this one failed.
-	Retryable bool      `json:"retryable,omitempty"`
-	Stages    []Stage   `json:"stages"`
-	Created   time.Time `json:"created"`
-	Updated   time.Time `json:"updated"`
-	// Import is the move of the finished files into the library.
-	Import Import `json:"import"`
-}
-
-// Stage is one of SABnzbd's post-processing steps and what happened in it.
-type Stage struct {
-	Name    string   `json:"name"`
-	Actions []string `json:"actions"`
-}
-
-// Active reports whether the download is still running.
-func (d Download) Active() bool {
-	switch d.State {
-	case Submitting, Queued, Downloading, Processing:
-		return true
-	}
-	return false
-}
-
 // StartDownload records a download before SABnzbd is asked, refusing a
 // second running download for the same episode.
 func (s *Store) StartDownload(ctx context.Context, d Download, now time.Time) (Download, error) {
@@ -180,18 +120,6 @@ func (s *Store) Downloads(ctx context.Context, limit int) ([]Download, error) {
 		return nil, err
 	}
 	return downloadsFromRows(rows)
-}
-
-// ActivityItem is an episode's latest download with its show and its
-// place in the show's default order; Season and Number are 0 when the order
-// does not place it.
-type ActivityItem struct {
-	Download      Download `json:"download"`
-	SeriesID      int64    `json:"series_id"`
-	SeriesName    string   `json:"series_name"`
-	SeriesNameEng string   `json:"series_name_eng,omitempty"`
-	Season        int      `json:"season"`
-	Number        int      `json:"number"`
 }
 
 // Activity lists each episode's latest download that runs, waits for the

@@ -20,7 +20,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/text/language"
 
-	"github.com/trucke/garner/internal/catalog"
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
 )
 
@@ -34,7 +34,7 @@ type (
 	searchDueMsg struct{ seq int }
 	searchMsg    struct {
 		query string
-		page  catalog.SearchPage
+		page  api.SearchPage
 		err   error
 	}
 	// addedMsg returns to the library with the new show selected.
@@ -52,13 +52,13 @@ type addScreen struct {
 	seq       int    // counts edits, so only the last pause searches
 	running   string // the query being searched
 	shown     string // the query the results belong to
-	page      catalog.SearchPage
+	page      api.SearchPage
 	err       error
 	selected  int64
 	offset    int
 	rowsShown int
-	adding    string                // the show being added
-	asking    *catalog.SearchResult // the show the monitor question is about
+	adding    string            // the show being added
+	asking    *api.SearchResult // the show the monitor question is about
 	choice    int
 	flash     flash
 }
@@ -192,10 +192,10 @@ func (s *addScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 	return s, tea.Batch(cmd, tea.Tick(searchPause, func(time.Time) tea.Msg { return searchDueMsg{seq} }))
 }
 
-func (s *addScreen) cursorResult() (catalog.SearchResult, bool) {
-	i := slices.IndexFunc(s.page.Results, func(r catalog.SearchResult) bool { return r.ID == s.selected })
+func (s *addScreen) cursorResult() (api.SearchResult, bool) {
+	i := slices.IndexFunc(s.page.Results, func(r api.SearchResult) bool { return r.ID == s.selected })
 	if i < 0 {
-		return catalog.SearchResult{}, false
+		return api.SearchResult{}, false
 	}
 	return s.page.Results[i], true
 }
@@ -205,7 +205,7 @@ func (s *addScreen) move(n int) {
 	if len(rs) == 0 {
 		return
 	}
-	i := max(0, slices.IndexFunc(rs, func(r catalog.SearchResult) bool { return r.ID == s.selected }))
+	i := max(0, slices.IndexFunc(rs, func(r api.SearchResult) bool { return r.ID == s.selected }))
 	s.selected = rs[min(len(rs)-1, max(0, i+n))].ID
 }
 
@@ -244,7 +244,7 @@ func (s *addScreen) view(width, height int) string {
 			more = 2
 		}
 		s.rowsShown = max(1, height-addTop-1-more)
-		cursor := max(0, slices.IndexFunc(rs, func(r catalog.SearchResult) bool { return r.ID == s.selected }))
+		cursor := max(0, slices.IndexFunc(rs, func(r api.SearchResult) bool { return r.ID == s.selected }))
 		s.offset = min(max(s.offset, cursor-s.rowsShown+1), cursor)
 		for i := s.offset; i < min(len(rs), s.offset+s.rowsShown); i++ {
 			b.WriteString(cols.row(rs[i], current && i == cursor) + "\n")
@@ -299,7 +299,7 @@ type searchCols struct {
 	width, name, network int
 }
 
-func searchColumns(rs []catalog.SearchResult, width int) searchCols {
+func searchColumns(rs []api.SearchResult, width int) searchCols {
 	c := searchCols{width: width, name: len("Name"), network: len("Network")}
 	for _, r := range rs {
 		c.name = max(c.name, ansi.StringWidth(resultName(r)))
@@ -318,7 +318,7 @@ func (c searchCols) head() string {
 		sSubtle.Render(fit("Network", c.network, false)) + "   " + sSubtle.Render(fit("Lang", 4, false)) + "   " + sSubtle.Render("Status")
 }
 
-func (c searchCols) row(r catalog.SearchResult, selected bool) string {
+func (c searchCols) row(r api.SearchResult, selected bool) string {
 	bg := func(st lipgloss.Style) lipgloss.Style {
 		if selected {
 			return st.Background(cSelect)
@@ -343,7 +343,7 @@ func (c searchCols) row(r catalog.SearchResult, selected bool) string {
 	return line
 }
 
-func resultName(r catalog.SearchResult) string { return clean(cmp.Or(r.NameEng, r.Name)) }
+func resultName(r api.SearchResult) string { return clean(cmp.Or(r.NameEng, r.Name)) }
 
 // langCode turns TVDB's three-letter language codes into two letters: jpn
 // becomes JA.
@@ -358,8 +358,8 @@ func langCode(code string) string {
 type previewScreen struct {
 	sess    *session
 	back    screen
-	result  catalog.SearchResult
-	preview *catalog.Preview
+	result  api.SearchResult
+	preview *api.Preview
 	err     error
 	adding  bool
 	asking  bool // the monitor question is open
@@ -373,7 +373,7 @@ type (
 	// was left must not show on the next one.
 	previewMsg struct {
 		from    *previewScreen
-		preview catalog.Preview
+		preview api.Preview
 		err     error
 	}
 	// addResultMsg answers adding a show, from the list or its details.
@@ -385,7 +385,7 @@ type (
 	openedMsg struct{ err error }
 )
 
-func newPreview(sess *session, back screen, r catalog.SearchResult) *previewScreen {
+func newPreview(sess *session, back screen, r api.SearchResult) *previewScreen {
 	return &previewScreen{sess: sess, back: back, result: r}
 }
 
@@ -557,7 +557,7 @@ type tvdbFacts struct {
 	url                                    string
 }
 
-func previewFacts(p *catalog.Preview) tvdbFacts {
+func previewFacts(p *api.Preview) tvdbFacts {
 	return tvdbFacts{network: p.Network, status: p.Status, firstAired: p.FirstAired, lastAired: p.LastAired,
 		episodes: p.Episodes, seasons: p.Seasons, runtime: p.Runtime, orders: p.Orders, url: p.URL}
 }
@@ -593,7 +593,7 @@ func tvdbLines(f tvdbFacts, inner int) []string {
 
 // garnerLines say how Garner will treat the show's releases. The sentences
 // come from the server.
-func garnerLines(p *catalog.Preview, inner int) []string {
+func garnerLines(p *api.Preview, inner int) []string {
 	var lines []string
 	lines = append(lines, field("Rules", clean(p.Rules), sNormal, inner)...)
 	lines = append(lines, field("Original", clean(p.LanguageName), sNormal, inner)...)

@@ -93,20 +93,6 @@ func New(st *store.Store, tvdb *TVDB, xem *XEM, log *slog.Logger) (*Catalog, err
 	return &Catalog{store: st, tvdb: tvdb, xem: xem, log: log, corrections: c}, nil
 }
 
-// SearchResult is a show TVDB found.
-type SearchResult struct {
-	ID       int64  `json:"id"`
-	Slug     string `json:"slug,omitempty"`
-	Name     string `json:"name"`
-	NameEng  string `json:"name_eng,omitempty"`
-	NameDeu  string `json:"name_deu,omitempty"`
-	Year     int    `json:"year,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Language string `json:"language,omitempty"`
-	Network  string `json:"network,omitempty"`
-	Added    bool   `json:"added"`
-}
-
 // Add loads a show into the catalogue with the monitor mode, such as
 // store.MonitorNew.
 func (c *Catalog) Add(ctx context.Context, id int64, monitor string) error {

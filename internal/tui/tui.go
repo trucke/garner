@@ -12,9 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
 	"github.com/trucke/garner/internal/connect"
-	"github.com/trucke/garner/internal/store"
 )
 
 // screen is one full screen. The app owns the terminal size, the session
@@ -33,7 +33,7 @@ type session struct {
 	stop    context.CancelFunc
 	offline bool
 	// shows is the library as last loaded, for the activity on every screen.
-	shows []store.Show
+	shows []api.Show
 	// folded remembers each show's folded seasons.
 	folded map[int64]map[int]bool
 }
@@ -303,9 +303,9 @@ func activity(sess *session) string {
 			parts = append(parts, style.Render(glyph+" "+strconv.Itoa(n)+" "+label))
 		}
 	}
-	add(counts[store.EpisodeDownloading]+counts[store.EpisodeProcessing], "◐", "downloading", sAmber)
-	add(counts[store.EpisodeImporting], "●", "confirming", sAmber)
-	add(counts[store.EpisodeAttention], "▲", "needs you", sAmber)
-	add(counts[store.EpisodeFailed], "✗", "failed", sRed)
+	add(counts[api.EpisodeDownloading]+counts[api.EpisodeProcessing], "◐", "downloading", sAmber)
+	add(counts[api.EpisodeImporting], "●", "confirming", sAmber)
+	add(counts[api.EpisodeAttention], "▲", "needs you", sAmber)
+	add(counts[api.EpisodeFailed], "✗", "failed", sRed)
 	return strings.Join(parts, sMuted.Render(" · "))
 }

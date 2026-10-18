@@ -10,49 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/importer"
-	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
-
-// SeriesDetail is a show with everything Garner knows about it, the
-// problems found in imported data, and what Garner has of each episode.
-type SeriesDetail struct {
-	store.SeriesData
-	Issues []catalog.Issue `json:"issues"`
-	// Summary counts the show's episodes as the library does.
-	Summary store.Show `json:"summary"`
-	// States holds every episode's state; Best lists the tiers no upgrade
-	// can beat, so clients can mark files below them.
-	States []store.EpisodeStatus `json:"states"`
-	Best   string                `json:"best_tier"`
-	// Folder is where new files of the show go; URL is its TVDB page.
-	Folder string `json:"folder,omitempty"`
-	URL    string `json:"url"`
-	// Rules describes the profile; Profiles lists the profiles to choose
-	// from with their rules.
-	Rules    string        `json:"rules"`
-	Profiles []ProfileInfo `json:"profiles"`
-	// LanguageName and LanguageNote say what the original language means
-	// for the audio.
-	LanguageName string `json:"language_name"`
-	LanguageNote string `json:"language_note"`
-	// MonitorOff says why the monitor does not run, whatever the show's
-	// mode; empty when it runs.
-	MonitorOff string `json:"monitor_off,omitempty"`
-	// Searching is the search of every missing episode, while it is asked
-	// for or runs.
-	Searching *monitor.ShowProgress `json:"searching,omitempty"`
-}
-
-// ProfileInfo names a profile and its rules.
-type ProfileInfo struct {
-	Name  string `json:"name"`
-	Rules string `json:"rules"`
-}
 
 func (s *Server) catalogRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/search", s.auth(s.needCatalog(s.handleSearch)))
@@ -201,13 +165,13 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 	}
 	profile := selection.ProfileNamed(d.Series.Profile)
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
-	detail := SeriesDetail{
+	detail := api.SeriesDetail{
 		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
 		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
 		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(),
 	}
 	for _, p := range []selection.Profile{selection.Anime, selection.TV} {
-		detail.Profiles = append(detail.Profiles, ProfileInfo{Name: p.Name, Rules: p.Describe()})
+		detail.Profiles = append(detail.Profiles, api.ProfileInfo{Name: p.Name, Rules: p.Describe()})
 	}
 	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series, profile); err == nil {
 		detail.Folder = folder

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/release"
@@ -31,24 +32,7 @@ type Service struct {
 	OnDone func(store.Search)
 	// OnProgress is called when a search starts asking the indexers and
 	// after each of them answered.
-	OnProgress func(Progress)
-}
-
-// Progress is a running search: every indexer, and what it answered so far.
-// A season search sets SeriesID and Season instead of EpisodeID.
-type Progress struct {
-	EpisodeID int64             `json:"episode_id"`
-	SeriesID  int64             `json:"series_id,omitempty"`
-	Season    int               `json:"season,omitempty"`
-	Indexers  []IndexerProgress `json:"indexers"`
-}
-
-// IndexerProgress is one indexer of a running search.
-type IndexerProgress struct {
-	Name    string `json:"name"`
-	Done    bool   `json:"done"`
-	Results int    `json:"results"`
-	Error   string `json:"error,omitempty"`
+	OnProgress func(api.SearchProgress)
 }
 
 // New returns a search service. rules may be nil.
@@ -97,9 +81,9 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	if err != nil {
 		sr.Indexers = append(sr.Indexers, store.SearchIndexer{Name: "Prowlarr", Error: err.Error()})
 	}
-	progress := Progress{EpisodeID: episodeID, Indexers: make([]IndexerProgress, len(indexers))}
+	progress := api.SearchProgress{EpisodeID: episodeID, Indexers: make([]api.IndexerProgress, len(indexers))}
 	for i, ix := range indexers {
-		progress.Indexers[i] = IndexerProgress{Name: ix.Name}
+		progress.Indexers[i] = api.IndexerProgress{Name: ix.Name}
 	}
 	s.report(progress)
 	for i, ix := range indexers {
@@ -113,7 +97,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 			s.log.Warn("indexer search failed", "indexer", ix.Name, "episode", episodeID, "err", err)
 		}
 		sr.Indexers = append(sr.Indexers, res)
-		progress.Indexers[i] = IndexerProgress{Name: ix.Name, Done: true, Results: res.Results, Error: res.Error}
+		progress.Indexers[i] = api.IndexerProgress{Name: ix.Name, Done: true, Results: res.Results, Error: res.Error}
 		s.report(progress)
 		for _, r := range results {
 			claims := release.Parse(r.Title)
@@ -194,9 +178,9 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 	if err != nil {
 		sr.Indexers = append(sr.Indexers, store.SearchIndexer{Name: "Prowlarr", Error: err.Error()})
 	}
-	progress := Progress{SeriesID: seriesID, Season: season, Indexers: make([]IndexerProgress, len(indexers))}
+	progress := api.SearchProgress{SeriesID: seriesID, Season: season, Indexers: make([]api.IndexerProgress, len(indexers))}
 	for i, ix := range indexers {
-		progress.Indexers[i] = IndexerProgress{Name: ix.Name}
+		progress.Indexers[i] = api.IndexerProgress{Name: ix.Name}
 	}
 	s.report(progress)
 	for i, ix := range indexers {
@@ -225,7 +209,7 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 			s.log.Warn("indexer search failed", "indexer", ix.Name, "series", seriesID, "season", season, "err", err)
 		}
 		sr.Indexers = append(sr.Indexers, res)
-		progress.Indexers[i] = IndexerProgress{Name: ix.Name, Done: true, Results: res.Results, Error: res.Error}
+		progress.Indexers[i] = api.IndexerProgress{Name: ix.Name, Done: true, Results: res.Results, Error: res.Error}
 		s.report(progress)
 		for _, r := range results {
 			claims := release.Parse(r.Title)
@@ -307,7 +291,7 @@ func missing(d store.SeriesData, episodes []int64, files map[int64]string, now t
 }
 
 // report passes a copy on, so the next answer cannot change what was sent.
-func (s *Service) report(p Progress) {
+func (s *Service) report(p api.SearchProgress) {
 	if s.OnProgress != nil {
 		p.Indexers = slices.Clone(p.Indexers)
 		s.OnProgress(p)

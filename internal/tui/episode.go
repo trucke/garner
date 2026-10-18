@@ -15,10 +15,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/inspect"
-	"github.com/trucke/garner/internal/server"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Episode follows one episode through Garner: its release, the six steps
@@ -28,15 +26,15 @@ import (
 type (
 	episodeMsg struct {
 		from   *episodeScreen
-		detail server.EpisodeDetail
+		detail api.EpisodeDetail
 		err    error
 	}
 	cancelledMsg struct {
-		download store.Download
+		download api.Download
 		err      error
 	}
 	retriedMsg struct {
-		download store.Download
+		download api.Download
 		err      error
 	}
 )
@@ -46,7 +44,7 @@ type episodeScreen struct {
 	show   *showScreen
 	back   screen // where esc goes: the show, or the activity
 	id     int64  // TVDB episode ID
-	detail *server.EpisodeDetail
+	detail *api.EpisodeDetail
 	err    error
 	// A reload asked for while one runs follows it.
 	loading, dirty bool
@@ -135,7 +133,7 @@ func (s *episodeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case client.EventConnected:
 			cmd = s.reload()
 		case "download.updated":
-			var d store.Download
+			var d api.Download
 			if json.Unmarshal(msg.Data, &d) == nil && d.EpisodeID == s.id {
 				cmd = s.apply(d)
 			}
@@ -162,12 +160,12 @@ func (s *episodeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 // apply takes a changed download from an event. Progress changes in place;
 // a new attempt or a new step loads the episode again, for its file.
-func (s *episodeScreen) apply(d store.Download) tea.Cmd {
+func (s *episodeScreen) apply(d api.Download) tea.Cmd {
 	if s.detail == nil {
 		return s.reload()
 	}
 	list := s.detail.Downloads
-	i := slices.IndexFunc(list, func(x store.Download) bool { return x.ID == d.ID })
+	i := slices.IndexFunc(list, func(x api.Download) bool { return x.ID == d.ID })
 	if i < 0 || list[i].State != d.State || list[i].Import.State != d.Import.State {
 		if i >= 0 {
 			list[i] = d
@@ -247,13 +245,13 @@ func (s *episodeScreen) againLabel() string {
 	switch {
 	case !ok:
 		return againSearch
-	case d.Import.State == store.ImportFailed, d.Import.State == store.ImportUnverified:
+	case d.Import.State == api.ImportFailed, d.Import.State == api.ImportUnverified:
 		return againImport
 	case d.Active():
 		return againReleases
-	case d.State == store.Completed && d.Import.State != store.ImportDone:
+	case d.State == api.Completed && d.Import.State != api.ImportDone:
 		return "" // being imported
-	case d.State == store.Completed:
+	case d.State == api.Completed:
 		return againSearch // a better release may have come out
 	}
 	return againReleases
@@ -281,17 +279,17 @@ func (s *episodeScreen) again() tea.Cmd {
 }
 
 // latest is the episode's newest download.
-func (s *episodeScreen) latest() (store.Download, bool) {
+func (s *episodeScreen) latest() (api.Download, bool) {
 	if s.detail == nil || len(s.detail.Downloads) == 0 {
-		return store.Download{}, false
+		return api.Download{}, false
 	}
 	return s.detail.Downloads[0], true
 }
 
 // cancellable is the download x cancels: one SABnzbd queues or downloads.
-func (s *episodeScreen) cancellable() (store.Download, bool) {
+func (s *episodeScreen) cancellable() (api.Download, bool) {
 	d, ok := s.latest()
-	return d, ok && (d.State == store.Queued || d.State == store.Downloading)
+	return d, ok && (d.State == api.Queued || d.State == api.Downloading)
 }
 
 // row is the episode as the show screen has it.
@@ -346,7 +344,7 @@ func (s *episodeScreen) view(width, height int) string {
 
 // releaseFacts is the release line: name, tier, size, indexer and which
 // attempt this is.
-func (s *episodeScreen) releaseFacts(d store.Download, w int) string {
+func (s *episodeScreen) releaseFacts(d api.Download, w int) string {
 	meta := []string{}
 	switch d.Verdict {
 	case "accept":
@@ -365,7 +363,7 @@ func (s *episodeScreen) releaseFacts(d store.Download, w int) string {
 	// before this one.
 	attempt := 1
 	for _, e := range s.detail.Downloads[1:] {
-		if e.State != store.Failed && e.State != store.Cancelled {
+		if e.State != api.Failed && e.State != api.Cancelled {
 			break
 		}
 		attempt++
@@ -386,13 +384,13 @@ func (s *episodeScreen) releaseFacts(d store.Download, w int) string {
 func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 	var out []string
 	d, ok := s.latest()
-	if ok && (d.Import.State == store.ImportFailed || d.Import.State == store.ImportUnverified) && d.Import.Recovery != "" {
+	if ok && (d.Import.State == api.ImportFailed || d.Import.State == api.ImportUnverified) && d.Import.Recovery != "" {
 		out = append(out, frame("to fix", []string{sNormal.Render(clean(d.Import.Recovery))}, w))
 	}
 	if ok && d.Active() && len(d.Reasons) > 0 {
 		out = append(out, frame("why this release", reasonLines(d.Verdict, d.Reasons, d.Decisive, w-8), w))
 	}
-	if f := s.detail.File; f != nil && (row.status.State == store.EpisodeImported || row.status.State == store.EpisodeAttention) {
+	if f := s.detail.File; f != nil && (row.status.State == api.EpisodeImported || row.status.State == api.EpisodeAttention) {
 		dir, name := filepath.Split(clean(f.Path))
 		var lines []string
 		for _, l := range wrapPath(dir, w-6) {
@@ -418,9 +416,9 @@ func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 			}
 			glyph, why := gFailed, clean(e.Failure)
 			switch e.State {
-			case store.Cancelled:
+			case api.Cancelled:
 				glyph, why = sSubtle.Render("✗"), "cancelled"
-			case store.Failed:
+			case api.Failed:
 			default:
 				continue // an earlier version that was imported, or one still running
 			}
@@ -506,7 +504,7 @@ func (st step) render(width int) string {
 // pipeline lays a download out as the six steps from SABnzbd to Jellyfin.
 // Times show where Garner records them: when it was sent, when SABnzbd
 // finished, and when the import ended or failed.
-func pipeline(d store.Download, now time.Time) []step {
+func pipeline(d api.Download, now time.Time) []step {
 	// Each step's name while pending, running and done.
 	names := [6][3]string{
 		{"Send to SABnzbd", "Sending to SABnzbd", "Sent to SABnzbd"},
@@ -533,59 +531,59 @@ func pipeline(d store.Download, now time.Time) []step {
 	im := d.Import
 
 	switch {
-	case d.State == store.Submitting:
+	case d.State == api.Submitting:
 		run(0, downloading, part{clean(d.Detail), sMuted})
 		return steps
-	case d.State == store.Failed && d.JobID == "":
+	case d.State == api.Failed && d.JobID == "":
 		fail(0, d.Failure, d.Updated)
 		return steps
 	}
 	done(0, d.Created)
 
 	switch {
-	case d.State == store.Queued, d.State == store.Downloading:
-		run(1, downloading, statusParts(store.EpisodeDownloading, &d, "", nil, 0, now)...)
+	case d.State == api.Queued, d.State == api.Downloading:
+		run(1, downloading, statusParts(api.EpisodeDownloading, &d, "", nil, 0, now)...)
 		steps[2].detail = []part{{"repair and unpack", sSubtle}}
 		return steps
-	case d.State == store.Cancelled:
+	case d.State == api.Cancelled:
 		steps[1] = step{glyph: sSubtle.Render("✗"), name: names[1][0], style: sNormal, detail: []part{{"cancelled", sMuted}}, at: d.Updated}
 		return steps
-	case d.State == store.Failed && im.State == "":
+	case d.State == api.Failed && im.State == "":
 		// SABnzbd's failure, in the download or its repair and unpack.
 		fail(1, d.Failure, d.Updated)
 		return steps
 	}
 	done(1, time.Time{}, part{size(d.Size), sMuted})
 
-	if d.State == store.Processing {
+	if d.State == api.Processing {
 		run(2, gWorking, part{clean(cmp.Or(d.Detail, "processing")), sMuted})
 		return steps
 	}
 	var finished time.Time
-	if d.State == store.Completed {
+	if d.State == api.Completed {
 		finished = d.Updated
 	}
 	done(2, finished, part{stageNames(d.Stages), sMuted})
 
 	switch {
-	case im.State == "", im.State == store.ImportPending:
+	case im.State == "", im.State == api.ImportPending:
 		run(3, gWorking, part{"checking the file", sMuted})
 		return steps
-	case im.State == store.ImportRejected:
+	case im.State == api.ImportRejected:
 		// The row names the step; the reason need not.
 		fail(3, strings.TrimPrefix(cmp.Or(d.Failure, im.Detail), "file check: "), d.Updated)
 		return steps
-	case im.State == store.ImportFailed && !planned(im.Files):
+	case im.State == api.ImportFailed && !planned(im.Files):
 		fail(3, im.Detail, im.Updated)
 		return steps
 	}
 	done(3, time.Time{}, checkParts(im.Files)...)
 
 	switch im.State {
-	case store.ImportMoving:
+	case api.ImportMoving:
 		run(4, gWorking, part{"moving the file", sMuted})
 		return steps
-	case store.ImportFailed:
+	case api.ImportFailed:
 		fail(4, im.Detail, im.Updated)
 		return steps
 	}
@@ -596,13 +594,13 @@ func pipeline(d store.Download, now time.Time) []step {
 	done(4, time.Time{}, part{target, sMuted})
 
 	switch im.State {
-	case store.ImportScanning:
+	case api.ImportScanning:
 		wait := "waiting for Jellyfin to list it"
 		if now.Sub(d.Updated) >= importSlowAfter {
 			wait += " · since " + when(d.Updated, now)
 		}
 		run(5, gWorking, part{wait, sMuted})
-	case store.ImportUnverified:
+	case api.ImportUnverified:
 		steps[5] = step{glyph: sAmber.Render("▲"), name: names[5][2], style: sNormal,
 			detail: []part{{clean(im.Detail), sAmber}}, at: im.Updated}
 	default:
@@ -613,13 +611,13 @@ func pipeline(d store.Download, now time.Time) []step {
 
 // planned reports whether the file check gave every file its place in the
 // library; a failure after that happened while moving.
-func planned(files []store.ImportFile) bool {
-	return len(files) > 0 && !slices.ContainsFunc(files, func(f store.ImportFile) bool { return f.Target == "" })
+func planned(files []api.ImportFile) bool {
+	return len(files) > 0 && !slices.ContainsFunc(files, func(f api.ImportFile) bool { return f.Target == "" })
 }
 
 // stageNames lists SABnzbd's post-processing steps, such as "repair ·
 // unpack".
-func stageNames(stages []store.Stage) string {
+func stageNames(stages []api.Stage) string {
 	var names []string
 	for _, st := range stages {
 		switch st.Name {
@@ -633,11 +631,11 @@ func stageNames(stages []store.Stage) string {
 
 // checkParts sums up the file check: "German, Japanese audio · 1080p · 24
 // min".
-func checkParts(files []store.ImportFile) []part {
+func checkParts(files []api.ImportFile) []part {
 	if len(files) == 0 || len(files[0].Check) == 0 {
 		return nil
 	}
-	var res inspect.Result
+	var res api.FileCheck
 	if json.Unmarshal(files[0].Check, &res) != nil {
 		return nil
 	}
@@ -653,7 +651,7 @@ func checkParts(files []store.ImportFile) []part {
 	}
 	var w, h int
 	if _, err := fmt.Sscanf(res.Resolution, "%dx%d", &w, &h); err == nil {
-		facts = append(facts, fmt.Sprintf("%dp", inspect.Class(w, h)))
+		facts = append(facts, fmt.Sprintf("%dp", api.ResolutionClass(w, h)))
 	}
 	if d, err := time.ParseDuration(res.Duration); err == nil {
 		facts = append(facts, fmt.Sprintf("%d min", int(d.Round(time.Minute).Minutes())))

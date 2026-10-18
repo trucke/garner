@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/release"
 )
 
@@ -132,21 +133,9 @@ type Expect struct {
 	Runtime time.Duration
 }
 
-// Result is the outcome of comparing a file with its release.
-type Result struct {
-	// Problems mean the release is not what it claimed; it is bad.
-	Problems []string `json:"problems,omitempty"`
-	// Notes are evidence worth showing.
-	Notes      []string `json:"notes,omitempty"`
-	Resolution string   `json:"resolution,omitempty"`
-	Audio      []string `json:"audio"`
-	Subtitles  []string `json:"subtitles"`
-	Duration   string   `json:"duration,omitempty"`
-}
-
 // Check compares a file with what its release promised.
-func Check(p Probe, e Expect) Result {
-	r := Result{Audio: languages(p.Audio), Subtitles: languages(p.Subtitles)}
+func Check(p Probe, e Expect) api.FileCheck {
+	r := api.FileCheck{Audio: languages(p.Audio), Subtitles: languages(p.Subtitles)}
 	if p.Duration > 0 {
 		r.Duration = p.Duration.Round(time.Second).String()
 	}
@@ -155,7 +144,7 @@ func Check(p Probe, e Expect) Result {
 		r.Problems = append(r.Problems, "the file has no video track")
 	} else {
 		v := p.Video[0]
-		class := Class(v.Width, v.Height)
+		class := api.ResolutionClass(v.Width, v.Height)
 		r.Resolution = fmt.Sprintf("%dx%d", v.Width, v.Height)
 		switch {
 		case class < 720:
@@ -167,7 +156,7 @@ func Check(p Probe, e Expect) Result {
 		}
 	}
 
-	r.checkAudio(p, e)
+	checkAudio(&r, p, e)
 
 	switch {
 	case e.Runtime == 0 || p.Duration == 0:
@@ -182,7 +171,7 @@ func Check(p Probe, e Expect) Result {
 	return r
 }
 
-func (r *Result) checkAudio(p Probe, e Expect) {
+func checkAudio(r *api.FileCheck, p Probe, e Expect) {
 	if len(p.Audio) == 0 {
 		r.Problems = append(r.Problems, "the file has no audio track")
 		return
@@ -209,20 +198,6 @@ func (r *Result) checkAudio(p Probe, e Expect) {
 	default:
 		r.Notes = append(r.Notes, fmt.Sprintf("no %s audio track; kept because the release was chosen by hand", strings.Join(wanted, " or ")))
 	}
-}
-
-// Class names a video's resolution as releases do, such as 1080 for
-// 1920x800: wide films are cropped in height.
-func Class(w, h int) int {
-	switch {
-	case w >= 3200 || h >= 1800:
-		return 2160
-	case w >= 1800 || h >= 1000:
-		return 1080
-	case w >= 1200 || h >= 700:
-		return 720
-	}
-	return h
 }
 
 // languages names each track's language, or "unknown" without a usable tag.

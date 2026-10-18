@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/search"
@@ -84,8 +85,8 @@ func TestSearchShow(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := New(st, search.New(st, prowlarr.New(srv.URL, "key", srv.Client()), nil, log), download.New(st, nil, "tv", log), false, nil, log)
-	var reports []ShowProgress
-	m.OnShowProgress = func(p ShowProgress) { reports = append(reports, p) }
+	var reports []api.ShowProgress
+	m.OnShowProgress = func(p api.ShowProgress) { reports = append(reports, p) }
 
 	if err := m.SearchShow(42); err != nil {
 		t.Fatal(err)

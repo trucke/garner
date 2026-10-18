@@ -12,17 +12,11 @@ import (
 
 	"golang.org/x/text/language"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/selection"
 )
-
-// SearchPage is what a search found: up to 50 shows, best first, and how
-// many TVDB knows in all.
-type SearchPage struct {
-	Results []SearchResult `json:"results"`
-	Total   int            `json:"total"`
-}
 
 // Search finds shows on TVDB and marks those already in the catalogue. The
 // text may also be a TVDB ID or a thetvdb.com link.
@@ -31,16 +25,16 @@ type SearchPage struct {
 // search for an anime's English name could put it 19th, behind shows whose
 // main names only look alike. Results whose name in any language contains
 // every search word therefore come first; otherwise TVDB's order stays.
-func (c *Catalog) Search(ctx context.Context, q string) (SearchPage, error) {
+func (c *Catalog) Search(ctx context.Context, q string) (api.SearchPage, error) {
 	ids, err := c.store.SeriesIDs(ctx)
 	if err != nil {
-		return SearchPage{}, err
+		return api.SearchPage{}, err
 	}
 	added := make(map[int64]bool, len(ids))
 	for _, id := range ids {
 		added[id] = true
 	}
-	page := SearchPage{Results: []SearchResult{}}
+	page := api.SearchPage{Results: []api.SearchResult{}}
 
 	id, slug, link := tvdbRef(q)
 	if slug != "" {
@@ -82,7 +76,7 @@ func (c *Catalog) Search(ctx context.Context, q string) (SearchPage, error) {
 		return page, err
 	}
 	words := match.Words(q)
-	var found []SearchResult
+	var found []api.SearchResult
 	var hits []bool
 	byID := len(page.Results) // the show the number named, if any
 	skipped := 0
@@ -93,7 +87,7 @@ func (c *Catalog) Search(ctx context.Context, q string) (SearchPage, error) {
 			continue
 		}
 		year, _ := strconv.Atoi(r.Year)
-		found = append(found, SearchResult{
+		found = append(found, api.SearchResult{
 			ID: rid, Slug: r.Slug, Name: r.Name, NameEng: r.Translations["eng"], NameDeu: r.Translations["deu"], Year: year,
 			Status: r.Status, Language: r.PrimaryLanguage, Network: r.Network, Added: added[rid],
 		})
@@ -175,46 +169,19 @@ func tvdbRef(q string) (id int64, slug string, link bool) {
 	return 0, "", false
 }
 
-// Preview is a show as TVDB describes it, for deciding whether to add it.
-type Preview struct {
-	SearchResult
-	// Type is the profile Garner will give the show: anime for TVDB's
-	// Anime genre, otherwise tv. Rules describes that profile's tiers.
-	Type  string `json:"type"`
-	Rules string `json:"rules"`
-	// LanguageName is the original language in English, such as
-	// "Japanese"; LanguageNote says what it means for the audio.
-	LanguageName string `json:"language_name"`
-	LanguageNote string `json:"language_note"`
-	FirstAired   string `json:"first_aired,omitempty"`
-	LastAired    string `json:"last_aired,omitempty"`
-	Runtime      int    `json:"runtime,omitempty"`
-	// Orders are TVDB's episode orders for the show, the default first,
-	// such as "Aired Order" and "Alternate Order (Netflix)".
-	Orders []string `json:"orders"`
-	// Overview is in English when TVDB has it, else German, else the
-	// original language; OverviewLanguage says which.
-	Overview         string `json:"overview,omitempty"`
-	OverviewLanguage string `json:"overview_language,omitempty"`
-	// Seasons and Episodes count the default order, specials excluded.
-	Seasons  int    `json:"seasons"`
-	Episodes int    `json:"episodes"`
-	URL      string `json:"url"`
-}
-
 // Preview describes a show on TVDB without adding it.
-func (c *Catalog) Preview(ctx context.Context, id int64) (Preview, error) {
+func (c *Catalog) Preview(ctx context.Context, id int64) (api.Preview, error) {
 	p, err := c.describe(ctx, id)
 	if err != nil {
-		return Preview{}, err
+		return api.Preview{}, err
 	}
 	p.Added, err = c.store.HasSeries(ctx, id)
 	if err != nil {
-		return Preview{}, err
+		return api.Preview{}, err
 	}
 	list, _, err := c.tvdb.episodes(ctx, id, p.order, "")
 	if err != nil {
-		return Preview{}, err
+		return api.Preview{}, err
 	}
 	seasons := map[int]bool{}
 	for _, e := range list {
@@ -228,7 +195,7 @@ func (c *Catalog) Preview(ctx context.Context, id int64) (Preview, error) {
 }
 
 type described struct {
-	Preview
+	api.Preview
 	order string // the default episode order
 }
 
@@ -243,8 +210,8 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 	}
 	year, _ := strconv.Atoi(s.Year)
 	original, _ := release.LanguageNamed(s.OriginalLanguage)
-	d := described{order: "official", Preview: Preview{
-		SearchResult: SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
+	d := described{order: "official", Preview: api.Preview{
+		SearchResult: api.SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
 		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
 		FirstAired: s.FirstAired, LastAired: s.LastAired, Runtime: s.AverageRuntime, Orders: []string{},
 		URL: SeriesURL(s.Slug, s.ID),

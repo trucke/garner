@@ -8,39 +8,27 @@ import (
 	"sync"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/store"
 )
 
 // ErrSearching means the show's missing episodes are being searched already.
 var ErrSearching = errors.New("Garner is already searching this show's missing episodes")
 
-// ShowProgress is a search of every missing episode of a show.
-type ShowProgress struct {
-	SeriesID int64 `json:"series_id"`
-	// Waiting is set until the search starts, after the searches before it.
-	Waiting bool `json:"waiting,omitempty"`
-	// Total counts the episodes to search, Done those searched so far, and
-	// Downloads the downloads they started.
-	Total     int  `json:"total"`
-	Done      int  `json:"done"`
-	Downloads int  `json:"downloads"`
-	Finished  bool `json:"finished,omitempty"`
-}
-
 // showQueue holds the shows asked for, in order, and their progress.
 type showQueue struct {
 	mu       sync.Mutex
 	order    []int64
-	progress map[int64]ShowProgress // queued or running
+	progress map[int64]api.ShowProgress // queued or running
 }
 
-func (q *showQueue) add(id int64) (ShowProgress, bool) {
+func (q *showQueue) add(id int64) (api.ShowProgress, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if _, ok := q.progress[id]; ok {
-		return ShowProgress{}, false
+		return api.ShowProgress{}, false
 	}
-	p := ShowProgress{SeriesID: id, Waiting: true}
+	p := api.ShowProgress{SeriesID: id, Waiting: true}
 	q.order, q.progress[id] = append(q.order, id), p
 	return p, true
 }
@@ -64,7 +52,7 @@ func (q *showQueue) waiting() bool {
 	return len(q.order) > 0
 }
 
-func (q *showQueue) set(p ShowProgress) {
+func (q *showQueue) set(p api.ShowProgress) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if p.Finished {
@@ -74,7 +62,7 @@ func (q *showQueue) set(p ShowProgress) {
 	}
 }
 
-func (q *showQueue) get(id int64) (ShowProgress, bool) {
+func (q *showQueue) get(id int64) (api.ShowProgress, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	p, ok := q.progress[id]
@@ -98,13 +86,13 @@ func (m *Service) SearchShow(seriesID int64) error {
 
 // ShowSearch returns the progress of a show's search, while it is asked
 // for or runs.
-func (m *Service) ShowSearch(seriesID int64) (ShowProgress, bool) { return m.shows.get(seriesID) }
+func (m *Service) ShowSearch(seriesID int64) (api.ShowProgress, bool) { return m.shows.get(seriesID) }
 
 // searchShow searches every missing episode of a show, oldest first, as
 // the monitor does: each search counts as the monitor's.
 func (m *Service) searchShow(ctx context.Context, seriesID int64) {
 	start := m.now()
-	p := ShowProgress{SeriesID: seriesID}
+	p := api.ShowProgress{SeriesID: seriesID}
 	defer func() {
 		p.Waiting, p.Finished = false, true
 		m.shows.set(p)
@@ -151,7 +139,7 @@ func (m *Service) searchShow(ctx context.Context, seriesID int64) {
 		"downloads", p.Downloads, "duration", m.now().Sub(start).Round(time.Second))
 }
 
-func (m *Service) report(p ShowProgress) {
+func (m *Service) report(p api.ShowProgress) {
 	if m.OnShowProgress != nil {
 		m.OnShowProgress(p)
 	}

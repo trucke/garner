@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/download"
@@ -208,7 +209,7 @@ func (s *Server) setupMonitor() {
 		rules = s.catalog.ServiceOrders
 	}
 	s.monitor = monitor.New(s.store, s.search, s.downloads, s.monitoring(), rules, s.log)
-	s.monitor.OnShowProgress = func(p monitor.ShowProgress) { s.events.publish(Event{Type: "series.search", Data: p}) }
+	s.monitor.OnShowProgress = func(p api.ShowProgress) { s.events.publish(Event{Type: "series.search", Data: p}) }
 }
 
 // wakeMonitor has the monitor look now, when it runs.

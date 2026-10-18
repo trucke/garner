@@ -17,8 +17,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Library lists the shows with what Garner has of each. Boards "Home · …"
@@ -47,7 +47,7 @@ const (
 // libraryMsg answers one library's reload; from tells the app which.
 type libraryMsg struct {
 	from  *libraryScreen
-	shows []store.Show
+	shows []api.Show
 	err   error
 }
 
@@ -144,7 +144,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.dirty = false
 			return s, s.reload()
 		}
-		var waiting []*store.Download
+		var waiting []*api.Download
 		for _, sh := range s.sess.shows {
 			if sh.Focus != nil {
 				waiting = append(waiting, sh.Focus.Download)
@@ -156,7 +156,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		case client.EventConnected, "series.updated", "series.deleted", "search.finished":
 			return s, s.reload()
 		case "download.updated":
-			var d store.Download
+			var d api.Download
 			if json.Unmarshal(msg.Data, &d) != nil || !s.patch(d) {
 				return s, s.reload()
 			}
@@ -184,7 +184,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 
 // patch updates a show's running download in place when only its progress
 // changed. It reports false when the library needs loading again.
-func (s *libraryScreen) patch(d store.Download) bool {
+func (s *libraryScreen) patch(d api.Download) bool {
 	for _, sh := range s.sess.shows {
 		if f := sh.Focus; f != nil && f.Download != nil && f.Download.ID == d.ID {
 			if f.Download.State != d.State || f.Download.Import.State != d.Import.State {
@@ -305,11 +305,11 @@ func (s *libraryScreen) answer(key string) tea.Cmd {
 }
 
 // cursorShow is the show under the cursor, if any is shown.
-func (s *libraryScreen) cursorShow() (store.Show, bool) {
+func (s *libraryScreen) cursorShow() (api.Show, bool) {
 	rows, _ := s.rows()
-	i := slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected })
+	i := slices.IndexFunc(rows, func(sh api.Show) bool { return sh.ID == s.selected })
 	if i < 0 {
-		return store.Show{}, false
+		return api.Show{}, false
 	}
 	return rows[i], true
 }
@@ -320,13 +320,13 @@ func (s *libraryScreen) move(n int) {
 	if len(rows) == 0 {
 		return
 	}
-	i := max(0, slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected }))
+	i := max(0, slices.IndexFunc(rows, func(sh api.Show) bool { return sh.ID == s.selected }))
 	s.selected = rows[min(len(rows)-1, max(0, i+n))].ID
 }
 
 // rows are the shows of the current category that match the filter, in
 // the chosen order; total counts the category.
-func (s *libraryScreen) rows() (rows []store.Show, total int) {
+func (s *libraryScreen) rows() (rows []api.Show, total int) {
 	needle := []rune(strings.ToLower(s.filter))
 	for _, sh := range s.sess.shows {
 		if !s.cat.holds(sh) {
@@ -337,7 +337,7 @@ func (s *libraryScreen) rows() (rows []store.Show, total int) {
 			rows = append(rows, sh)
 		}
 	}
-	slices.SortStableFunc(rows, func(a, b store.Show) int {
+	slices.SortStableFunc(rows, func(a, b api.Show) int {
 		byNames := cmp.Compare(strings.ToLower(showName(a)), strings.ToLower(showName(b)))
 		var c int
 		switch s.sort {
@@ -360,7 +360,7 @@ func (s *libraryScreen) rows() (rows []store.Show, total int) {
 	return rows, total
 }
 
-func (c category) holds(sh store.Show) bool {
+func (c category) holds(sh api.Show) bool {
 	switch c {
 	case catTV:
 		return sh.Profile != "anime"
@@ -387,14 +387,14 @@ func fuzzy(needle []rune, s string) bool {
 }
 
 var stateRank = map[string]int{
-	store.EpisodeFailed: 0, store.EpisodeAttention: 1, store.EpisodeDownloading: 2, store.EpisodeProcessing: 3,
-	store.EpisodeImporting: 4, store.EpisodeWaiting: 5, store.EpisodeNotSearched: 5, store.EpisodeUpcoming: 6,
+	api.EpisodeFailed: 0, api.EpisodeAttention: 1, api.EpisodeDownloading: 2, api.EpisodeProcessing: 3,
+	api.EpisodeImporting: 4, api.EpisodeWaiting: 5, api.EpisodeNotSearched: 5, api.EpisodeUpcoming: 6,
 }
 
 // rank orders shows for the state sort: needs you first, complete last. A
 // state this client does not know, say from a newer server, comes just
 // before complete.
-func rank(sh store.Show) int {
+func rank(sh api.Show) int {
 	if sh.Focus == nil {
 		return 9
 	}
@@ -404,7 +404,7 @@ func rank(sh store.Show) int {
 	return 8
 }
 
-func showName(sh store.Show) string { return clean(cmp.Or(sh.NameEng, sh.Name)) }
+func showName(sh api.Show) string { return clean(cmp.Or(sh.NameEng, sh.Name)) }
 
 func status(s string) string {
 	switch s {
@@ -421,7 +421,7 @@ const libraryTop = 6 // rows above the table: header, blank, tabs, blank, column
 func (s *libraryScreen) view(width, height int) string {
 	rows, total := s.rows()
 	s.page = max(1, height-libraryTop-1)
-	cursor := max(0, slices.IndexFunc(rows, func(sh store.Show) bool { return sh.ID == s.selected }))
+	cursor := max(0, slices.IndexFunc(rows, func(sh api.Show) bool { return sh.ID == s.selected }))
 	if len(rows) > 0 {
 		s.selected = rows[cursor].ID
 	}
@@ -561,7 +561,7 @@ func (c columns) head(sort sortKey, reverse bool) string {
 		"   " + field("Size", bySize, c.size, true) + "   " + status + sSubtle.Render("State")
 }
 
-func (c columns) row(sh store.Show, selected bool) string {
+func (c columns) row(sh api.Show, selected bool) string {
 	bg := func(st lipgloss.Style) lipgloss.Style {
 		if selected {
 			return st.Background(cSelect)
@@ -621,38 +621,38 @@ func renderParts(parts []part, w int, bg func(lipgloss.Style) lipgloss.Style) st
 	return b.String()
 }
 
-func showGlyph(sh store.Show) (string, lipgloss.Style) {
+func showGlyph(sh api.Show) (string, lipgloss.Style) {
 	if sh.Focus == nil {
 		return "✓", sMint
 	}
 	switch sh.Focus.State {
-	case store.EpisodeFailed:
+	case api.EpisodeFailed:
 		return "✗", sRed
-	case store.EpisodeAttention:
+	case api.EpisodeAttention:
 		return "▲", sAmber
-	case store.EpisodeDownloading:
+	case api.EpisodeDownloading:
 		return "◐", sAmber
-	case store.EpisodeProcessing, store.EpisodeImporting:
+	case api.EpisodeProcessing, api.EpisodeImporting:
 		return "●", sAmber
-	case store.EpisodeUpcoming:
+	case api.EpisodeUpcoming:
 		return "·", sSubtle
 	}
 	return "○", sSubtle
 }
 
 // stateParts describes what the show's most urgent episode is doing.
-func stateParts(sh store.Show, now time.Time) []part {
+func stateParts(sh api.Show, now time.Time) []part {
 	f := sh.Focus
 	if f == nil {
 		return nil
 	}
 	switch f.State {
-	case store.EpisodeWaiting, store.EpisodeNotSearched:
+	case api.EpisodeWaiting, api.EpisodeNotSearched:
 		// One missing episode tells what its search found, several their count.
-		if n := sh.Counts[store.EpisodeNotSearched] + sh.Counts[store.EpisodeWaiting]; n > 1 {
+		if n := sh.Counts[api.EpisodeNotSearched] + sh.Counts[api.EpisodeWaiting]; n > 1 {
 			return []part{{strconv.Itoa(n) + " missing", sMuted}}
 		}
-	case store.EpisodeUpcoming:
+	case api.EpisodeUpcoming:
 		if sh.NextAired != "" {
 			return []part{{"next episode " + day(sh.NextAired, now), sMuted}}
 		}
@@ -670,10 +670,10 @@ type redrawMsg struct{}
 
 // redrawWhenSlow draws the screen again when a waiting import passes
 // importSlowAfter, so its start time appears without a key press.
-func redrawWhenSlow(downloads ...*store.Download) tea.Cmd {
+func redrawWhenSlow(downloads ...*api.Download) tea.Cmd {
 	var next time.Time
 	for _, d := range downloads {
-		if d == nil || d.Import.State != store.ImportScanning {
+		if d == nil || d.Import.State != api.ImportScanning {
 			continue
 		}
 		if at := d.Updated.Add(importSlowAfter); at.After(time.Now()) && (next.IsZero() || at.Before(next)) {
@@ -688,18 +688,18 @@ func redrawWhenSlow(downloads ...*store.Download) tea.Cmd {
 
 // statusParts describes what an episode is doing, from its state, latest
 // download and latest search. The sentences come from the server verbatim.
-func statusParts(state string, d *store.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
+func statusParts(state string, d *api.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
 	sep := part{" · ", sMuted}
 	switch state {
-	case store.EpisodeFailed:
+	case api.EpisodeFailed:
 		if d == nil {
 			return []part{{"failed", sRed}}
 		}
 		var parts []part
 		switch d.Import.State {
-		case store.ImportFailed:
+		case api.ImportFailed:
 			parts = []part{{"import failed", sRed}, sep, {clean(d.Import.Detail), sMuted}}
-		case store.ImportRejected:
+		case api.ImportRejected:
 			parts = []part{{"rejected", sRed}, sep, {clean(d.Import.Detail), sMuted}}
 		default:
 			parts = []part{{"download failed", sRed}, sep, {clean(d.Failure), sMuted}}
@@ -708,13 +708,13 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 			parts = append(parts, sep, part{nextSearch(*nextRetry, now), sMuted})
 		}
 		return parts
-	case store.EpisodeAttention:
+	case api.EpisodeAttention:
 		detail := ""
 		if d != nil {
 			detail = clean(d.Import.Detail)
 		}
 		return []part{{"needs you", sAmber}, sep, {detail, sMuted}}
-	case store.EpisodeDownloading:
+	case api.EpisodeDownloading:
 		var parts []part
 		if d == nil || d.Progress <= 0 {
 			parts = []part{{"queued", sMuted}}
@@ -734,19 +734,19 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 			parts = append(parts, part{" · attempt " + strconv.Itoa(attempts), sMuted})
 		}
 		return parts
-	case store.EpisodeProcessing:
+	case api.EpisodeProcessing:
 		if d != nil && d.Detail != "" {
 			return []part{{clean(d.Detail), sMuted}}
 		}
 		return []part{{"processing", sMuted}}
-	case store.EpisodeImporting:
+	case api.EpisodeImporting:
 		if d == nil {
 			return []part{{"importing", sMuted}}
 		}
 		switch d.Import.State {
-		case store.ImportMoving:
+		case api.ImportMoving:
 			return []part{{"moving into the library", sMuted}}
-		case store.ImportScanning:
+		case api.ImportScanning:
 			// Jellyfin usually confirms within 1 to 2 minutes; only a longer
 			// wait gets its start time.
 			if started := d.Updated; now.Sub(started) >= importSlowAfter {
@@ -755,12 +755,12 @@ func statusParts(state string, d *store.Download, summary string, nextRetry *tim
 			return []part{{"importing into the media library…", sMuted}}
 		}
 		return []part{{"checking the file", sMuted}}
-	case store.EpisodeWaiting, store.EpisodeNotSearched:
-		if d != nil && d.State == store.Cancelled {
+	case api.EpisodeWaiting, api.EpisodeNotSearched:
+		if d != nil && d.State == api.Cancelled {
 			// The monitor leaves it to you until you download it.
 			return []part{{"missing · download cancelled", sMuted}}
 		}
-		if state == store.EpisodeNotSearched {
+		if state == api.EpisodeNotSearched {
 			return []part{{"missing", sMuted}}
 		}
 		text := "missing"
@@ -794,7 +794,7 @@ func lowerFirst(s string) string {
 	return string(unicode.ToLower(r)) + s[n:]
 }
 
-func episodes(sh store.Show) string { return fmt.Sprintf("%d/%d", sh.Imported, sh.Aired) }
+func episodes(sh api.Show) string { return fmt.Sprintf("%d/%d", sh.Imported, sh.Aired) }
 
 // size uses decimal units, as the boards do.
 func size(n int64) string {

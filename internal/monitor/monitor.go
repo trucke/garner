@@ -14,6 +14,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/download"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
@@ -53,7 +54,7 @@ type Service struct {
 	shows  showQueue
 	// OnShowProgress is called when a show's search was asked for, after
 	// each of its episodes, and when it ends.
-	OnShowProgress func(ShowProgress)
+	OnShowProgress func(api.ShowProgress)
 }
 
 // New returns a service that runs the monitor's rounds when auto is set.
@@ -64,7 +65,7 @@ func New(st *store.Store, s *search.Service, d *download.Service, auto bool, rul
 	}
 	return &Service{
 		store: st, search: s, downloads: d, auto: auto, rules: rules, log: log, now: time.Now,
-		wake: make(chan struct{}, 1), paused: map[int64]time.Time{}, shows: showQueue{progress: map[int64]ShowProgress{}},
+		wake: make(chan struct{}, 1), paused: map[int64]time.Time{}, shows: showQueue{progress: map[int64]api.ShowProgress{}},
 	}
 }
 

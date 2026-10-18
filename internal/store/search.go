@@ -12,51 +12,6 @@ import (
 	"github.com/trucke/garner/internal/store/query"
 )
 
-// Search is the latest search for an episode.
-type Search struct {
-	EpisodeID int64 `json:"episode_id"`
-	// Season is set instead for a season search, which keeps only packs.
-	Season   int       `json:"season,omitempty"`
-	Searched time.Time `json:"searched"`
-	Outcome  string    `json:"outcome"` // found, fallback, nothing or failed
-	Summary  string    `json:"summary"`
-	// NextRetry is stored as the search's own retry, for the record; the
-	// server answers with the monitor's next search instead, unset when
-	// the monitor does not get the episode.
-	NextRetry  *time.Time      `json:"next_retry,omitempty"`
-	Indexers   []SearchIndexer `json:"indexers"`
-	Candidates []Candidate     `json:"candidates"`
-}
-
-// SearchIndexer is what one indexer returned.
-type SearchIndexer struct {
-	Name    string `json:"name"`
-	Results int    `json:"results"`
-	Error   string `json:"error,omitempty"`
-}
-
-// Candidate is a release a search found, with the verdict on it.
-type Candidate struct {
-	ID      int64  `json:"id"`
-	Rank    int    `json:"rank"`
-	Indexer string `json:"indexer"`
-	Title   string `json:"title"`
-	// Link downloads the release through Prowlarr and holds its API key. It
-	// is stored but never loaded for or sent to clients.
-	Link      string     `json:"-"`
-	Size      int64      `json:"size"`
-	Published *time.Time `json:"published,omitempty"`
-	Grabs     int        `json:"grabs"`
-	Verdict   string     `json:"verdict"`
-	Tier      string     `json:"tier,omitempty"`
-	Audio     []string   `json:"audio"`
-	Reasons   []string   `json:"reasons"`
-	// Decisive counts the leading reasons that decided the verdict: why it
-	// was rejected, or why it is only a last resort. The rest are facts.
-	Decisive int     `json:"decisive"`
-	Episodes []int64 `json:"episodes"`
-}
-
 // SeriesOfEpisode returns the show an episode belongs to.
 func (s *Store) SeriesOfEpisode(ctx context.Context, episodeID int64) (int64, error) {
 	id, err := s.q.SeriesOfEpisode(ctx, episodeID)

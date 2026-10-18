@@ -12,9 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/server"
-	"github.com/trucke/garner/internal/store"
 )
 
 // Show details describes a show in the library, with the delete, profile
@@ -32,7 +31,7 @@ const (
 
 type (
 	detailChangedMsg struct {
-		detail  server.SeriesDetail
+		detail  api.SeriesDetail
 		err     error
 		success string
 	}
@@ -138,7 +137,7 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	}
 	switch key {
 	case "p":
-		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p server.ProfileInfo) bool { return p.Name == d.Series.Profile }))
+		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p api.ProfileInfo) bool { return p.Name == d.Series.Profile }))
 	case "m":
 		s.overlay, s.choice = monitorOverlay, max(0, monitorIndex(d.Series.Monitor))
 	case "d":
@@ -264,7 +263,7 @@ func (s *showDetailsScreen) libraryLines(inner int) []string {
 	lines = append(lines, field("Profile", d.Series.Profile, sNormal, inner)...)
 	lines = append(lines, field("", clean(d.Rules), sMuted, inner)...)
 	lines = append(lines, field("Monitor", monitorLine(d.Series), sNormal, inner)...)
-	if d.MonitorOff != "" && d.Series.Monitor != store.MonitorOff {
+	if d.MonitorOff != "" && d.Series.Monitor != api.MonitorOff {
 		lines = append(lines, field("", "The monitor is "+clean(d.MonitorOff)+".", sMuted, inner)...)
 	}
 	lines = append(lines, field("Original", clean(d.LanguageName), sNormal, inner)...)
@@ -288,13 +287,13 @@ func (s *showDetailsScreen) libraryLines(inner int) []string {
 
 // monitorLine says which episodes the monitor gets, such as "new episodes,
 // those airing from 17 Oct 2026 on".
-func monitorLine(sr store.Series) string {
+func monitorLine(sr api.Series) string {
 	switch sr.Monitor {
-	case store.MonitorNew:
+	case api.MonitorNew:
 		return "new episodes, those airing from " + sr.MonitorSince.Local().Format("2 Jan 2006") + " on"
-	case store.MonitorAll:
+	case api.MonitorAll:
 		return "all missing episodes"
-	case store.MonitorOff:
+	case api.MonitorOff:
 		return "off; Garner gets only what you search for"
 	}
 	return clean(sr.Monitor)
@@ -314,7 +313,7 @@ type deleteAnswer struct {
 // deleteAnswers are the choices in the delete question, from the library
 // or the details page. Cancel, the safe one, comes first and is
 // preselected; keeping the files is offered only when there are files.
-func deleteAnswers(sh store.Show) []deleteAnswer {
+func deleteAnswers(sh api.Show) []deleteAnswer {
 	if sh.Bytes > 0 {
 		return []deleteAnswer{{label: "Cancel"}, {"Keep files", true, true}, {"Delete files", true, false}}
 	}
@@ -330,7 +329,7 @@ func (a deleteAnswer) busy(name string) string {
 
 // deleteKey moves the choice in the delete question about sh or answers
 // it. done closes the question; the answer says whether and how to delete.
-func deleteKey(key string, sh store.Show, chosen *int) (done bool, answer deleteAnswer) {
+func deleteKey(key string, sh api.Show, chosen *int) (done bool, answer deleteAnswer) {
 	answers := deleteAnswers(sh)
 	switch key {
 	case "esc":
@@ -349,12 +348,12 @@ func deleteKey(key string, sh store.Show, chosen *int) (done bool, answer delete
 }
 
 // deleteQuestion is the delete overlay.
-func deleteQuestion(name string, sh store.Show, chosen int) []string {
+func deleteQuestion(name string, sh api.Show, chosen int) []string {
 	var body []string
 	if sh.Bytes > 0 {
 		body = append(body, sNormal.Render("Files: "+size(sh.Bytes)))
 	}
-	if sh.Counts[store.EpisodeDownloading]+sh.Counts[store.EpisodeProcessing] > 0 {
+	if sh.Counts[api.EpisodeDownloading]+sh.Counts[api.EpisodeProcessing] > 0 {
 		body = append(body, sNormal.Render("Running downloads are cancelled."))
 	}
 	lines := []string{gFailed + " " + sBold.Render("Delete "+name+"?")}
@@ -456,7 +455,7 @@ func overviewLabel(language string) string {
 
 // seriesFacts are TVDB's facts as Garner stored them: episodes and seasons
 // of the default order without specials, the default order first.
-func seriesFacts(d *server.SeriesDetail) tvdbFacts {
+func seriesFacts(d *api.SeriesDetail) tvdbFacts {
 	sr := d.Series
 	f := tvdbFacts{network: sr.Network, status: sr.Status, firstAired: sr.FirstAired, lastAired: sr.LastAired,
 		runtime: sr.AverageRuntime, url: d.URL}

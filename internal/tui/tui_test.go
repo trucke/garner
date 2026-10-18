@@ -10,9 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/trucke/garner/internal/catalog"
-	"github.com/trucke/garner/internal/server"
-	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/api"
 )
 
 // TestLateAnswers checks that an answer reaches only the screen that asked
@@ -20,9 +18,9 @@ import (
 // library from an ended session must not replace the current one.
 func TestLateAnswers(t *testing.T) {
 	sess := &session{}
-	left := newPreview(sess, nil, catalog.SearchResult{ID: 1, Name: "First"})
-	next := newPreview(sess, nil, catalog.SearchResult{ID: 2, Name: "Second"})
-	next.update(previewMsg{from: left, preview: catalog.Preview{SearchResult: catalog.SearchResult{ID: 1}}})
+	left := newPreview(sess, nil, api.SearchResult{ID: 1, Name: "First"})
+	next := newPreview(sess, nil, api.SearchResult{ID: 2, Name: "Second"})
+	next.update(previewMsg{from: left, preview: api.Preview{SearchResult: api.SearchResult{ID: 1}}})
 	if next.preview != nil {
 		t.Fatal("the details of a page that was left showed on the next one")
 	}
@@ -31,11 +29,11 @@ func TestLateAnswers(t *testing.T) {
 	a := &app{sess: sess, library: newLibrary(sess)}
 	a.screen = a.library
 	a.library.loading = true
-	a.Update(libraryMsg{from: old, shows: []store.Show{{Series: store.Series{ID: 9}}}})
+	a.Update(libraryMsg{from: old, shows: []api.Show{{Series: api.Series{ID: 9}}}})
 	if !a.library.loading || len(sess.shows) != 0 {
 		t.Fatal("a library answer from an ended session replaced the current library")
 	}
-	a.Update(libraryMsg{from: a.library, shows: []store.Show{{Series: store.Series{ID: 7}}}})
+	a.Update(libraryMsg{from: a.library, shows: []api.Show{{Series: api.Series{ID: 7}}}})
 	if a.library.loading || len(sess.shows) != 1 {
 		t.Fatal("the current library's own answer was not applied")
 	}
@@ -45,11 +43,11 @@ func TestLateAnswers(t *testing.T) {
 // most urgent episode, the newest when nothing needs anything, and a
 // single season always.
 func TestInitialFolding(t *testing.T) {
-	detail := func(states map[int64]string, positions map[int64][2]int) server.SeriesDetail {
-		d := server.SeriesDetail{SeriesData: store.SeriesData{Series: store.Series{ID: 1, DefaultOrder: "official"}}}
+	detail := func(states map[int64]string, positions map[int64][2]int) api.SeriesDetail {
+		d := api.SeriesDetail{SeriesData: api.SeriesData{Series: api.Series{ID: 1, DefaultOrder: "official"}}}
 		for id, pos := range positions {
-			d.Episodes = append(d.Episodes, store.Episode{ID: id, Numbers: map[string]store.Position{"official": {Season: pos[0], Number: pos[1]}}})
-			d.States = append(d.States, store.EpisodeStatus{EpisodeID: id, State: states[id]})
+			d.Episodes = append(d.Episodes, api.Episode{ID: id, Numbers: map[string]api.Position{"official": {Season: pos[0], Number: pos[1]}}})
+			d.States = append(d.States, api.EpisodeStatus{EpisodeID: id, State: states[id]})
 		}
 		return d
 	}
@@ -60,8 +58,8 @@ func TestInitialFolding(t *testing.T) {
 		open   int
 		cursor rowKey
 	}{
-		{"most urgent", map[int64]string{31: store.EpisodeImported, 21: store.EpisodeImported, 22: store.EpisodeFailed, 11: store.EpisodeNotSearched}, 2, rowKey{2, 22}},
-		{"nothing needed", map[int64]string{31: store.EpisodeUpcoming, 21: store.EpisodeImported, 22: store.EpisodeImported, 11: store.EpisodeImported}, 3, rowKey{season: 3}},
+		{"most urgent", map[int64]string{31: api.EpisodeImported, 21: api.EpisodeImported, 22: api.EpisodeFailed, 11: api.EpisodeNotSearched}, 2, rowKey{2, 22}},
+		{"nothing needed", map[int64]string{31: api.EpisodeUpcoming, 21: api.EpisodeImported, 22: api.EpisodeImported, 11: api.EpisodeImported}, 3, rowKey{season: 3}},
 	}
 	for _, c := range cases {
 		s := newShow(&session{}, nil, 1, "Show", "")
@@ -72,7 +70,7 @@ func TestInitialFolding(t *testing.T) {
 		}
 	}
 	single := newShow(&session{}, nil, 1, "Show", "")
-	single.setDetail(detail(map[int64]string{11: store.EpisodeImported}, map[int64][2]int{11: {1, 1}}))
+	single.setDetail(detail(map[int64]string{11: api.EpisodeImported}, map[int64][2]int{11: {1, 1}}))
 	if single.sess.folded[1][1] {
 		t.Error("a show's only season started folded")
 	}
@@ -107,21 +105,21 @@ func TestFlash(t *testing.T) {
 // TestPipelineFailures checks that each kind of failure marks the step it
 // happened in, and the steps after it stay pending.
 func TestPipelineFailures(t *testing.T) {
-	checked := []store.ImportFile{{Source: "a.mkv", Check: []byte(`{"audio":["German"]}`)}}
-	planned := []store.ImportFile{{Source: "a.mkv", Target: "/lib/A.mkv", Check: []byte(`{"audio":["German"]}`)}}
+	checked := []api.ImportFile{{Source: "a.mkv", Check: []byte(`{"audio":["German"]}`)}}
+	planned := []api.ImportFile{{Source: "a.mkv", Target: "/lib/A.mkv", Check: []byte(`{"audio":["German"]}`)}}
 	for _, tc := range []struct {
 		name string
-		d    store.Download
+		d    api.Download
 		want int // the failed step
 	}{
-		{"SABnzbd refused it", store.Download{State: store.Failed, Failure: "refused"}, 0},
-		{"missing articles", store.Download{State: store.Failed, JobID: "j", Failure: "cannot be completed"}, 1},
-		{"file check rejected it", store.Download{State: store.Failed, JobID: "j", Failure: "file check: audio is Japanese",
-			Import: store.Import{State: store.ImportRejected, Files: checked}}, 3},
-		{"share not mounted", store.Download{State: store.Completed, JobID: "j",
-			Import: store.Import{State: store.ImportFailed, Detail: "Garner cannot see it"}}, 3},
-		{"move failed", store.Download{State: store.Completed, JobID: "j",
-			Import: store.Import{State: store.ImportFailed, Detail: "the library folder is missing", Files: planned}}, 4},
+		{"SABnzbd refused it", api.Download{State: api.Failed, Failure: "refused"}, 0},
+		{"missing articles", api.Download{State: api.Failed, JobID: "j", Failure: "cannot be completed"}, 1},
+		{"file check rejected it", api.Download{State: api.Failed, JobID: "j", Failure: "file check: audio is Japanese",
+			Import: api.Import{State: api.ImportRejected, Files: checked}}, 3},
+		{"share not mounted", api.Download{State: api.Completed, JobID: "j",
+			Import: api.Import{State: api.ImportFailed, Detail: "Garner cannot see it"}}, 3},
+		{"move failed", api.Download{State: api.Completed, JobID: "j",
+			Import: api.Import{State: api.ImportFailed, Detail: "the library folder is missing", Files: planned}}, 4},
 	} {
 		steps := pipeline(tc.d, time.Now())
 		for i, st := range steps {
@@ -133,8 +131,8 @@ func TestPipelineFailures(t *testing.T) {
 			}
 		}
 	}
-	if st := pipeline(store.Download{State: store.Failed, JobID: "j", Failure: "file check: audio is Japanese",
-		Import: store.Import{State: store.ImportRejected}}, time.Now())[3]; st.detail[0].text != "audio is Japanese" {
+	if st := pipeline(api.Download{State: api.Failed, JobID: "j", Failure: "file check: audio is Japanese",
+		Import: api.Import{State: api.ImportRejected}}, time.Now())[3]; st.detail[0].text != "audio is Japanese" {
 		t.Errorf("rejected detail = %q", st.detail[0].text)
 	}
 }
@@ -167,16 +165,16 @@ func TestKeysWhileTyping(t *testing.T) {
 // what ended; the newest first within each.
 func TestActivityOrder(t *testing.T) {
 	at := func(m int) time.Time { return time.Date(2026, 10, 16, 12, m, 0, 0, time.UTC) }
-	item := func(ep int64, d store.Download) store.ActivityItem {
+	item := func(ep int64, d api.Download) api.ActivityItem {
 		d.EpisodeID = ep
-		return store.ActivityItem{Download: d}
+		return api.ActivityItem{Download: d}
 	}
-	s := &activityScreen{items: []store.ActivityItem{
-		item(1, store.Download{State: store.Completed, Updated: at(50), Import: store.Import{State: store.ImportDone, Updated: at(55)}}),
-		item(2, store.Download{State: store.Downloading, Created: at(10)}),
-		item(3, store.Download{State: store.Queued, Created: at(20)}),
-		item(4, store.Download{State: store.Completed, Updated: at(1), Import: store.Import{State: store.ImportFailed, Updated: at(2)}}),
-		item(5, store.Download{State: store.Cancelled, Updated: at(40)}),
+	s := &activityScreen{items: []api.ActivityItem{
+		item(1, api.Download{State: api.Completed, Updated: at(50), Import: api.Import{State: api.ImportDone, Updated: at(55)}}),
+		item(2, api.Download{State: api.Downloading, Created: at(10)}),
+		item(3, api.Download{State: api.Queued, Created: at(20)}),
+		item(4, api.Download{State: api.Completed, Updated: at(1), Import: api.Import{State: api.ImportFailed, Updated: at(2)}}),
+		item(5, api.Download{State: api.Cancelled, Updated: at(40)}),
 	}}
 	var got []int64
 	for _, it := range s.rows() {

@@ -10,77 +10,9 @@ import (
 	"github.com/trucke/garner/internal/store/query"
 )
 
-// Episode states, most urgent first. Shows take the state of their most
-// urgent episode.
-const (
-	EpisodeFailed      = "failed"       // the latest download or import failed and nothing replaced it
-	EpisodeAttention   = "attention"    // in the library, but Jellyfin did not confirm it
-	EpisodeDownloading = "downloading"  // with SABnzbd, waiting or downloading
-	EpisodeProcessing  = "processing"   // SABnzbd repairs or unpacks it
-	EpisodeImporting   = "importing"    // file check, move or waiting for Jellyfin
-	EpisodeWaiting     = "waiting"      // aired and missing; searched without a usable result
-	EpisodeNotSearched = "not_searched" // aired and missing; never searched
-	EpisodeUpcoming    = "upcoming"     // not aired yet
-	EpisodeImported    = "imported"     // in the library
-)
-
 var urgency = map[string]int{
 	EpisodeFailed: 0, EpisodeAttention: 1, EpisodeDownloading: 2, EpisodeProcessing: 3, EpisodeImporting: 4,
 	EpisodeWaiting: 5, EpisodeNotSearched: 5, EpisodeUpcoming: 6, EpisodeImported: 7,
-}
-
-// Show is a show with a summary of what Garner has of it.
-type Show struct {
-	Series
-	// Aired counts the episodes aired so far, specials excluded; Imported
-	// counts those in the library.
-	Aired    int `json:"aired"`
-	Imported int `json:"imported"`
-	// Bytes is the size of the imported files, each file counted once.
-	Bytes int64 `json:"bytes"`
-	// NextAired is the air date of the next episode, specials excluded.
-	NextAired string `json:"next_aired,omitempty"`
-	// Counts holds how many episodes are in each state other than imported
-	// and upcoming, by state name.
-	Counts map[string]int `json:"counts"`
-	// Focus is the most urgent episode; nil when every aired episode is in
-	// the library and none is upcoming.
-	Focus *Focus `json:"focus,omitempty"`
-}
-
-// Focus is the episode a show's state comes from.
-type Focus struct {
-	EpisodeID int64  `json:"episode_id"`
-	Season    int    `json:"season"`
-	Number    int    `json:"number"`
-	State     string `json:"state"`
-	Aired     string `json:"aired,omitempty"`
-	// Download is the episode's latest download, when it has one.
-	Download *Download `json:"download,omitempty"`
-	// Summary comes from the episode's latest search; NextRetry is when
-	// the monitor searches it again, unset when it does not get it.
-	Summary   string     `json:"summary,omitempty"`
-	NextRetry *time.Time `json:"next_retry,omitempty"`
-}
-
-// EpisodeStatus is what Garner has of one episode.
-type EpisodeStatus struct {
-	EpisodeID int64 `json:"episode_id"`
-	// State is one of the episode states, or empty for a special nobody
-	// asked for.
-	State string `json:"state"`
-	// Size and Tier describe the imported file: its size and the tier of
-	// the release it came from, such as "German 1080p".
-	Size int64  `json:"size,omitempty"`
-	Tier string `json:"tier,omitempty"`
-	// Attempts counts the downloads started for the episode.
-	Attempts int `json:"attempts,omitempty"`
-	// Download is the latest download when it explains the state.
-	Download *Download `json:"download,omitempty"`
-	// Summary comes from the latest search; NextRetry is when the monitor
-	// searches again, unset when it does not get the episode.
-	Summary   string     `json:"summary,omitempty"`
-	NextRetry *time.Time `json:"next_retry,omitempty"`
 }
 
 type searchOutcome struct {

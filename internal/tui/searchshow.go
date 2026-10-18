@@ -9,9 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/client"
-	"github.com/trucke/garner/internal/monitor"
-	"github.com/trucke/garner/internal/store"
 )
 
 // S on the Show screen searches every missing episode of the show and
@@ -35,9 +34,9 @@ func (s *showScreen) missingCount() (missing, cancelled int) {
 		}
 		for _, e := range se.episodes {
 			switch e.status.State {
-			case store.EpisodeNotSearched, store.EpisodeWaiting, store.EpisodeFailed:
+			case api.EpisodeNotSearched, api.EpisodeWaiting, api.EpisodeFailed:
 				missing++
-				if d := e.status.Download; d != nil && d.State == store.Cancelled {
+				if d := e.status.Download; d != nil && d.State == api.Cancelled {
 					cancelled++
 				}
 			}
@@ -114,7 +113,7 @@ func (s *showScreen) searched(msg searchShowMsg) tea.Cmd {
 }
 
 // progressed follows the search from its events.
-func (s *showScreen) progressed(p monitor.ShowProgress) tea.Cmd {
+func (s *showScreen) progressed(p api.ShowProgress) tea.Cmd {
 	if s.detail == nil || p.SeriesID != s.id {
 		return nil
 	}
@@ -132,7 +131,7 @@ func (s *showScreen) progressed(p monitor.ShowProgress) tea.Cmd {
 }
 
 // searchFact is the facts line's report of the search, empty when none runs.
-func searchFact(p *monitor.ShowProgress) string {
+func searchFact(p *api.ShowProgress) string {
 	switch {
 	case p == nil:
 		return ""

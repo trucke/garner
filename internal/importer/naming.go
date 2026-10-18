@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/release"
@@ -104,7 +105,7 @@ func releaseTags(d *store.Download, p inspect.Probe) string {
 		quality = append(quality, sourceNames[source])
 	}
 	if len(p.Video) > 0 {
-		quality = append(quality, fmt.Sprintf("%dp", inspect.Class(p.Video[0].Width, p.Video[0].Height)))
+		quality = append(quality, fmt.Sprintf("%dp", api.ResolutionClass(p.Video[0].Width, p.Video[0].Height)))
 	}
 	parts = append(parts, strings.Join(quality, "-"))
 	for _, f := range c.Flags {
