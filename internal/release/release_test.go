@@ -169,8 +169,8 @@ var cases = []struct {
 		Series: "Example Saga Arc", Numbering: "E18.5", Resolution: "1080p", Source: "bluray", Group: "SubGroup"}},
 	{"Example.Saga-War.Of.Worlds.Part.2.S03.2020.2160p.WEB-DL.H.265.HDR.10bit.AAC2.0-GRP", summary{
 		Series: "Example Saga-War Of Worlds Part 2", Numbering: "S03", Resolution: "2160p", Source: "webdl", Year: "2020", Group: "GRP", Flags: "hdr"}},
-	{"Example.Saga.Reencarnación.desde.cero.S02E01.2021.1080p.NF.WEB-DL.AVC.DUAL.AAC.LC.2.0.SUBS", summary{
-		Series: "Example Saga Reencarnación desde cero", Numbering: "S02E01", Resolution: "1080p", Source: "webdl", Year: "2021", Services: "netflix", Markers: "dual-audio,subs"}},
+	{"Example.Saga.Reencarnación.de.ejemplo.S02E01.2021.1080p.NF.WEB-DL.AVC.DUAL.AAC.LC.2.0.SUBS", summary{
+		Series: "Example Saga Reencarnación de ejemplo", Numbering: "S02E01", Resolution: "1080p", Source: "webdl", Year: "2021", Services: "netflix", Markers: "dual-audio,subs"}},
 	{"[SubGroup] Example Saga - Second Title (2021) - S02 v2 [Bluray-1080p][Opus 2.0][Dual Audio][UNCENSORED][AV1]", summary{
 		Series: "Example Saga - Second Title | Example Saga | Second Title", Numbering: "S02", Resolution: "1080p", Source: "bluray", Year: "2021", Group: "SubGroup", Version: "2", Flags: "uncensored", Markers: "dual-audio"}},
 	{"Example.Saga.S08E147.More.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264-GRP", summary{
@@ -281,8 +281,8 @@ var cases = []struct {
 		Series: "Example Saga", Numbering: "S02E04", Resolution: "1080p", Group: "GRP", Markers: "multi-audio"}},
 	{"Example.Show.S01E01.480p.WEB-DL.nSD.x264.1-GRP-Obfuscated", summary{
 		Series: "Example Show", Numbering: "S01E01", Resolution: "480p", Source: "webdl", Group: "GRP"}},
-	{"Example.Saga.S02.German.DL.TrueHD.1080p.BluRay.10bit.x265-Tofu-sama", summary{
-		Series: "Example Saga", Numbering: "S02", Resolution: "1080p", Source: "bluray", Group: "Tofu-sama", Audio: "de,original"}},
+	{"Example.Saga.S02.German.DL.TrueHD.1080p.BluRay.10bit.x265-Mochi-sama", summary{
+		Series: "Example Saga", Numbering: "S02", Resolution: "1080p", Source: "bluray", Group: "Mochi-sama", Audio: "de,original"}},
 }
 
 func TestParse(t *testing.T) {
