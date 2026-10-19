@@ -6,12 +6,20 @@ Garner is in early development and not ready for use.
 
 ## Run it locally
 
-Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io) and the [Infisical CLI](https://infisical.com/docs/cli/overview) with access to the `garner` project.
+Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io), a Usenet account, at least one Newznab indexer and a [TheTVDB API key](https://thetvdb.com/api-information).
 
-1. Run `mise run devstack up`. It creates the stack in `~/garner-dev` and sets it up: SABnzbd with your Usenet server, Prowlarr with the indexers, and Jellyfin with the TVDB plugin and the TV and Anime libraries. It also writes `garner.toml` for the stack, with the monitor turned off: the development server searches and downloads only what you ask for. The first run downloads the images; later runs only bring the setup up to date.
-2. Run `mise run dev`. The task builds the server, `bin/garnerd`, and starts it against the stack. [Air](https://github.com/air-verse/air) rebuilds and restarts it whenever the code changes; the terminal interface reconnects on its own.
-3. In a second terminal, run `./bin/garnerd token create <name>` to create an API token.
-4. Run `mise run tui` to build `bin/garner`, the terminal interface, and open it, and paste the connection code from step 3. It stores the connection in `~/.config/garner/connection`.
+1. Copy `devstack.example.toml` to `devstack.toml` and fill in your Usenet server and indexers. Set `TVDB_API_KEY` in the environment, for example in `mise.local.toml`:
+
+   ```toml
+   [env]
+   TVDB_API_KEY = "..."
+   ```
+
+   Both files are ignored by Git. A `devstack.toml` value written as `"${NAME}"` is read from that environment variable, so secrets can stay in a secret manager; `mise.local.toml` can also redefine the `dev` and `devstack` tasks to run through one.
+2. Run `mise run devstack up`. It creates the stack in `~/garner-dev` and sets it up: SABnzbd with your Usenet server, Prowlarr with your indexers, and Jellyfin with the TVDB plugin and the TV and Anime libraries. It also writes `garner.toml` for the stack, with the monitor turned off: the development server searches and downloads only what you ask for. The first run downloads the images; later runs only bring the setup up to date.
+3. Run `mise run dev`. The task builds the server, `bin/garnerd`, and starts it against the stack. [Air](https://github.com/air-verse/air) rebuilds and restarts it whenever the code changes; the terminal interface reconnects on its own.
+4. In a second terminal, run `./bin/garnerd token create <name>` to create an API token.
+5. Run `mise run tui` to build `bin/garner`, the terminal interface, and open it, and paste the connection code from step 4. It stores the connection in `~/.config/garner/connection`.
 
 | Service | Address | Sign-in |
 | --- | --- | --- |
@@ -25,11 +33,9 @@ The stack listens on `127.0.0.1` only. Downloads, the library, the settings and 
 * `mise run devstack down` stops them and keeps the data.
 * `mise run devstack reset` deletes everything in `~/garner-dev` and builds the stack again. Stop Garner first.
 
-Infisical (env `dev`) supplies only external credentials: `TVDB_API_KEY`, `USENET_USERNAME`, `USENET_PASSWORD`, `INDEXER_API_KEY` and `SECOND_INDEXER_API_KEY`. The stack's own API keys stay in `~/garner-dev/secrets`.
+The stack's own API keys stay in `~/garner-dev/secrets`. `mise run devstack up` replaces any Usenet server or indexer that is not in `devstack.toml`, so change them there rather than in SABnzbd or Prowlarr.
 
-The development stack downloads from its own Usenet account with 8 connections. Use an account that nothing else uses: some providers block accounts that are used from several places at once.
-
-The second indexer allows API use from two devices: production Prowlarr and the development stack's Prowlarr. Never set up a third Prowlarr with it.
+Some providers and indexers limit how many places may use an account at once. Give the stack an account, or an allowance, nothing else needs.
 
 `mise run check` checks the working copy: formatting, vet, the generated database code and known vulnerabilities; the tests on macOS and again on Linux in the Go image the container is built with; and builds for Linux x86. Run it before every push. The real-case tests from the private `garner-research` repository are not part of it; run them as `AGENTS.md` describes.
 

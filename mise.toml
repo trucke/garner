@@ -12,11 +12,11 @@ run = ["go build -o bin/garner ./cmd/garner", "go build -o bin/garnerd ./cmd/gar
 # Air (.air.toml) builds bin/garnerd, runs it and rebuilds and restarts it
 # on every code change. Garner uses the garner.toml that devstack writes;
 # the stack's API keys come from its secrets folder, the TVDB key from
-# Infisical.
+# TVDB_API_KEY in the environment (for example in mise.local.toml).
 [tasks.dev]
 description = "Run Garner against the local dev stack and rebuild it on code changes (start the stack with mise run devstack up)"
 env = { SABNZBD_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/sabnzbd_api_key", PROWLARR_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/prowlarr_api_key", JELLYFIN_API_KEY_FILE = "{{env.HOME}}/garner-dev/secrets/jellyfin_api_key" }
-run = "infisical run --env=dev --silent -- air"
+run = "air"
 
 [tasks.tui]
 description = "Build bin/garner and open the terminal interface"
@@ -35,9 +35,10 @@ run = "bash tools/check.sh"
 description = "Release a commit of main as a version: tag it and let GitHub build the image and the release"
 run = "bash tools/release.sh"
 
+# The stack's Usenet server and indexers come from devstack.toml.
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"
-run = "infisical run --env=dev --silent -- go run ./tools/devstack"
+run = "go run ./tools/devstack"
 
 [tasks.generate]
 description = "Regenerate database code with sqlc"

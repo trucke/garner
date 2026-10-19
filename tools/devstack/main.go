@@ -7,9 +7,9 @@
 //	devstack reset   delete the stack and its data, then build it again
 //	devstack status  show what runs
 //
-// Run it through `mise run devstack <command>`, which supplies the external
-// credentials from Infisical: USENET_USERNAME, USENET_PASSWORD,
-// INDEXER_API_KEY and SECOND_INDEXER_API_KEY.
+// Run it as `mise run devstack <command>` in the repository. The Usenet
+// server and the indexers come from devstack.toml there; see
+// devstack.example.toml.
 package main
 
 import (
@@ -79,32 +79,89 @@ func root() string {
 
 func path(parts ...string) string { return filepath.Join(append([]string{root()}, parts...)...) }
 
-// credentials are the external accounts the stack uses.
-type credentials struct {
-	usenetUser, usenetPassword, firstIndexer, secondIndexer string
+// accounts are the external services the stack uses, from devstack.toml.
+type accounts struct {
+	Usenet struct {
+		Host        string `toml:"host"`
+		Port        int    `toml:"port"`
+		Connections int    `toml:"connections"`
+		Username    string `toml:"username"`
+		Password    string `toml:"password"`
+	} `toml:"usenet"`
+	Indexers []indexer `toml:"indexers"`
 }
 
-func readCredentials() (credentials, error) {
-	c := credentials{
-		usenetUser: os.Getenv("USENET_USERNAME"), usenetPassword: os.Getenv("USENET_PASSWORD"),
-		firstIndexer: os.Getenv("INDEXER_API_KEY"), secondIndexer: os.Getenv("SECOND_INDEXER_API_KEY"),
+// indexer is a Newznab indexer the stack's Prowlarr searches.
+type indexer struct {
+	Name   string `toml:"name"`
+	URL    string `toml:"url"`
+	APIKey string `toml:"api_key"`
+}
+
+const accountsFile = "devstack.toml"
+
+// readAccounts reads devstack.toml from the current folder. A value written
+// as "${NAME}" is read from that environment variable, so the secrets can
+// stay in a secret manager; any other value is taken as written.
+func readAccounts() (accounts, error) {
+	var a accounts
+	meta, err := toml.DecodeFile(accountsFile, &a)
+	if errors.Is(err, os.ErrNotExist) {
+		return a, fmt.Errorf("%s is missing; copy devstack.example.toml to it and fill in your Usenet server and indexers", accountsFile)
 	}
-	required := map[string]string{"USENET_USERNAME": c.usenetUser, "USENET_PASSWORD": c.usenetPassword,
-		"INDEXER_API_KEY": c.firstIndexer, "SECOND_INDEXER_API_KEY": c.secondIndexer}
-	var missing []string
-	for name, v := range required {
-		if v = strings.TrimSpace(v); v == "" || v == "REPLACE_ME" {
-			missing = append(missing, name)
+	if err != nil {
+		return a, fmt.Errorf("%s: %w", accountsFile, err)
+	}
+	if keys := meta.Undecoded(); len(keys) > 0 {
+		return a, fmt.Errorf("%s: unknown setting %s", accountsFile, keys[0])
+	}
+	var unset []string
+	expand := func(s *string) {
+		*s = strings.TrimSpace(*s)
+		if name, ok := strings.CutPrefix(*s, "${"); ok && strings.HasSuffix(name, "}") {
+			name = strings.TrimSuffix(name, "}")
+			if *s = strings.TrimSpace(os.Getenv(name)); *s == "" {
+				unset = append(unset, name)
+			}
 		}
 	}
-	if len(missing) > 0 {
-		return c, fmt.Errorf("set %s in Infisical (project garner, env dev) and run through `mise run devstack`", strings.Join(missing, ", "))
+	u := &a.Usenet
+	for _, s := range []*string{&u.Host, &u.Username, &u.Password} {
+		expand(s)
 	}
-	return c, nil
+	for i := range a.Indexers {
+		x := &a.Indexers[i]
+		for _, s := range []*string{&x.Name, &x.URL, &x.APIKey} {
+			expand(s)
+		}
+	}
+	if len(unset) > 0 {
+		return a, fmt.Errorf("%s uses environment variables that are not set: %s", accountsFile, strings.Join(unset, ", "))
+	}
+	if u.Host == "" || u.Username == "" || u.Password == "" {
+		return a, fmt.Errorf("%s: [usenet] needs host, username and password", accountsFile)
+	}
+	// Prowlarr keeps only the indexers listed here, so an empty list would
+	// remove them all.
+	if len(a.Indexers) == 0 {
+		return a, fmt.Errorf("%s: add at least one [[indexers]] block", accountsFile)
+	}
+	for i, x := range a.Indexers {
+		if x.Name == "" || x.URL == "" || x.APIKey == "" {
+			return a, fmt.Errorf("%s: indexer %d needs a name, url and api_key", accountsFile, i+1)
+		}
+	}
+	if u.Port == 0 {
+		u.Port = 563
+	}
+	if u.Connections == 0 {
+		u.Connections = 8
+	}
+	return a, nil
 }
 
 func up() error {
-	creds, err := readCredentials()
+	acc, err := readAccounts()
 	if err != nil {
 		return err
 	}
@@ -123,12 +180,12 @@ func up() error {
 		return err
 	}
 	step("SABnzbd")
-	sabKey, err := setupSABnzbd(creds)
+	sabKey, err := setupSABnzbd(acc)
 	if err != nil {
 		return fmt.Errorf("SABnzbd: %w", err)
 	}
 	step("Prowlarr")
-	prowlarrKey, err := setupProwlarr(creds)
+	prowlarrKey, err := setupProwlarr(acc.Indexers)
 	if err != nil {
 		return fmt.Errorf("Prowlarr: %w", err)
 	}
@@ -167,14 +224,15 @@ func ensurePod() error {
 			return err
 		}
 	}
-	lsio := []string{"-e", "PUID=1000", "-e", "PGID=1000", "-e", "TZ=Europe/Vienna"}
+	tz := "TZ=" + hostZone()
+	lsio := []string{"-e", "PUID=1000", "-e", "PGID=1000", "-e", tz}
 	containers := []struct {
 		name, image string
 		args        []string
 	}{
 		{pod + "-sabnzbd", sabImage, append(lsio, "-v", path("config/sabnzbd")+":/config", "-v", path("media")+":/data")},
 		{pod + "-prowlarr", prowlarrImage, append(lsio, "-v", path("config/prowlarr")+":/config")},
-		{pod + "-jellyfin", jellyfinImage, []string{"-e", "TZ=Europe/Vienna",
+		{pod + "-jellyfin", jellyfinImage, []string{"-e", tz,
 			"-v", path("config/jellyfin") + ":/config", "-v", path("cache/jellyfin") + ":/cache",
 			"-v", path("media/library") + ":/data/library:ro"}},
 	}
@@ -196,6 +254,20 @@ func ensurePod() error {
 		}
 	}
 	return run("pod", "start", pod)
+}
+
+// hostZone is this machine's time zone, such as "Europe/Vienna", for the
+// containers' logs; UTC when it cannot tell.
+func hostZone() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		if _, zone, ok := strings.Cut(target, "zoneinfo/"); ok {
+			return zone
+		}
+	}
+	return "UTC"
 }
 
 func reset() error {

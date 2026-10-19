@@ -16,9 +16,12 @@ coverage.*
 *.db-shm
 *.db-journal
 
-# Local secrets; development secrets come from Infisical
+# Local secrets and settings
 .env
 .env.*
+/devstack.toml
+/mise.local.toml
+/.infisical.json
 
 # Editors and OS
 .DS_Store

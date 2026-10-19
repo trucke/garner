@@ -18,16 +18,11 @@ import (
 	"time"
 )
 
-// The stack downloads only from its own Usenet account, which nothing else uses.
-const (
-	usenetServer      = "news.example.net"
-	usenetConnections = 8
-)
-
-// setupSABnzbd points SABnzbd at the media folder, the Usenet server and
-// the tv category Garner uses, and removes any other server. It returns
-// SABnzbd's API key.
-func setupSABnzbd(c credentials) (string, error) {
+// setupSABnzbd points SABnzbd at the media folder, the Usenet server from
+// devstack.toml and the tv category Garner uses, and removes any other
+// server. It returns SABnzbd's API key.
+func setupSABnzbd(a accounts) (string, error) {
+	u := a.Usenet
 	var key string
 	if err := waitFor("SABnzbd writing its settings", 2*time.Minute, func() bool {
 		key = iniValue(path("config/sabnzbd/sabnzbd.ini"), "misc", "api_key")
@@ -60,10 +55,10 @@ func setupSABnzbd(c credentials) (string, error) {
 		{"mode": {"set_config"}, "section": {"misc"}, "keyword": {"download_dir"}, "value": {"/data/usenet/incomplete"}},
 		{"mode": {"set_config"}, "section": {"misc"}, "keyword": {"complete_dir"}, "value": {"/data/usenet/complete"}},
 		{"mode": {"set_config"}, "section": {"categories"}, "name": {"tv"}, "dir": {"tv"}},
-		{"mode": {"set_config"}, "section": {"servers"}, "name": {usenetServer}, "displayname": {"Usenet"},
-			"host": {usenetServer}, "port": {"563"}, "ssl": {"1"}, "ssl_verify": {"3"},
-			"connections": {strconv.Itoa(usenetConnections)}, "enable": {"1"},
-			"username": {c.usenetUser}, "password": {c.usenetPassword}},
+		{"mode": {"set_config"}, "section": {"servers"}, "name": {u.Host}, "displayname": {u.Host},
+			"host": {u.Host}, "port": {strconv.Itoa(u.Port)}, "ssl": {"1"}, "ssl_verify": {"3"},
+			"connections": {strconv.Itoa(u.Connections)}, "enable": {"1"},
+			"username": {u.Username}, "password": {u.Password}},
 	}
 	// SABnzbd accepts settings while it is still starting and may then lose
 	// them, so apply them until it reports them back.
@@ -78,12 +73,12 @@ func setupSABnzbd(c credentials) (string, error) {
 			return false
 		}
 		for _, s := range cfg.Servers {
-			if s.Name != usenetServer && call(url.Values{"mode": {"del_config"}, "section": {"servers"}, "keyword": {s.Name}}) != nil {
+			if s.Name != u.Host && call(url.Values{"mode": {"del_config"}, "section": {"servers"}, "keyword": {s.Name}}) != nil {
 				return false
 			}
 		}
 		time.Sleep(2 * time.Second)
-		return sabSettled(sab, key)
+		return sabSettled(sab, key, sabServer{Name: u.Host, Port: u.Port, Connections: u.Connections, Enable: 1})
 	})
 	return key, err
 }
@@ -99,6 +94,7 @@ type sabConfig struct {
 
 type sabServer struct {
 	Name        string `json:"name"`
+	Port        int    `json:"port"`
 	Connections int    `json:"connections"`
 	Enable      int    `json:"enable"`
 }
@@ -113,20 +109,20 @@ func readSABConfig(sab *client, key string) (sabConfig, error) {
 
 // sabSettled reports whether SABnzbd's settings are the ones setupSABnzbd
 // applies.
-func sabSettled(sab *client, key string) bool {
+func sabSettled(sab *client, key string, server sabServer) bool {
 	c, err := readSABConfig(sab, key)
 	if err != nil {
 		return false
 	}
 	return c.Misc.DownloadDir == "/data/usenet/incomplete" && c.Misc.CompleteDir == "/data/usenet/complete" &&
 		slices.ContainsFunc(c.Categories, func(x struct{ Name, Dir string }) bool { return x.Name == "tv" && x.Dir == "tv" }) &&
-		slices.Equal(c.Servers, []sabServer{{Name: usenetServer, Connections: usenetConnections, Enable: 1}})
+		slices.Equal(c.Servers, []sabServer{server})
 }
 
 // setupProwlarr adds the indexers as Newznab entries with redirect on, so
 // SABnzbd fetches NZBs from the indexer itself, and removes any other
 // indexer. It returns Prowlarr's API key.
-func setupProwlarr(c credentials) (string, error) {
+func setupProwlarr(wanted []indexer) (string, error) {
 	var key string
 	if err := waitFor("Prowlarr writing its settings", 2*time.Minute, func() bool {
 		key = xmlValue(path("config/prowlarr/config.xml"), "ApiKey")
@@ -141,19 +137,12 @@ func setupProwlarr(c credentials) (string, error) {
 	}); err != nil {
 		return "", err
 	}
-	type indexer struct{ name, baseURL, apiKey string }
-	// Indexer Two allows API use from two devices: production Prowlarr
-	// and this stack. Never run a third Prowlarr with it.
-	wanted := []indexer{
-		{"Indexer One", "https://indexer-one.example.com", c.firstIndexer},
-		{"Indexer Two", "https://indexer-two.example.com", c.secondIndexer},
-	}
 	var existing []map[string]any
 	if err := p.json(http.MethodGet, "/api/v1/indexer", nil, &existing); err != nil {
 		return "", err
 	}
 	for _, e := range existing {
-		if !slices.ContainsFunc(wanted, func(w indexer) bool { return w.name == e["name"] }) {
+		if !slices.ContainsFunc(wanted, func(w indexer) bool { return w.Name == e["name"] }) {
 			if err := p.json(http.MethodDelete, fmt.Sprintf("/api/v1/indexer/%v", e["id"]), nil, nil); err != nil {
 				return "", err
 			}
@@ -172,25 +161,25 @@ func setupProwlarr(c credentials) (string, error) {
 	for _, w := range wanted {
 		def := schema[i]
 		method, target := http.MethodPost, "/api/v1/indexer"
-		if j := slices.IndexFunc(existing, func(e map[string]any) bool { return e["name"] == w.name }); j >= 0 {
+		if j := slices.IndexFunc(existing, func(e map[string]any) bool { return e["name"] == w.Name }); j >= 0 {
 			def, method, target = existing[j], http.MethodPut, fmt.Sprintf("/api/v1/indexer/%v", existing[j]["id"])
 		}
-		def["name"], def["enable"], def["redirect"], def["priority"], def["appProfileId"] = w.name, true, true, 25, 1
+		def["name"], def["enable"], def["redirect"], def["priority"], def["appProfileId"] = w.Name, true, true, 25, 1
 		fields, _ := def["fields"].([]any)
 		for _, f := range fields {
 			field, _ := f.(map[string]any)
 			switch field["name"] {
 			case "baseUrl":
-				field["value"] = w.baseURL
+				field["value"] = w.URL
 			case "apiPath":
 				field["value"] = "/api"
 			case "apiKey":
-				field["value"] = w.apiKey
+				field["value"] = w.APIKey
 			}
 		}
 		// Prowlarr tests the indexer before saving, which checks the key.
 		if err := p.json(method, target, def, nil); err != nil {
-			return "", fmt.Errorf("indexer %s: %w", w.name, err)
+			return "", fmt.Errorf("indexer %s: %w", w.Name, err)
 		}
 	}
 	return key, nil

@@ -1,0 +1,22 @@
+# The development stack's external accounts. Copy this file to
+# devstack.toml (it is ignored by Git) and fill it in; then run
+# `mise run devstack up`.
+#
+# A value written as "${NAME}" is read from that environment variable, so
+# secrets can stay in a secret manager that sets them; any other value is
+# used as written.
+
+# The Usenet server SABnzbd downloads from. Use an account, or a
+# connection allowance, that nothing else needs at the same time.
+[usenet]
+host = "news.example.com"
+port = 563 # TLS; 563 by default
+connections = 8 # 8 by default
+username = "${USENET_USERNAME}"
+password = "${USENET_PASSWORD}"
+
+# Newznab indexers Prowlarr searches. Repeat the block for each one.
+[[indexers]]
+name = "Example indexer"
+url = "https://indexer.example.com"
+api_key = "${EXAMPLE_INDEXER_API_KEY}"
