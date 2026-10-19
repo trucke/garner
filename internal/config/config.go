@@ -11,7 +11,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -34,11 +36,46 @@ type Config struct {
 }
 
 // Monitor is the background search: it searches the episodes monitored
-// shows miss and downloads the best release it accepts.
+// shows miss and downloads the best release it accepts, and looks for
+// better releases of files below their profile's best tier.
 type Monitor struct {
 	// Enabled turns it on for every show; each show's own mode then says
 	// which of its episodes it gets.
 	Enabled bool `toml:"enabled"`
+	// RecentDays is how long after airing an episode counts as recent:
+	// recent ones are searched first and more often.
+	RecentDays int `toml:"recent_days"`
+	// MissingRecent and MissingOlder are the waits between searches for
+	// an episode not in the library.
+	MissingRecent Duration `toml:"missing_recent"`
+	MissingOlder  Duration `toml:"missing_older"`
+	// Upgrades turns on the search for better releases; UpgradeRecent and
+	// UpgradeOlder are the waits between those searches.
+	Upgrades      bool     `toml:"upgrades"`
+	UpgradeRecent Duration `toml:"upgrade_recent"`
+	UpgradeOlder  Duration `toml:"upgrade_older"`
+}
+
+// Recent is how long after airing an episode counts as recent.
+func (m Monitor) Recent() time.Duration { return time.Duration(m.RecentDays) * 24 * time.Hour }
+
+// Duration is a whole number of hours or days, such as "6h" or "7d".
+type Duration time.Duration
+
+func (d *Duration) UnmarshalText(b []byte) error {
+	s := string(b)
+	units := map[byte]time.Duration{'h': time.Hour, 'd': 24 * time.Hour}
+	var unit time.Duration
+	n, err := 0, error(nil)
+	if s != "" {
+		unit = units[s[len(s)-1]]
+		n, err = strconv.Atoi(s[:len(s)-1])
+	}
+	if unit == 0 || err != nil || n < 1 {
+		return fmt.Errorf("%q is not a duration such as \"6h\" or \"7d\"", s)
+	}
+	*d = Duration(time.Duration(n) * unit)
+	return nil
 }
 
 // Server configures how clients reach Garner.
@@ -147,7 +184,11 @@ func Load(path string, explicit bool) (*Config, error) {
 		FFprobe: "ffprobe",
 		Server:  Server{Listen: "127.0.0.1:7979"},
 		SABnzbd: SABnzbd{Category: "tv"},
-		Monitor: Monitor{Enabled: true},
+		Monitor: Monitor{
+			Enabled: true, RecentDays: 14,
+			MissingRecent: Duration(6 * time.Hour), MissingOlder: Duration(24 * time.Hour),
+			Upgrades: true, UpgradeRecent: Duration(24 * time.Hour), UpgradeOlder: Duration(7 * 24 * time.Hour),
+		},
 	}
 	base := "."
 	meta, err := toml.DecodeFile(path, cfg)
@@ -241,6 +282,9 @@ func (c *Config) validate() error {
 	}
 	if u.Scheme == "https" && IsLoopback(host) && c.Server.TLSCert == "" && !c.Server.Proxied {
 		return errors.New("server.url uses https://, but Garner listens on loopback without a certificate; set server.tls_cert and server.tls_key or use http://")
+	}
+	if c.Monitor.RecentDays < 0 {
+		return errors.New("monitor.recent_days must not be negative")
 	}
 	for name, dir := range map[string]string{"library.tv": c.Library.TV, "library.anime": c.Library.Anime} {
 		if dir != "" && !filepath.IsAbs(dir) {

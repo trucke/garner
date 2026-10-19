@@ -72,6 +72,7 @@ type Download struct {
 	ImportNotes     string
 	Reasons         string
 	Decisive        int64
+	Replaces        string
 }
 
 type Episode struct {

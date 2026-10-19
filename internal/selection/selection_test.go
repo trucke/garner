@@ -110,7 +110,8 @@ func TestRank(t *testing.T) {
 	for _, i := range Rank(evals) {
 		got = append(got, names[i][strings.LastIndex(names[i], "-")+1:])
 	}
-	if want := "G CC C B F L A D E"; strings.Join(got, " ") != want {
+	// Web before Blu-ray: dual audio WEB-DL (CC, C) before dual Blu-ray (G).
+	if want := "CC C G B F L A D E"; strings.Join(got, " ") != want {
 		t.Errorf("order = %s, want %s", strings.Join(got, " "), want)
 	}
 	large := evals[len(evals)-1]
@@ -147,5 +148,39 @@ func TestRankPack(t *testing.T) {
 		if got := []string{"S", "P"}[Rank(evals)[0]]; got != tc.first {
 			t.Errorf("%d missing: %s first, want %s (%q)", len(tc.missing), got, tc.first, evals[1].Reasons)
 		}
+	}
+}
+
+// TestUpgrade accepts, for an episode with a file, only releases in a
+// better tier than the file's: the same tier from a better source does
+// not replace it.
+func TestUpgrade(t *testing.T) {
+	s, want := fixture("Harbor Precinct", "en")
+	judge := func(have, name string) Evaluation {
+		claims := release.Parse(name)
+		return Evaluate(Context{Profile: TV, Show: s, Want: want, Original: "en", Have: have},
+			Release{Claims: claims, Match: s.Match(claims, time.Time{})})
+	}
+	for _, tc := range []struct {
+		have, name string
+		verdict    Verdict
+	}{
+		{"German 720p", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-DL-A", Accept},
+		{"German 720p", "Harbor.Precinct.S01E01.German.DL.720p.BluRay-B", Reject},
+		{"German 1080p", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-DL-C", Reject},
+		{"German 720p", "Harbor.Precinct.S01E01.German.DL.WEB-D", Fallback}, // resolution unknown: it may be 1080p
+		{"German 1080p", "Harbor.Precinct.S01E01.German.DL.WEB-D", Reject},  // nothing beats the best tier
+		{"", "Harbor.Precinct.S01E01.German.DL.720p.BluRay-E", Accept},      // no file, or one of unknown tier
+	} {
+		e := judge(tc.have, tc.name)
+		if e.Verdict != tc.verdict {
+			t.Errorf("%s over %q: %s %q, want %s", tc.name, tc.have, e.Verdict, e.Reasons, tc.verdict)
+		}
+		if e.Verdict == Reject && e.Reasons[0] != "the library has "+tc.have+" already; only a better tier replaces it" {
+			t.Errorf("%s: reasons %q", tc.name, e.Reasons)
+		}
+	}
+	if got := Summary(TV, "German 1080p", []Evaluation{judge("German 1080p", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-DL-C")}); got != "No release better than German 1080p found" {
+		t.Errorf("summary %q", got)
 	}
 }

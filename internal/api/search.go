@@ -10,9 +10,8 @@ type Search struct {
 	Searched time.Time `json:"searched"`
 	Outcome  string    `json:"outcome"` // found, fallback, nothing or failed
 	Summary  string    `json:"summary"`
-	// NextRetry is stored as the search's own retry, for the record; the
-	// server answers with the monitor's next search instead, unset when
-	// the monitor does not get the episode.
+	// NextRetry is when the monitor searches the episode again, as the
+	// server answers; unset when the monitor does not get the episode.
 	NextRetry  *time.Time      `json:"next_retry,omitempty"`
 	Indexers   []SearchIndexer `json:"indexers"`
 	Candidates []Candidate     `json:"candidates"`

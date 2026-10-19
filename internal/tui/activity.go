@@ -346,6 +346,9 @@ func activityRow(it api.ActivityItem, selected bool, showWidth, stateWidth, widt
 		// Done: nothing to do, so subtle, as on the show screen.
 		text = sSubtle
 		parts = []part{{strings.TrimPrefix(clean(d.Tier)+" · "+size(d.Size), " · "), sSubtle}}
+		if d.Replaces != "" {
+			parts = append(parts, part{" · replaced " + clean(d.Replaces), sSubtle})
+		}
 	case api.Cancelled:
 		glyph, glyphStyle, text = "✗", sSubtle, sSubtle
 		parts = []part{{"cancelled", sSubtle}}

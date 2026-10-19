@@ -107,6 +107,11 @@ type Context struct {
 	// pack with all of them, when there are several, ranks before single
 	// episodes of its tier.
 	Missing []int64
+	// Have is the tier of Want's file in the library, such as "German
+	// 720p"; empty when it has none or the tier is unknown. Only a release
+	// in a better tier is accepted then: a better source alone does not
+	// replace a file.
+	Have string
 }
 
 // Release is one search result.
@@ -260,6 +265,12 @@ func Evaluate(ctx Context, r Release) Evaluation {
 		notes = append(notes, "holds every missing episode of the season")
 	}
 
+	// A last resort's tier is the best its audio allows, so it is rejected
+	// only when even that is not better.
+	if ctx.Have != "" && len(rejects) == 0 && e.rank.tier >= TierRank(ctx.Profile, ctx.Have) {
+		rejects = append(rejects, fmt.Sprintf("the library has %s already; only a better tier replaces it", ctx.Have))
+	}
+
 	switch {
 	case len(rejects) > 0:
 		e.Verdict, e.rank.verdict, e.Reasons, e.Decisive = Reject, 2, slices.Concat(rejects, info, notes), len(rejects)
@@ -360,13 +371,16 @@ func Rank(evals []Evaluation) []int {
 	return order
 }
 
-// Summary states the outcome of a search in plain words.
-func Summary(p Profile, evals []Evaluation) string { return summary(p, evals, "release") }
+// Summary states the outcome of a search in plain words. have is the tier
+// of the file in the library, as in Context.
+func Summary(p Profile, have string, evals []Evaluation) string {
+	return summary(p, have, evals, "release")
+}
 
 // PackSummary states the outcome of a season search, which keeps packs.
-func PackSummary(p Profile, evals []Evaluation) string { return summary(p, evals, "season pack") }
+func PackSummary(p Profile, evals []Evaluation) string { return summary(p, "", evals, "season pack") }
 
-func summary(p Profile, evals []Evaluation, noun string) string {
+func summary(p Profile, have string, evals []Evaluation, noun string) string {
 	accepted, fallback := 0, 0
 	for _, e := range evals {
 		switch e.Verdict {
@@ -381,6 +395,10 @@ func summary(p Profile, evals []Evaluation, noun string) string {
 		return "Found 1 matching " + noun
 	case accepted > 1:
 		return fmt.Sprintf("Found %d matching %ss", accepted, noun)
+	case have != "" && fallback > 0:
+		return fmt.Sprintf("No %s better than %s found; %d last-resort %ss", noun, have, fallback, noun)
+	case have != "":
+		return fmt.Sprintf("No %s better than %s found", noun, have)
 	case fallback > 0:
 		return fmt.Sprintf("No matching %s %s found; %d last-resort %ss", p.Wanted(), noun, fallback, noun)
 	}
@@ -404,8 +422,10 @@ func IndexerLanguages(raw []string) []release.Language {
 	return out
 }
 
+// sourceRank orders releases of a tier by source. Web releases go before
+// Blu-ray encodes: Jellyfin usually streams them without converting.
 var sourceRank = map[release.Source]int{
-	release.BluRay: 4, release.WebDL: 3, release.WebRip: 2, release.Web: 2, release.HDTV: 1, release.HDRip: 1,
+	release.WebDL: 4, release.WebRip: 3, release.Web: 3, release.BluRay: 2, release.HDTV: 1, release.HDRip: 1,
 }
 
 var sourceNames = map[release.Source]string{release.DVD: "DVD", release.TV: "TV recording"}

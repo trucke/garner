@@ -22,33 +22,49 @@ func (s *Store) SetMonitor(ctx context.Context, seriesID int64, mode string, now
 	return nil
 }
 
-// Retry delays when nothing was downloaded. Recent episodes get new
-// releases often; older ones rarely.
-const (
-	retryRecent = 6 * time.Hour
-	retryOld    = 24 * time.Hour
-	retryFailed = time.Hour
-	recent      = 14 * 24 * time.Hour
-)
+// Schedule is when the monitor searches an episode again, and whether it
+// looks for upgrades. Recent episodes get new and better releases often;
+// older ones rarely.
+type Schedule struct {
+	// Recent is how long after airing an episode counts as recent.
+	Recent time.Duration
+	// MissingRecent and MissingOlder are the waits between searches for a
+	// missing episode.
+	MissingRecent, MissingOlder time.Duration
+	// Upgrades has the monitor look for a release in a better tier for a
+	// file below its profile's best tier, waiting UpgradeRecent or
+	// UpgradeOlder between looks.
+	Upgrades                    bool
+	UpgradeRecent, UpgradeOlder time.Duration
+	// Best names a profile's best tier, such as "German 1080p".
+	Best func(profile string) string
+}
 
-// RetryDelay is how long after a search with this outcome to search again
-// for an episode that airs on aired: an hour after a failed search,
-// otherwise 6 hours for an episode of the last two weeks and a day for an
-// older one. An episode that has not aired yet waits for its air date.
-func RetryDelay(outcome, aired string, now time.Time) time.Duration {
+// retryFailed is the wait after a search every indexer failed.
+const retryFailed = time.Hour
+
+// delay is how long after a search with this outcome to search again for
+// an episode that airs on aired: an hour after a failed search, otherwise
+// the wait for a recent or an older episode. An episode that has not aired
+// yet waits for its air date.
+func (sc Schedule) delay(outcome, aired string, upgrade bool, now time.Time) time.Duration {
 	if outcome == "failed" {
 		return retryFailed
+	}
+	recent, older := sc.MissingRecent, sc.MissingOlder
+	if upgrade {
+		recent, older = sc.UpgradeRecent, sc.UpgradeOlder
 	}
 	d, err := time.ParseInLocation(time.DateOnly, aired, now.Location())
 	switch {
 	case err != nil:
-		return retryRecent
+		return recent
 	case d.After(now):
 		return d.Sub(now)
-	case now.Sub(d) < recent:
-		return retryRecent
+	case now.Sub(d) < sc.Recent:
+		return recent
 	}
-	return retryOld
+	return older
 }
 
 // SaveMonitorSearch records the monitor's own search of an episode, which
@@ -57,22 +73,39 @@ func (s *Store) SaveMonitorSearch(ctx context.Context, episodeID int64, searched
 	return s.q.SaveMonitorSearch(ctx, query.SaveMonitorSearchParams{EpisodeID: episodeID, SearchedAt: searched.Unix(), Outcome: outcome})
 }
 
-// nextSearch is when the monitor searches a missing episode again: at once
-// (zero) when it never searched it; otherwise after the delay from its own
-// latest search or, when a download ended since without bringing a file,
-// the same delay from that end, so a failed release is not replaced at
-// once. Searches someone ran to look at releases do not count.
-func nextSearch(aired string, own searchOutcome, searched bool, d *Download) time.Time {
-	if !searched {
+// next is when the monitor searches an episode again. A missing episode
+// is due at once (zero) when the monitor never searched it; otherwise it
+// waits from the monitor's own latest search or, when a download ended
+// since without bringing a file, from that end, so a failed release is not
+// replaced at once. An upgrade waits from the same search or from the end
+// of the latest download, usually the one that brought the file, so a new
+// file is not searched again at once. Searches someone ran to look at
+// releases do not count.
+func (sc Schedule) next(upgrade bool, aired string, own searchOutcome, searched bool, d *Download) time.Time {
+	if !searched && !upgrade {
 		return time.Time{}
 	}
-	from, outcome := own.searched, own.outcome
+	var from time.Time
+	outcome := ""
+	if searched {
+		from, outcome = own.searched, own.outcome
+	}
 	if d != nil {
 		if end := ended(*d); end.After(from) {
 			from, outcome = end, ""
 		}
 	}
-	return from.Add(RetryDelay(outcome, aired, from))
+	if from.IsZero() {
+		return time.Time{}
+	}
+	return from.Add(sc.delay(outcome, aired, upgrade, from))
+}
+
+// upgradable reports whether the monitor looks for a better release of a
+// show's episode whose file came from a release in tier: one below the
+// profile's best. A file of unknown tier is left alone.
+func (sc Schedule) upgradable(sr Series, tier string) bool {
+	return sc.Upgrades && tier != "" && sc.Best != nil && tier != sc.Best(sr.Profile)
 }
 
 // leftToYou reports whether the episode's latest download was cancelled:
@@ -98,35 +131,41 @@ func missingState(state string) bool {
 // latest download: missing, and not cancelled.
 func wants(state string, d *Download) bool { return missingState(state) && !leftToYou(d) }
 
-// Wanted is a missing episode.
+// Wanted is an episode the monitor searches: a missing one, or one whose
+// file it upgrades.
 type Wanted struct {
 	EpisodeID int64
 	SeriesID  int64
 	// Season and Number are in the show's default order.
 	Season, Number int
 	Aired          string
-	// Next is when the monitor searches it; zero when it never did.
+	// Upgrade is the tier of the file a better release would replace, such
+	// as "German 720p"; empty for a missing episode.
+	Upgrade string
+	// Next is when the monitor searches it; zero when it is due at once.
 	Next time.Time
 }
 
-// Wanted lists the aired episodes that monitored shows miss, with when the
-// monitor searches each. Those whose download was cancelled are left to
-// the user.
-func (s *Store) Wanted(ctx context.Context, now time.Time) ([]Wanted, error) {
-	return s.missing(ctx, now, 0, func(sr Series, aired string, d *Download) bool {
+// Wanted lists the aired episodes of monitored shows that the monitor
+// searches, with when it searches each: the missing ones and, when the
+// schedule says so, those with a file below the best tier. Those whose
+// latest download was cancelled are left to the user.
+func (s *Store) Wanted(ctx context.Context, now time.Time, sc Schedule) ([]Wanted, error) {
+	return s.wanted(ctx, now, 0, &sc, func(sr Series, aired string, d *Download) bool {
 		return sr.Monitors(aired) && !leftToYou(d)
 	})
 }
 
 // Missing lists a show's aired episodes that are not in the library,
-// whatever its monitor mode, cancelled ones included.
+// whatever its monitor mode, cancelled ones included. Their Next is unset.
 func (s *Store) Missing(ctx context.Context, now time.Time, seriesID int64) ([]Wanted, error) {
-	return s.missing(ctx, now, seriesID, func(Series, string, *Download) bool { return true })
+	return s.wanted(ctx, now, seriesID, nil, func(Series, string, *Download) bool { return true })
 }
 
-// missing lists the aired regular episodes that are missing and that keep
-// accepts, of every show or of only that one.
-func (s *Store) missing(ctx context.Context, now time.Time, only int64, keep func(sr Series, aired string, d *Download) bool) ([]Wanted, error) {
+// wanted lists the aired regular episodes that are missing, or upgradable
+// by the schedule, and that keep accepts, of every show or of only that
+// one. Without a schedule, it lists only missing ones and leaves Next unset.
+func (s *Store) wanted(ctx context.Context, now time.Time, only int64, sc *Schedule, keep func(sr Series, aired string, d *Download) bool) ([]Wanted, error) {
 	f, err := s.loadFacts(ctx, only)
 	if err != nil {
 		return nil, err
@@ -143,17 +182,22 @@ func (s *Store) missing(ctx context.Context, now time.Time, only int64, keep fun
 		if !ok || !e.Season.Valid || e.Season.Int64 < 1 || aired == "" || aired > today {
 			continue
 		}
-		_, hasFile := f.files[e.ID]
+		file, hasFile := f.files[e.ID]
 		d := f.downloads[e.ID]
 		search, searched := f.searches[e.ID]
-		if !missingState(episodeState(hasFile, d, search, searched, true)) || !keep(sr, aired, d) {
+		state := episodeState(hasFile, d, search, searched, true)
+		upgrade := sc != nil && state == EpisodeImported && sc.upgradable(sr, file.Tier)
+		if !missingState(state) && !upgrade || !keep(sr, aired, d) {
 			continue
 		}
-		own, ran := f.monitored[e.ID]
-		out = append(out, Wanted{
-			EpisodeID: e.ID, SeriesID: e.SeriesID, Season: int(e.Season.Int64), Number: int(e.Number.Int64), Aired: aired,
-			Next: nextSearch(aired, own, ran, d),
-		})
+		w := Wanted{EpisodeID: e.ID, SeriesID: e.SeriesID, Season: int(e.Season.Int64), Number: int(e.Number.Int64), Aired: aired}
+		if upgrade {
+			w.Upgrade = file.Tier
+		}
+		if own, ran := f.monitored[e.ID]; sc != nil {
+			w.Next = sc.next(upgrade, aired, own, ran, d)
+		}
+		out = append(out, w)
 	}
 	return out, nil
 }

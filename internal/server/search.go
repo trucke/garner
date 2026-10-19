@@ -164,7 +164,7 @@ func (s *Server) nextSearch(ctx context.Context, episodeID int64) *time.Time {
 	if err != nil {
 		return nil
 	}
-	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.monitoring())
+	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.schedule())
 	if err != nil {
 		s.log.Warn("next search", "episode", episodeID, "err", err)
 		return nil

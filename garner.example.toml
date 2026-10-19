@@ -63,3 +63,20 @@ paths = { "/data/library" = "/srv/media/library" }
 # you ask for.
 [monitor]
 enabled = true
+
+# An episode counts as "recent" for this many days after it aired. Recent
+# episodes often get new or better releases, so Garner looks for them more
+# often than for older ones.
+recent_days = 14
+
+# How long Garner waits before searching again for an episode that is not
+# in the library: a recent one, and an older one.
+missing_recent = "6h"
+missing_older = "24h"
+
+# Upgrades: Garner looks for a better release of an episode whose file is
+# below the profile's best tier, such as 720p when 1080p is the best.
+# How long it waits between looks: for a recent episode, and an older one.
+upgrades = true
+upgrade_recent = "24h"
+upgrade_older = "7d"

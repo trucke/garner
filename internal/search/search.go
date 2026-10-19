@@ -73,7 +73,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: s.rules(seriesID)})
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
 	judge := selection.Context{Profile: profile, Show: show, Want: episodeID, Original: original,
-		Missing: missing(d, seasonEpisodes(d, "official", pos.Season), files, start)}
+		Missing: missing(d, seasonEpisodes(d, "official", pos.Season), files, start), Have: files[episodeID]}
 
 	sr := store.Search{EpisodeID: episodeID, Searched: start, Indexers: []store.SearchIndexer{}}
 	var hits []hit
@@ -119,11 +119,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	for _, i := range selection.Rank(evals) {
 		sr.Candidates = append(sr.Candidates, hits[i].candidate())
 	}
-	sr.Outcome, sr.Summary = outcome(selection.Summary(profile, evals), evals, sr.Indexers)
-	if sr.Outcome != "found" {
-		retry := start.Add(store.RetryDelay(sr.Outcome, ep.Aired, start))
-		sr.NextRetry = &retry
-	}
+	sr.Outcome, sr.Summary = outcome(selection.Summary(profile, judge.Have, evals), evals, sr.Indexers)
 	if err := s.store.SaveSearch(ctx, sr); err != nil {
 		return store.Search{}, err
 	}

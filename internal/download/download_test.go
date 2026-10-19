@@ -281,7 +281,7 @@ func TestCancel(t *testing.T) {
 	if len(fake.submitted()) != 1 {
 		t.Errorf("submitted %q; a cancel starts no other release", fake.submitted())
 	}
-	_, states, _ := st.ShowStatus(ctx, 42, time.Now(), false)
+	_, states, _ := st.ShowStatus(ctx, 42, time.Now(), nil)
 	if i := slices.IndexFunc(states, func(e store.EpisodeStatus) bool { return e.EpisodeID == 101 }); i < 0 || states[i].State == store.EpisodeFailed {
 		t.Errorf("episode after a cancel: %+v", states)
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
+	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
 )
@@ -194,8 +195,21 @@ func (s *Server) monitorOff() string {
 	return ""
 }
 
-// monitoring reports whether the monitor gets episodes on its own.
-func (s *Server) monitoring() bool { return s.monitorOff() == "" }
+// schedule is when the monitor searches episodes on its own; nil when it
+// does not run.
+func (s *Server) schedule() *store.Schedule {
+	if s.monitorOff() != "" {
+		return nil
+	}
+	m := s.cfg.Monitor
+	return &store.Schedule{
+		Recent:        m.Recent(),
+		MissingRecent: time.Duration(m.MissingRecent), MissingOlder: time.Duration(m.MissingOlder),
+		Upgrades:      m.Upgrades,
+		UpgradeRecent: time.Duration(m.UpgradeRecent), UpgradeOlder: time.Duration(m.UpgradeOlder),
+		Best: func(profile string) string { return selection.ProfileNamed(profile).Tiers[0].String() },
+	}
+}
 
 func (s *Server) setupMonitor() {
 	if off := s.monitorOff(); off != "" {
@@ -208,7 +222,7 @@ func (s *Server) setupMonitor() {
 	if s.catalog != nil {
 		rules = s.catalog.ServiceOrders
 	}
-	s.monitor = monitor.New(s.store, s.search, s.downloads, s.monitoring(), rules, s.log)
+	s.monitor = monitor.New(s.store, s.search, s.downloads, s.schedule(), rules, s.log)
 	s.monitor.OnShowProgress = func(p api.ShowProgress) { s.events.publish(Event{Type: "series.search", Data: p}) }
 }
 

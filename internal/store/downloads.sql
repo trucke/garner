@@ -3,10 +3,16 @@ SELECT count(*) FROM downloads
 WHERE episode_id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing');
 
 -- name: InsertDownload :one
-INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, state, detail,
+INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, replaces, state, detail,
     progress, time_left, storage, failure, retryable, stages, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
 RETURNING id;
+
+-- The tier of the release an episode's file came from; empty when unknown.
+-- name: GetEpisodeFileTier :one
+SELECT coalesce(d.tier, '') AS tier
+FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id
+WHERE f.episode_id = ?;
 
 -- A cancelled download stays cancelled, whatever a poll that started
 -- before the cancel saves.

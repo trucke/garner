@@ -39,11 +39,18 @@ func (s *Store) StartDownload(ctx context.Context, d Download, now time.Time) (D
 	if d.Reasons == nil {
 		d.Reasons = []string{}
 	}
+	d.Replaces, err = q.GetEpisodeFileTier(ctx, d.EpisodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		d.Replaces, err = "", nil
+	}
+	if err != nil {
+		return Download{}, err
+	}
 	reasons, _ := json.Marshal(d.Reasons)
 	id, err := q.InsertDownload(ctx, query.InsertDownloadParams{
 		EpisodeID: d.EpisodeID, Title: d.Title, Indexer: d.Indexer, Link: d.Link, Size: d.Size, Verdict: d.Verdict,
 		Tier: d.Tier, Reasons: string(reasons), Decisive: int64(d.Decisive), Manual: boolInt(d.Manual),
-		CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
+		Replaces: d.Replaces, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	})
 	if err != nil {
 		return Download{}, fmt.Errorf("record download: %w", err)
@@ -205,7 +212,7 @@ func downloadsFromRows(rows []query.Download) ([]Download, error) {
 func downloadFromRow(r query.Download) (Download, error) {
 	d := Download{
 		ID: r.ID, EpisodeID: r.EpisodeID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size,
-		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
+		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, Replaces: r.Replaces, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
 		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0,
 		Created: time.Unix(r.CreatedAt, 0), Updated: time.Unix(r.UpdatedAt, 0),
 	}

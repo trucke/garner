@@ -32,7 +32,11 @@ type Download struct {
 	Reasons  []string `json:"reasons"`
 	Decisive int      `json:"decisive"`
 	Manual   bool     `json:"manual"`
-	State    string   `json:"state"`
+	// Replaces is the tier of the file in the library the download
+	// replaces, such as "German 720p"; empty when the episode had no file
+	// when it started, or the file's tier is unknown.
+	Replaces string `json:"replaces,omitempty"`
+	State    string `json:"state"`
 	// Detail is SABnzbd's own status or running step, such as "Repairing".
 	Detail   string  `json:"detail,omitempty"`
 	JobID    string  `json:"job_id,omitempty"`

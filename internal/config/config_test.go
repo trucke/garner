@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestPathMap(t *testing.T) {
@@ -75,6 +76,19 @@ func TestProxied(t *testing.T) {
 		c := Config{Server: tc.srv}
 		if err := c.validate(); (err == nil) != tc.ok {
 			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+}
+
+func TestDuration(t *testing.T) {
+	for in, want := range map[string]time.Duration{
+		"6h": 6 * time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour,
+		"": 0, "0h": 0, "-1d": 0, "6": 0, "1.5h": 0, "90m": 0, "6dh": 0, "h": 0,
+	} {
+		var d Duration
+		err := d.UnmarshalText([]byte(in))
+		if want == 0 && err == nil || want != 0 && (err != nil || time.Duration(d) != want) {
+			t.Errorf("%q: %v, %v; want %v", in, time.Duration(d), err, want)
 		}
 	}
 }

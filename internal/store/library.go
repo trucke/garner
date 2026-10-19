@@ -21,18 +21,18 @@ type searchOutcome struct {
 	summary  string
 }
 
-// Library summarises every show in the catalogue as of now. monitoring
-// says whether the monitor runs, so missing episodes it gets carry its next
-// search.
-func (s *Store) Library(ctx context.Context, now time.Time, monitoring bool) ([]Show, error) {
-	shows, _, err := s.summarise(ctx, now, 0, monitoring)
+// Library summarises every show in the catalogue as of now. sc is the
+// monitor's schedule, nil when the monitor does not run; missing episodes
+// it gets carry its next search.
+func (s *Store) Library(ctx context.Context, now time.Time, sc *Schedule) ([]Show, error) {
+	shows, _, err := s.summarise(ctx, now, 0, sc)
 	return shows, err
 }
 
 // ShowStatus summarises one show and lists what Garner has of each of its
 // episodes, as Library does.
-func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time, monitoring bool) (Show, []EpisodeStatus, error) {
-	shows, states, err := s.summarise(ctx, now, seriesID, monitoring)
+func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time, sc *Schedule) (Show, []EpisodeStatus, error) {
+	shows, states, err := s.summarise(ctx, now, seriesID, sc)
 	if err != nil {
 		return Show{}, nil, err
 	}
@@ -44,7 +44,7 @@ func (s *Store) ShowStatus(ctx context.Context, seriesID int64, now time.Time, m
 
 // summarise works out every episode's state. With only set, it covers that
 // show alone and also returns the episodes' states.
-func (s *Store) summarise(ctx context.Context, now time.Time, only int64, monitoring bool) ([]Show, []EpisodeStatus, error) {
+func (s *Store) summarise(ctx context.Context, now time.Time, only int64, sc *Schedule) ([]Show, []EpisodeStatus, error) {
 	f, err := s.loadFacts(ctx, only)
 	if err != nil {
 		return nil, nil, err
@@ -90,9 +90,9 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64, monito
 			state = ""
 		}
 		var next *time.Time
-		if monitoring && regular && wants(state, d) && sh.Monitors(e.Aired.String) {
+		if sc != nil && regular && wants(state, d) && sh.Monitors(e.Aired.String) {
 			own, ran := f.monitored[e.ID]
-			t := nextSearch(e.Aired.String, own, ran, d)
+			t := sc.next(false, e.Aired.String, own, ran, d)
 			if t.IsZero() {
 				t = now // due: the monitor gets to it soon
 			}

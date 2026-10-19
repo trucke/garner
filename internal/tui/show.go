@@ -574,7 +574,8 @@ func seasonCounts(se season) string {
 	imported, aired, toCome := 0, 0, 0
 	for _, e := range se.episodes {
 		switch {
-		case e.status.State == api.EpisodeImported:
+		// A file whose upgrade runs is still in the library.
+		case e.status.State == api.EpisodeImported || e.status.Size > 0:
 			imported++
 			aired++
 		case e.status.State == api.EpisodeUpcoming:

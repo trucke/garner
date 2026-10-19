@@ -688,7 +688,30 @@ func redrawWhenSlow(downloads ...*api.Download) tea.Cmd {
 
 // statusParts describes what an episode is doing, from its state, latest
 // download and latest search. The sentences come from the server verbatim.
+// A download that replaces a file in the library names the file's tier
+// first, so a narrow State column keeps it; its percentage stands in for
+// the progress bar.
 func statusParts(state string, d *api.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
+	if d == nil || d.Replaces == "" {
+		return pipelineParts(state, d, summary, nextRetry, attempts, now)
+	}
+	replaces := []part{{"replaces " + clean(d.Replaces), sMuted}, {" · ", sMuted}}
+	switch state {
+	case api.EpisodeDownloading:
+		return append(replaces, downloadParts(d, attempts, false)...)
+	case api.EpisodeProcessing, api.EpisodeImporting:
+		return append(replaces, pipelineParts(state, d, summary, nextRetry, attempts, now)...)
+	case api.EpisodeFailed:
+		// The library keeps its file; said before the failure, which is long.
+		parts := pipelineParts(state, d, summary, nextRetry, attempts, now)
+		return slices.Insert(parts, 1, part{" · keeps " + clean(d.Replaces), sMuted})
+	}
+	return pipelineParts(state, d, summary, nextRetry, attempts, now)
+}
+
+// pipelineParts is statusParts without the file a download replaces, as
+// the Episode screen's steps show it.
+func pipelineParts(state string, d *api.Download, summary string, nextRetry *time.Time, attempts int, now time.Time) []part {
 	sep := part{" · ", sMuted}
 	switch state {
 	case api.EpisodeFailed:
@@ -715,25 +738,7 @@ func statusParts(state string, d *api.Download, summary string, nextRetry *time.
 		}
 		return []part{{"needs you", sAmber}, sep, {detail, sMuted}}
 	case api.EpisodeDownloading:
-		var parts []part
-		if d == nil || d.Progress <= 0 {
-			parts = []part{{"queued", sMuted}}
-		} else {
-			const bar = 16
-			done := min(bar, int(d.Progress/100*bar+0.5))
-			parts = []part{
-				{strings.Repeat("█", done), sAmber},
-				{strings.Repeat("█", bar-done), sBorder},
-				{fmt.Sprintf("  %3.0f%%", d.Progress), sNormal},
-			}
-			if left := timeLeft(d.TimeLeft); left != "" {
-				parts = append(parts, part{"   " + left + " left", sMuted})
-			}
-		}
-		if attempts > 1 {
-			parts = append(parts, part{" · attempt " + strconv.Itoa(attempts), sMuted})
-		}
-		return parts
+		return downloadParts(d, attempts, true)
 	case api.EpisodeProcessing:
 		if d != nil && d.Detail != "" {
 			return []part{{clean(d.Detail), sMuted}}
@@ -773,6 +778,34 @@ func statusParts(state string, d *api.Download, summary string, nextRetry *time.
 		return []part{{text, sMuted}}
 	}
 	return nil
+}
+
+// downloadParts shows a download's progress, with a bar or without.
+func downloadParts(d *api.Download, attempts int, bar bool) []part {
+	var parts []part
+	switch {
+	case d == nil || d.Progress <= 0:
+		parts = []part{{"queued", sMuted}}
+	case bar:
+		const width = 16
+		done := min(width, int(d.Progress/100*width+0.5))
+		parts = []part{
+			{strings.Repeat("█", done), sAmber},
+			{strings.Repeat("█", width-done), sBorder},
+			{fmt.Sprintf("  %3.0f%%", d.Progress), sNormal},
+		}
+	default:
+		parts = []part{{fmt.Sprintf("%.0f%%", d.Progress), sNormal}}
+	}
+	if d != nil && d.Progress > 0 {
+		if left := timeLeft(d.TimeLeft); left != "" {
+			parts = append(parts, part{"   " + left + " left", sMuted})
+		}
+	}
+	if attempts > 1 {
+		parts = append(parts, part{" · attempt " + strconv.Itoa(attempts), sMuted})
+	}
+	return parts
 }
 
 // nextSearch says when the monitor searches again; "soon" once the time

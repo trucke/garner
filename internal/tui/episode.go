@@ -354,6 +354,9 @@ func (s *episodeScreen) releaseFacts(d api.Download, w int) string {
 	case "reject":
 		meta = append(meta, sRed.Render("rejected"))
 	}
+	if d.Replaces != "" {
+		meta = append(meta, sMuted.Render("replaces "+clean(d.Replaces)))
+	}
 	if sz := size(d.Size); sz != "" {
 		meta = append(meta, sMuted.Render(sz))
 	}
@@ -542,7 +545,7 @@ func pipeline(d api.Download, now time.Time) []step {
 
 	switch {
 	case d.State == api.Queued, d.State == api.Downloading:
-		run(1, downloading, statusParts(api.EpisodeDownloading, &d, "", nil, 0, now)...)
+		run(1, downloading, pipelineParts(api.EpisodeDownloading, &d, "", nil, 0, now)...)
 		steps[2].detail = []part{{"repair and unpack", sSubtle}}
 		return steps
 	case d.State == api.Cancelled:

@@ -127,7 +127,7 @@ func TestDeleteSeries(t *testing.T) {
 	if _, err := st.LoadSearch(ctx, 101); err == nil {
 		t.Error("a search of the deleted show survived")
 	}
-	if shows, err := st.Library(ctx, now, false); err != nil || len(shows) != 0 {
+	if shows, err := st.Library(ctx, now, nil); err != nil || len(shows) != 0 {
 		t.Errorf("library after delete: %d shows, %v", len(shows), err)
 	}
 

@@ -73,7 +73,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // handleListSeries lists the shows with a summary of each: episode counts,
 // size, next air date and the most urgent episode.
 func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Library(r.Context(), time.Now(), s.monitoring())
+	list, err := s.store.Library(r.Context(), time.Now(), s.schedule())
 	if err != nil {
 		s.internalError(w, "list series", err)
 		return
@@ -158,7 +158,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 		s.internalError(w, "load series", err)
 		return
 	}
-	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.monitoring())
+	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.schedule())
 	if err != nil {
 		s.internalError(w, "summarise series", err)
 		return

@@ -1,8 +1,10 @@
 // Package monitor gets the episodes that monitored shows miss: it searches
 // each one when it is due and downloads the best release it accepts. It
-// also searches every missing episode of a show when asked to, the same
-// way. From there the download service follows the download and replaces a
-// failed release, and the importer moves the file into the library.
+// upgrades their files below the profile's best tier the same way, taking
+// only a release in a better tier. It also searches every missing episode
+// of a show when asked to. From there the download service follows the
+// download and replaces a failed release, and the importer moves the file
+// into the library, replacing the old one.
 package monitor
 
 import (
@@ -32,8 +34,6 @@ const (
 	// every minute. Indexer failures are a search outcome with their own
 	// retry.
 	pause = time.Hour
-	// recent episodes go first, ahead of a backlog of older ones.
-	recent = 14 * 24 * time.Hour
 )
 
 // Service runs the monitor and the searches of shows asked for, one
@@ -42,9 +42,9 @@ type Service struct {
 	store     *store.Store
 	search    *search.Service
 	downloads *download.Service
-	// auto runs the monitor's own rounds; without it, only the shows
+	// schedule runs the monitor's own rounds; without it, only the shows
 	// asked for are searched.
-	auto bool
+	schedule *store.Schedule
 	// rules returns a show's reviewed streaming-service order rules.
 	rules  func(seriesID int64) map[release.Service]string
 	log    *slog.Logger
@@ -57,14 +57,14 @@ type Service struct {
 	OnShowProgress func(api.ShowProgress)
 }
 
-// New returns a service that runs the monitor's rounds when auto is set.
-// rules may be nil.
-func New(st *store.Store, s *search.Service, d *download.Service, auto bool, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
+// New returns a service that runs the monitor's rounds by the schedule,
+// unless it is nil. rules may be nil.
+func New(st *store.Store, s *search.Service, d *download.Service, schedule *store.Schedule, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
 	if rules == nil {
 		rules = func(int64) map[release.Service]string { return nil }
 	}
 	return &Service{
-		store: st, search: s, downloads: d, auto: auto, rules: rules, log: log, now: time.Now,
+		store: st, search: s, downloads: d, schedule: schedule, rules: rules, log: log, now: time.Now,
 		wake: make(chan struct{}, 1), paused: map[int64]time.Time{}, shows: showQueue{progress: map[int64]api.ShowProgress{}},
 	}
 }
@@ -85,7 +85,7 @@ func (m *Service) Run(ctx context.Context) {
 		for id, ok := m.shows.next(); ok && ctx.Err() == nil; id, ok = m.shows.next() {
 			m.searchShow(ctx, id)
 		}
-		if m.auto {
+		if m.schedule != nil {
 			m.round(ctx)
 		}
 		if m.shows.waiting() {
@@ -104,15 +104,15 @@ func (m *Service) Run(ctx context.Context) {
 // search at a time.
 func (m *Service) round(ctx context.Context) {
 	now := m.now()
-	wanted, err := m.store.Wanted(ctx, now)
+	wanted, err := m.store.Wanted(ctx, now, *m.schedule)
 	if err != nil {
-		m.log.Error("monitor: list missing episodes", "err", err)
+		m.log.Error("monitor: list wanted episodes", "err", err)
 		return
 	}
 	maps.DeleteFunc(m.paused, func(_ int64, until time.Time) bool { return !until.After(now) })
-	todo := due(wanted, m.paused, now)
+	todo := due(wanted, m.paused, now, m.schedule.Recent)
 	held := map[int64]map[int64]bool{} // by show; looked up when needed
-	searched, started := 0, 0
+	missing, upgrades, started := 0, 0, 0
 	for _, w := range todo {
 		if ctx.Err() != nil || m.shows.waiting() {
 			break // the rest stays due for the next round
@@ -128,34 +128,35 @@ func (m *Service) round(ctx context.Context) {
 		if h[w.EpisodeID] {
 			continue
 		}
-		searched++
+		if w.Upgrade != "" {
+			upgrades++
+		} else {
+			missing++
+		}
 		if m.get(ctx, w) {
 			started++
 			delete(held, w.SeriesID) // the new download may hold more episodes
 		}
 	}
-	if searched > 0 {
-		m.log.Info("monitor: searched missing episodes", "episodes", searched, "downloads", started, "duration", m.now().Sub(now).Round(time.Second))
+	if missing+upgrades > 0 {
+		m.log.Info("monitor: searched episodes", "missing", missing, "upgrades", upgrades, "downloads", started, "duration", m.now().Sub(now).Round(time.Second))
 	}
 }
 
-// due picks the episodes to search now, in order: those of the last two
-// weeks first, then by air date, so a new episode does not wait behind a
-// show's backlog.
-func due(wanted []store.Wanted, paused map[int64]time.Time, now time.Time) []store.Wanted {
+// due picks the episodes to search now, in order: recent ones first, so a
+// new episode does not wait behind a show's backlog; within those and the
+// older ones, missing episodes before upgrades, then by air date.
+func due(wanted []store.Wanted, paused map[int64]time.Time, now time.Time, recent time.Duration) []store.Wanted {
 	out := slices.DeleteFunc(slices.Clone(wanted), func(w store.Wanted) bool {
 		return w.Next.After(now) || paused[w.EpisodeID].After(now)
 	})
 	since := now.Add(-recent).Format(time.DateOnly)
-	older := func(w store.Wanted) int {
-		if w.Aired >= since {
-			return 0
-		}
-		return 1
-	}
+	older := func(w store.Wanted) bool { return w.Aired < since }
+	upgrade := func(w store.Wanted) bool { return w.Upgrade != "" }
 	slices.SortFunc(out, func(a, b store.Wanted) int {
 		return cmp.Or(
-			cmp.Compare(older(a), older(b)),
+			compareBool(older(a), older(b)),
+			compareBool(upgrade(a), upgrade(b)),
 			cmp.Compare(a.Aired, b.Aired),
 			cmp.Compare(a.SeriesID, b.SeriesID),
 			cmp.Compare(a.Season, b.Season),
@@ -165,13 +166,14 @@ func due(wanted []store.Wanted, paused map[int64]time.Time, now time.Time) []sto
 	return out
 }
 
-// get searches an episode and downloads the best release it accepts. It
-// reports whether a download started.
+// get searches an episode and downloads the best release it accepts; for
+// an upgrade, the search accepts only releases in a better tier than the
+// file's. It reports whether a download started.
 func (m *Service) get(ctx context.Context, w store.Wanted) bool {
 	sr, err := m.search.Episode(ctx, w.EpisodeID)
 	if err != nil {
 		if ctx.Err() == nil {
-			m.log.Warn("monitor: search failed", "episode", w.EpisodeID, "err", err)
+			m.log.Warn("monitor: search failed", "episode", w.EpisodeID, "upgrade", w.Upgrade, "err", err)
 			m.paused[w.EpisodeID] = m.now().Add(pause)
 		}
 		return false
@@ -194,7 +196,21 @@ func (m *Service) get(ctx context.Context, w store.Wanted) bool {
 		m.log.Warn("monitor: download failed to start", "episode", w.EpisodeID, "err", err)
 		return false
 	}
+	if w.Upgrade != "" {
+		m.log.Info("monitor: upgrading", "episode", w.EpisodeID, "from", w.Upgrade)
+	}
 	return true
+}
+
+// compareBool orders false before true.
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	}
+	return -1
 }
 
 // held lists the episodes a show's running downloads and imports hold: a

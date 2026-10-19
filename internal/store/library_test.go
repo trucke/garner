@@ -73,7 +73,7 @@ func TestLibrary(t *testing.T) {
 	}
 	download(32, Completed, ImportScanning)
 
-	shows, err := st.Library(ctx, now, false)
+	shows, err := st.Library(ctx, now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
