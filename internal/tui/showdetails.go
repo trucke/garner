@@ -55,6 +55,7 @@ type showDetailsScreen struct {
 	busy    string // what runs, such as "Refreshing from TVDB…"
 	flash   flash
 	scroll  scroller
+	files   filesPrompt
 }
 
 func newShowDetails(sess *session, show *showScreen, back screen) *showDetailsScreen {
@@ -105,6 +106,21 @@ func (s *showDetailsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		// Answers the show screen asked for.
 		_, cmd := s.show.update(msg)
 		return s, cmd
+	case takenOverMsg:
+		s.busy = ""
+		if errors.Is(msg.err, client.ErrUnauthorized) {
+			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
+		}
+		if msg.err != nil {
+			s.flash.stay(gFailed + " " + sRed.Render("Could not take over files: "+clean(msg.err.Error())))
+			return s, nil
+		}
+		s.files.show(msg.result)
+		return s, s.show.reload()
+	case renamedMsg:
+		s.busy = ""
+		reportRenamed(msg, &s.flash)
+		return s, s.show.reload()
 	case openedMsg:
 		if msg.err != nil {
 			s.flash.stay(gFailed + " " + sRed.Render("Could not open the browser: "+clean(msg.err.Error())))
@@ -114,6 +130,13 @@ func (s *showDetailsScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			return s, nil
 		}
 		s.flash.clear()
+		if s.files.open {
+			if s.files.key(msg.String()) {
+				s.busy = "Renaming and moving " + plural(s.files.result.Renamable, "file") + "…"
+				return s, renameFiles(s.sess.client, s.show.id)
+			}
+			return s, nil
+		}
 		if s.overlay != noOverlay {
 			return s, s.overlayKey(msg.String())
 		}
@@ -144,6 +167,9 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 		s.overlay, s.choice = deleteOverlay, 0 // the safe choice: cancel
 	case "o":
 		return openLink(d.URL)
+	case "t":
+		s.busy = "Looking for " + s.name() + "'s files in the library…"
+		return takeOverFiles(s.sess.client, s.show.id)
 	case "r":
 		s.busy = "Refreshing " + s.name() + " from TVDB…"
 		cl, id := s.sess.client, s.show.id
@@ -246,6 +272,9 @@ func (s *showDetailsScreen) view(width, height int) string {
 	}
 
 	page := s.scroll.layout(width, height, b.String(), s.bottom())
+	if s.files.open {
+		return overlay(page, s.files.lines(s.name()), width, height)
+	}
 	switch s.overlay {
 	case deleteOverlay:
 		return overlay(page, s.deleteLines(), width, height)
@@ -402,13 +431,15 @@ func (s *showDetailsScreen) profileLines() []string {
 		keyBar("j k", "choose", "enter", "ok", "esc", "cancel"))
 }
 
-func (s *showDetailsScreen) captures() bool { return s.overlay != noOverlay || s.busy != "" }
+func (s *showDetailsScreen) captures() bool {
+	return s.overlay != noOverlay || s.files.open || s.busy != ""
+}
 
 func (s *showDetailsScreen) help() (string, []string) {
 	return "Show details", []string{
 		"p", "change the profile", "m", "choose the episodes Garner gets",
 		"r", "refresh from TVDB", "o", "open on TVDB",
-		"d", "delete the show",
+		"t", "take over the show's files in the library", "d", "delete the show",
 	}
 }
 
@@ -419,7 +450,7 @@ func (s *showDetailsScreen) bottom() string {
 	case s.flash.text != "":
 		return s.flash.text
 	}
-	return keyBar("p", "change profile", "m", "monitor", "r", "refresh from TVDB", "o", "open on TVDB", "d", "delete show", "?", "help", "esc", "back")
+	return keyBar("p", "change profile", "m", "monitor", "r", "refresh", "o", "open on TVDB", "t", "take over", "d", "delete show", "?", "help", "esc", "back")
 }
 
 // titleBlock is the heading of a details page: the English name, the

@@ -54,7 +54,10 @@ paths = { "/data/usenet" = "/srv/media/usenet" }
 
 [jellyfin]
 url = "http://jellyfin.home.lan:8096"
-# The same for Jellyfin's library folders.
+# The same for Jellyfin's library folders. When you add a show, Garner takes
+# over its files in the folders Jellyfin holds it in, so map every folder
+# Jellyfin's libraries use, including those of a library from before Garner.
+# Garner skips a folder no entry covers and says so.
 paths = { "/data/library" = "/srv/media/library" }
 
 # The monitor searches the episodes your shows miss and downloads the best

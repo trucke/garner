@@ -90,8 +90,7 @@ func (q *Queries) DeleteSeries(ctx context.Context, id int64) (int64, error) {
 }
 
 const listEpisodeFiles = `-- name: ListEpisodeFiles :many
-SELECT f.episode_id, f.path, f.size, coalesce(d.tier, '') AS tier
-FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id
+SELECT episode_id, path, size, tier FROM episode_files
 `
 
 type ListEpisodeFilesRow struct {
@@ -101,7 +100,6 @@ type ListEpisodeFilesRow struct {
 	Tier      string
 }
 
-// Every imported file with the tier of the release it came from.
 func (q *Queries) ListEpisodeFiles(ctx context.Context) ([]ListEpisodeFilesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEpisodeFiles)
 	if err != nil {
@@ -363,9 +361,7 @@ func (q *Queries) ListSeriesBusyDownloads(ctx context.Context, seriesID int64) (
 }
 
 const listSeriesFileTiers = `-- name: ListSeriesFileTiers :many
-SELECT f.episode_id, coalesce(d.tier, '') AS tier
-FROM episode_files f JOIN episodes e ON e.id = f.episode_id LEFT JOIN downloads d ON d.id = f.download_id
-WHERE e.series_id = ?
+SELECT f.episode_id, f.tier FROM episode_files f JOIN episodes e ON e.id = f.episode_id WHERE e.series_id = ?
 `
 
 type ListSeriesFileTiersRow struct {
@@ -373,7 +369,6 @@ type ListSeriesFileTiersRow struct {
 	Tier      string
 }
 
-// Episodes with a file, and the tier of the release it came from.
 func (q *Queries) ListSeriesFileTiers(ctx context.Context, seriesID int64) ([]ListSeriesFileTiersRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSeriesFileTiers, seriesID)
 	if err != nil {

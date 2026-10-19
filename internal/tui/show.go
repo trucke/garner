@@ -51,6 +51,8 @@ type showScreen struct {
 	// choice 1 is Search.
 	asking bool
 	choice int
+	// files reports the files Garner took over when the show was added.
+	files filesPrompt
 }
 
 type rowKey struct {
@@ -147,8 +149,18 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		if msg.from == s {
 			return s, s.searched(msg)
 		}
+	case renamedMsg:
+		reportRenamed(msg, &s.flash)
+		return s, s.reload()
 	case tea.KeyPressMsg:
-		if s.asking {
+		switch {
+		case s.files.open:
+			if s.files.key(msg.String()) {
+				s.flash.stay(sMuted.Render("Renaming and moving " + plural(s.files.result.Renamable, "file") + "…"))
+				return s, renameFiles(s.sess.client, s.id)
+			}
+			return s, nil
+		case s.asking:
 			return s, s.searchKey(msg.String())
 		}
 		return s, s.key(msg.String())
@@ -436,7 +448,10 @@ func (s *showScreen) view(width, height int) string {
 		}
 	}
 	page := screenLayout(width, height, b.String(), s.bottom())
-	if s.asking {
+	switch {
+	case s.files.open:
+		return overlay(page, s.files.lines(clean(s.name)), width, height)
+	case s.asking:
 		return overlay(page, s.searchQuestion(), width, height)
 	}
 	return page
@@ -714,4 +729,4 @@ func fill(line string, width int, bg func(lipgloss.Style) lipgloss.Style) string
 func (s *showScreen) flashed() *flash { return &s.flash }
 
 // captures: the search question takes every key, ? and A included.
-func (s *showScreen) captures() bool { return s.asking }
+func (s *showScreen) captures() bool { return s.asking || s.files.open }

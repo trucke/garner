@@ -22,7 +22,7 @@ func (q *Queries) CountEpisodeFilesAt(ctx context.Context, path string) (int64, 
 }
 
 const getEpisodeFile = `-- name: GetEpisodeFile :one
-SELECT episode_id, path, size, download_id, imported_at FROM episode_files WHERE episode_id = ?
+SELECT episode_id, path, size, download_id, imported_at, tier FROM episode_files WHERE episode_id = ?
 `
 
 func (q *Queries) GetEpisodeFile(ctx context.Context, episodeID int64) (EpisodeFile, error) {
@@ -34,8 +34,37 @@ func (q *Queries) GetEpisodeFile(ctx context.Context, episodeID int64) (EpisodeF
 		&i.Size,
 		&i.DownloadID,
 		&i.ImportedAt,
+		&i.Tier,
 	)
 	return i, err
+}
+
+const insertTakenFile = `-- name: InsertTakenFile :execrows
+INSERT INTO episode_files (episode_id, path, size, tier, download_id, imported_at) VALUES (?, ?, ?, ?, NULL, ?)
+ON CONFLICT (episode_id) DO NOTHING
+`
+
+type InsertTakenFileParams struct {
+	EpisodeID  int64
+	Path       string
+	Size       int64
+	Tier       string
+	ImportedAt int64
+}
+
+// A file Garner took over from the library, unless the episode has one.
+func (q *Queries) InsertTakenFile(ctx context.Context, arg InsertTakenFileParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertTakenFile,
+		arg.EpisodeID,
+		arg.Path,
+		arg.Size,
+		arg.Tier,
+		arg.ImportedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const listDueImports = `-- name: ListDueImports :many
@@ -95,6 +124,49 @@ func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
 	return items, nil
 }
 
+const listSeriesTakenFiles = `-- name: ListSeriesTakenFiles :many
+SELECT f.episode_id, f.path, f.size, f.tier FROM episode_files f JOIN episodes e ON e.id = f.episode_id
+WHERE e.series_id = ? AND f.download_id IS NULL
+ORDER BY f.path, f.episode_id
+`
+
+type ListSeriesTakenFilesRow struct {
+	EpisodeID int64
+	Path      string
+	Size      int64
+	Tier      string
+}
+
+// The files of a show Garner took over from the library, with the
+// episodes each holds.
+func (q *Queries) ListSeriesTakenFiles(ctx context.Context, seriesID int64) ([]ListSeriesTakenFilesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSeriesTakenFiles, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeriesTakenFilesRow
+	for rows.Next() {
+		var i ListSeriesTakenFilesRow
+		if err := rows.Scan(
+			&i.EpisodeID,
+			&i.Path,
+			&i.Size,
+			&i.Tier,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markImportPending = `-- name: MarkImportPending :exec
 UPDATE downloads SET import_state = 'pending', import_updated_at = ? WHERE id = ? AND import_state = ''
 `
@@ -106,6 +178,21 @@ type MarkImportPendingParams struct {
 
 func (q *Queries) MarkImportPending(ctx context.Context, arg MarkImportPendingParams) error {
 	_, err := q.db.ExecContext(ctx, markImportPending, arg.ImportUpdatedAt, arg.ID)
+	return err
+}
+
+const moveEpisodeFile = `-- name: MoveEpisodeFile :exec
+UPDATE episode_files SET path = ?1 WHERE path = ?2
+`
+
+type MoveEpisodeFileParams struct {
+	NewPath string
+	OldPath string
+}
+
+// A file Garner moved within the library, for every episode it holds.
+func (q *Queries) MoveEpisodeFile(ctx context.Context, arg MoveEpisodeFileParams) error {
+	_, err := q.db.ExecContext(ctx, moveEpisodeFile, arg.NewPath, arg.OldPath)
 	return err
 }
 
@@ -139,15 +226,17 @@ func (q *Queries) UpdateImport(ctx context.Context, arg UpdateImportParams) erro
 }
 
 const upsertEpisodeFile = `-- name: UpsertEpisodeFile :exec
-INSERT INTO episode_files (episode_id, path, size, download_id, imported_at) VALUES (?, ?, ?, ?, ?)
+INSERT INTO episode_files (episode_id, path, size, tier, download_id, imported_at) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (episode_id) DO UPDATE SET
-    path = excluded.path, size = excluded.size, download_id = excluded.download_id, imported_at = excluded.imported_at
+    path = excluded.path, size = excluded.size, tier = excluded.tier, download_id = excluded.download_id,
+    imported_at = excluded.imported_at
 `
 
 type UpsertEpisodeFileParams struct {
 	EpisodeID  int64
 	Path       string
 	Size       int64
+	Tier       string
 	DownloadID sql.NullInt64
 	ImportedAt int64
 }
@@ -157,6 +246,7 @@ func (q *Queries) UpsertEpisodeFile(ctx context.Context, arg UpsertEpisodeFilePa
 		arg.EpisodeID,
 		arg.Path,
 		arg.Size,
+		arg.Tier,
 		arg.DownloadID,
 		arg.ImportedAt,
 	)

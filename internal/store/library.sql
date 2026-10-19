@@ -6,10 +6,8 @@ FROM episodes e
 JOIN series s ON s.id = e.series_id
 LEFT JOIN episode_numbers n ON n.episode_id = e.id AND n.order_type = s.default_order;
 
--- Every imported file with the tier of the release it came from.
 -- name: ListEpisodeFiles :many
-SELECT f.episode_id, f.path, f.size, coalesce(d.tier, '') AS tier
-FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id;
+SELECT episode_id, path, size, tier FROM episode_files;
 
 -- name: CountDownloadsByEpisode :many
 SELECT episode_id, count(*) AS attempts FROM downloads GROUP BY episode_id;
@@ -21,11 +19,8 @@ SELECT * FROM downloads WHERE id IN (SELECT max(id) FROM downloads GROUP BY epis
 -- name: ListSearchOutcomes :many
 SELECT episode_id, searched_at, outcome, summary, next_retry_at FROM searches;
 
--- Episodes with a file, and the tier of the release it came from.
 -- name: ListSeriesFileTiers :many
-SELECT f.episode_id, coalesce(d.tier, '') AS tier
-FROM episode_files f JOIN episodes e ON e.id = f.episode_id LEFT JOIN downloads d ON d.id = f.download_id
-WHERE e.series_id = ?;
+SELECT f.episode_id, f.tier FROM episode_files f JOIN episodes e ON e.id = f.episode_id WHERE e.series_id = ?;
 
 -- name: ListSeriesFiles :many
 SELECT f.path, f.size FROM episode_files f JOIN episodes e ON e.id = f.episode_id WHERE e.series_id = ?;

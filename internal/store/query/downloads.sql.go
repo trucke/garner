@@ -136,12 +136,9 @@ func (q *Queries) GetDownload(ctx context.Context, id int64) (Download, error) {
 }
 
 const getEpisodeFileTier = `-- name: GetEpisodeFileTier :one
-SELECT coalesce(d.tier, '') AS tier
-FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id
-WHERE f.episode_id = ?
+SELECT tier FROM episode_files WHERE episode_id = ?
 `
 
-// The tier of the release an episode's file came from; empty when unknown.
 func (q *Queries) GetEpisodeFileTier(ctx context.Context, episodeID int64) (string, error) {
 	row := q.db.QueryRowContext(ctx, getEpisodeFileTier, episodeID)
 	var tier string

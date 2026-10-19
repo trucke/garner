@@ -208,8 +208,8 @@ func (s *Store) SeriesFiles(ctx context.Context, seriesID int64) ([]EpisodeFile,
 	return out, nil
 }
 
-// SeriesFileTiers maps the show's episodes that have a file to the tier of
-// the release it came from, such as "German 1080p"; empty when unknown.
+// SeriesFileTiers maps the show's episodes that have a file to the file's
+// tier, such as "German 1080p"; empty when unknown.
 func (s *Store) SeriesFileTiers(ctx context.Context, seriesID int64) (map[int64]string, error) {
 	rows, err := s.q.ListSeriesFileTiers(ctx, seriesID)
 	if err != nil {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -59,6 +60,69 @@ func (s *Server) setupImports() error {
 
 func (s *Server) importRoutes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/downloads/{id}/import", s.auth(http.HandlerFunc(s.handleRetryImport)))
+	mux.Handle("POST /api/v1/series/{id}/files/take-over", s.auth(http.HandlerFunc(s.handleTakeOver)))
+	mux.Handle("POST /api/v1/series/{id}/files/rename", s.auth(http.HandlerFunc(s.handleRename)))
+}
+
+// handleTakeOver looks for a show's files in the library and takes over
+// those that hold episodes without a file.
+func (s *Server) handleTakeOver(w http.ResponseWriter, r *http.Request) {
+	if id, ok := s.filesRequest(w, r); ok {
+		t, err := s.imports.TakeOver(r.Context(), id)
+		if err != nil {
+			s.internalError(w, "take over files", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, t)
+	}
+}
+
+// handleRename moves a show's taken-over files into Garner's folder for it
+// under Garner's names.
+func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
+	if id, ok := s.filesRequest(w, r); ok {
+		// Files may have moved already: finish even when the client stops
+		// waiting.
+		res, err := s.imports.Rename(context.WithoutCancel(r.Context()), id)
+		if err != nil {
+			s.internalError(w, "rename files", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+	}
+}
+
+// filesRequest checks a request about a show's files: the importer runs,
+// the show exists and none of its downloads or imports runs, which could
+// record a file meanwhile.
+func (s *Server) filesRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	if s.imports == nil {
+		writeError(w, http.StatusServiceUnavailable, "managing files needs library.tv or library.anime and ffprobe")
+		return 0, false
+	}
+	id, ok := seriesID(w, r)
+	if !ok {
+		return 0, false
+	}
+	exists, err := s.store.HasSeries(r.Context(), id)
+	if err != nil {
+		s.internalError(w, "find series", err)
+		return 0, false
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "series is not in the catalogue")
+		return 0, false
+	}
+	busy, err := s.store.BusyDownloads(r.Context(), id)
+	if err != nil {
+		s.internalError(w, "list running downloads", err)
+		return 0, false
+	}
+	if len(busy) > 0 {
+		writeError(w, http.StatusConflict, "a download or import of this show is running; try again when it is done")
+		return 0, false
+	}
+	return id, true
 }
 
 // handleRetryImport repeats the import step that failed, after the problem

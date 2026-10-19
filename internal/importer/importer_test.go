@@ -376,7 +376,7 @@ func TestSubtitleOwner(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
 	}
 	s := &Service{}
-	s.moveSubtitles(dir, files)
+	s.moveSubtitles(dir, files, false)
 	for _, want := range []string{"Show.S01E10.en.srt", "Show.S01E01.de.srt"} {
 		if _, err := os.Stat(filepath.Join(lib, want)); err != nil {
 			t.Errorf("missing %s", want)
@@ -468,7 +468,7 @@ func TestTargetLength(t *testing.T) {
 		data:     store.SeriesData{Series: store.Series{ID: 42, Name: long, Year: 2013}},
 		episodes: map[int64]store.Episode{1: {ID: 1, NameEng: long, Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}}},
 	}
-	tags := releaseTags(&store.Download{Title: "Show.S01E01.German.1080p.WEB-" + strings.Repeat("Group", 30)}, german)
+	tags := releaseTags("Show.S01E01.German.1080p.WEB-"+strings.Repeat("Group", 30), "", german)
 	got, err := c.target(config.Library{TV: "/lib/tv"}, []int64{1}, tags, ".mkv")
 	if err != nil {
 		t.Fatal(err)
@@ -486,12 +486,12 @@ func TestReleaseTags(t *testing.T) {
 		"Show.S01E01.REPACK.German.DL.1080p.BluRay.x264-GRP": "Bluray-1080p.Repack.DE.JA-GRP",
 		"[Grp] Show - 01 v2 [1080p]":                         "1080p.v2.DE.JA-Grp",
 	} {
-		if got := releaseTags(&store.Download{Title: title}, p); got != want {
+		if got := releaseTags(title, "", p); got != want {
 			t.Errorf("releaseTags(%q) = %q, want %q", title, got, want)
 		}
 	}
 	untagged := inspect.Probe{Video: []inspect.Video{{Width: 1280, Height: 720}}, Audio: []inspect.Track{{Language: "und"}}}
-	if got := releaseTags(&store.Download{Title: "Show.S01E01.720p.WEB-GRP", Tier: "German 720p"}, untagged); got != "WEB-720p.DE-GRP" {
+	if got := releaseTags("Show.S01E01.720p.WEB-GRP", "German 720p", untagged); got != "WEB-720p.DE-GRP" {
 		t.Errorf("untagged audio: %q", got)
 	}
 }
@@ -521,7 +521,7 @@ func TestImportPackKeepsBetter(t *testing.T) {
 		old := filepath.Join(e.share, "library/tv/old/S01E02.mkv")
 		os.MkdirAll(filepath.Dir(old), 0o755)
 		os.WriteFile(old, []byte("old"), 0o644)
-		e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 102, Path: old, Size: 3}, earlier.ID, time.Now())
+		e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 102, Path: old, Size: 3, Tier: tc.existing}, earlier.ID, time.Now())
 
 		e.svc.work(ctx)
 		got, _ := e.st.GetDownload(ctx, d.ID)

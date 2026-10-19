@@ -8,11 +8,8 @@ INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, re
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
 RETURNING id;
 
--- The tier of the release an episode's file came from; empty when unknown.
 -- name: GetEpisodeFileTier :one
-SELECT coalesce(d.tier, '') AS tier
-FROM episode_files f LEFT JOIN downloads d ON d.id = f.download_id
-WHERE f.episode_id = ?;
+SELECT tier FROM episode_files WHERE episode_id = ?;
 
 -- A cancelled download stays cancelled, whatever a poll that started
 -- before the cancel saves.

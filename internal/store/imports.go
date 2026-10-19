@@ -51,6 +51,8 @@ type EpisodeFile struct {
 	EpisodeID int64
 	Path      string
 	Size      int64
+	// Tier is the file's tier, such as "German 720p"; empty when unknown.
+	Tier string
 }
 
 // EpisodeFile returns the episode's imported file, or found=false.
@@ -62,16 +64,46 @@ func (s *Store) EpisodeFile(ctx context.Context, episodeID int64) (f EpisodeFile
 	if err != nil {
 		return f, false, err
 	}
-	return EpisodeFile{EpisodeID: r.EpisodeID, Path: r.Path, Size: r.Size}, true, nil
+	return EpisodeFile{EpisodeID: r.EpisodeID, Path: r.Path, Size: r.Size, Tier: r.Tier}, true, nil
 }
 
-// SetEpisodeFile records the file imported for an episode, replacing the
-// previous one.
+// SetEpisodeFile records the file of an episode, replacing the previous
+// one: one Garner imported from the download, or, with downloadID 0, one
+// it took over from the library.
 func (s *Store) SetEpisodeFile(ctx context.Context, f EpisodeFile, downloadID int64, now time.Time) error {
 	return s.q.UpsertEpisodeFile(ctx, query.UpsertEpisodeFileParams{
-		EpisodeID: f.EpisodeID, Path: f.Path, Size: f.Size,
+		EpisodeID: f.EpisodeID, Path: f.Path, Size: f.Size, Tier: f.Tier,
 		DownloadID: sql.NullInt64{Int64: downloadID, Valid: downloadID > 0}, ImportedAt: now.Unix(),
 	})
+}
+
+// TakeOverFile records a file Garner found in the library for an episode,
+// unless the episode has a file meanwhile, such as from an import that
+// finished. It reports whether it recorded the file.
+func (s *Store) TakeOverFile(ctx context.Context, f EpisodeFile, now time.Time) (bool, error) {
+	n, err := s.q.InsertTakenFile(ctx, query.InsertTakenFileParams{
+		EpisodeID: f.EpisodeID, Path: f.Path, Size: f.Size, Tier: f.Tier, ImportedAt: now.Unix(),
+	})
+	return n > 0, err
+}
+
+// MoveEpisodeFile records that a file moved within the library.
+func (s *Store) MoveEpisodeFile(ctx context.Context, oldPath, newPath string) error {
+	return s.q.MoveEpisodeFile(ctx, query.MoveEpisodeFileParams{OldPath: oldPath, NewPath: newPath})
+}
+
+// TakenFiles lists the files of a show Garner took over from the library,
+// one entry per episode, ordered by path.
+func (s *Store) TakenFiles(ctx context.Context, seriesID int64) ([]EpisodeFile, error) {
+	rows, err := s.q.ListSeriesTakenFiles(ctx, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]EpisodeFile, len(rows))
+	for i, r := range rows {
+		out[i] = EpisodeFile{EpisodeID: r.EpisodeID, Path: r.Path, Size: r.Size, Tier: r.Tier}
+	}
+	return out, nil
 }
 
 // FileInUse reports whether any episode's imported file is at path.

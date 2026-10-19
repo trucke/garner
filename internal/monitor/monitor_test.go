@@ -166,7 +166,7 @@ func TestUpgrade(t *testing.T) {
 			if err := st.UpdateDownload(ctx, d, d.Created); err != nil {
 				t.Fatal(err)
 			}
-			if err := st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: id, Path: fmt.Sprint("/lib/", id), Size: 1}, d.ID, d.Created); err != nil {
+			if err := st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: id, Path: fmt.Sprint("/lib/", id), Size: 1, Tier: tier}, d.ID, d.Created); err != nil {
 				t.Fatal(err)
 			}
 			if err := st.UpdateImport(ctx, d.ID, store.Import{State: store.ImportDone}, d.Created); err != nil {

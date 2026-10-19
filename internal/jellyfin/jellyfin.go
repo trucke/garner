@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/trucke/garner/internal/httpx"
@@ -112,6 +113,26 @@ func (c *Client) EpisodeAt(ctx context.Context, showDir, file string) (ep Episod
 		}
 	}
 	return ep, false, nil
+}
+
+// ShowFolders lists the folders of the shows Jellyfin identified as the
+// TVDB show, as Jellyfin sees them: usually one, more when the show lies
+// in several libraries.
+func (c *Client) ShowFolders(ctx context.Context, tvdbID int64) ([]string, error) {
+	var shows struct {
+		Items []item `json:"Items"`
+	}
+	q := url.Values{"Recursive": {"true"}, "IncludeItemTypes": {"Series"}, "Fields": {"Path,ProviderIds"}}
+	if err := c.do(ctx, http.MethodGet, "/Items?"+q.Encode(), nil, &shows); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, s := range shows.Items {
+		if s.ProviderIDs["Tvdb"] == strconv.FormatInt(tvdbID, 10) && s.Path != "" {
+			out = append(out, s.Path)
+		}
+	}
+	return out, nil
 }
 
 // Info reports Jellyfin's version and how many shows its libraries hold.

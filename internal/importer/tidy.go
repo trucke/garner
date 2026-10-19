@@ -29,7 +29,7 @@ func (s *Service) tidy(d *store.Download, files []store.ImportFile) []string {
 	if why != "" {
 		return []string{"SABnzbd's folder was left in place: " + why}
 	}
-	notes := s.moveSubtitles(dir, files)
+	notes := s.moveSubtitles(dir, files, false)
 	remaining, err := videoFiles(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -156,10 +156,11 @@ func subtitleFiles(dir string) int {
 
 // moveSubtitles moves the subtitle files in dir next to the videos they
 // belong to, named the way Jellyfin reads external subtitles:
-// "<video name>.<language>[.forced][.sdh].<ext>". In a folder with one video,
-// every subtitle file belongs to it; otherwise its name must start with the
-// video's original name.
-func (s *Service) moveSubtitles(dir string, files []store.ImportFile) []string {
+// "<video name>.<language>[.forced][.sdh].<ext>". A subtitle's name must
+// start with the video's original name, except in a download's folder with
+// one video, where every subtitle file belongs to it. shared means dir holds
+// other videos too, such as a library's season folder, so names decide.
+func (s *Service) moveSubtitles(dir string, files []store.ImportFile, shared bool) []string {
 	var notes []string
 	moved := 0
 	filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
@@ -179,7 +180,7 @@ func (s *Service) moveSubtitles(dir string, files []store.ImportFile) []string {
 				owner, rest, longest = f, r, len(video)
 			}
 		}
-		if owner == nil && len(files) == 1 {
+		if owner == nil && len(files) == 1 && !shared {
 			owner = &files[0]
 		}
 		if owner == nil || owner.Target == "" {

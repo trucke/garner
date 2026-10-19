@@ -95,6 +95,7 @@ type EpisodeFile struct {
 	Size       int64
 	DownloadID sql.NullInt64
 	ImportedAt int64
+	Tier       string
 }
 
 type EpisodeNumber struct {

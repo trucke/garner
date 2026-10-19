@@ -28,11 +28,27 @@ func (c *Client) Preview(ctx context.Context, id int64) (api.Preview, error) {
 	return p, c.do(ctx, http.MethodGet, "/api/v1/search/"+strconv.FormatInt(id, 10), nil, &p)
 }
 
-// Add loads a show into the library; monitor says which of its episodes
-// the monitor gets. It takes as long as loading the show's episodes from
-// TVDB and TheXEM does, usually a few seconds.
-func (c *Client) Add(ctx context.Context, id int64, monitor string) error {
-	return c.do(ctx, http.MethodPost, "/api/v1/series", map[string]any{"tvdb_id": id, "monitor": monitor}, nil)
+// Add loads a show into the library and takes over its files there;
+// monitor says which of its episodes the monitor gets. It takes as long as
+// loading the show's episodes from TVDB and TheXEM does, usually a few
+// seconds, plus checking the files found, which can take minutes.
+func (c *Client) Add(ctx context.Context, id int64, monitor string) (api.SeriesDetail, error) {
+	var d api.SeriesDetail
+	return d, c.do(ctx, http.MethodPost, "/api/v1/series", map[string]any{"tvdb_id": id, "monitor": monitor}, &d)
+}
+
+// TakeOver looks for a show's files in the library and takes over those of
+// episodes without a file.
+func (c *Client) TakeOver(ctx context.Context, id int64) (api.TakeOver, error) {
+	var t api.TakeOver
+	return t, c.do(ctx, http.MethodPost, "/api/v1/series/"+strconv.FormatInt(id, 10)+"/files/take-over", nil, &t)
+}
+
+// Rename moves a show's taken-over files into Garner's folder for it,
+// named the way Garner names files.
+func (c *Client) Rename(ctx context.Context, id int64) (api.Renamed, error) {
+	var r api.Renamed
+	return r, c.do(ctx, http.MethodPost, "/api/v1/series/"+strconv.FormatInt(id, 10)+"/files/rename", nil, &r)
 }
 
 // Series returns a show with what Garner has of each episode.

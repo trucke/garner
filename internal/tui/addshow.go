@@ -42,6 +42,8 @@ type (
 		id      int64
 		name    string
 		already bool
+		// taken is what Garner found of the show in the library.
+		taken *api.TakeOver
 	}
 )
 
@@ -273,7 +275,7 @@ func (s *addScreen) bottom(width int, q string) string {
 	}
 	switch {
 	case s.adding != "":
-		return sMuted.Render("Adding " + s.adding + " and loading its episodes from TVDB…")
+		return sMuted.Render("Adding " + s.adding + ", loading its episodes from TVDB and looking for its files…")
 	case s.flash.text != "":
 		return s.flash.text
 	}
@@ -378,9 +380,10 @@ type (
 	}
 	// addResultMsg answers adding a show, from the list or its details.
 	addResultMsg struct {
-		id   int64
-		name string
-		err  error
+		id    int64
+		name  string
+		taken *api.TakeOver
+		err   error
 	}
 	openedMsg struct{ err error }
 )
@@ -625,7 +628,7 @@ func aired(f tvdbFacts) string {
 func (s *previewScreen) bottom() string {
 	switch {
 	case s.adding:
-		return sMuted.Render("Adding " + s.name() + " and loading its episodes from TVDB…")
+		return sMuted.Render("Adding " + s.name() + ", loading its episodes from TVDB and looking for its files…")
 	case s.flash.text != "":
 		return s.flash.text
 	case s.err != nil:
@@ -652,12 +655,14 @@ func (s *addScreen) captures() bool { return true }
 func (s *addScreen) flashed() *flash { return &s.flash }
 
 // addShow adds a show with the monitor mode. It loads every episode from
-// TVDB and TheXEM, which takes a few seconds.
+// TVDB and TheXEM, which takes a few seconds, and checks the show's files
+// in the library, which can take minutes.
 func addShow(cl *client.Client, id int64, name, monitor string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		return addResultMsg{id, name, cl.Add(ctx, id, monitor)}
+		d, err := cl.Add(ctx, id, monitor)
+		return addResultMsg{id, name, d.TakenOver, err}
 	}
 }
 
@@ -667,7 +672,7 @@ func added(msg addResultMsg, f *flash) tea.Cmd {
 	var server *client.ServerError
 	switch {
 	case msg.err == nil:
-		return func() tea.Msg { return addedMsg{id: msg.id, name: msg.name} }
+		return func() tea.Msg { return addedMsg{id: msg.id, name: msg.name, taken: msg.taken} }
 	case errors.As(msg.err, &server) && server.Status == http.StatusConflict:
 		return func() tea.Msg { return addedMsg{id: msg.id, name: msg.name, already: true} }
 	case errors.Is(msg.err, client.ErrUnauthorized):

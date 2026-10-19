@@ -93,12 +93,13 @@ func showName(sr store.Series) string {
 // releaseTags are the details a file name keeps because they cannot be
 // read from the file later: streaming service, source, proper or repack,
 // the audio languages and the release group, as in
-// "NF.WEBDL-1080p.Proper.DE.EN-Group". The resolution comes from the file.
-func releaseTags(d *store.Download, p inspect.Probe) string {
-	c := release.Parse(d.Title)
+// "NF.WEBDL-1080p.Proper.DE.EN-Group". They come from the release's title
+// and the file; tier is the release's, such as "German 1080p".
+func releaseTags(title, tier string, p inspect.Probe) string {
+	c := release.Parse(title)
 	var parts []string
 	if len(c.Services) > 0 {
-		parts = append(parts, dotted(d.Title[c.Services[0].Span.Start:c.Services[0].Span.End]))
+		parts = append(parts, dotted(title[c.Services[0].Span.Start:c.Services[0].Span.End]))
 	}
 	quality := []string{}
 	if source, state := release.Value(c.Source); state == release.Unambiguous {
@@ -119,7 +120,7 @@ func releaseTags(d *store.Download, p inspect.Probe) string {
 	if v, state := release.Value(c.Version); state == release.Unambiguous && v > 1 {
 		parts = append(parts, fmt.Sprintf("v%d", v))
 	}
-	parts = append(parts, audioCodes(d, p)...)
+	parts = append(parts, audioCodes(tier, p)...)
 	tags := strings.Join(nonEmpty(parts), ".")
 	if group, state := release.Value(c.Group); state == release.Unambiguous && dotted(group) != "" {
 		tags += "-" + dotted(group)
@@ -127,9 +128,9 @@ func releaseTags(d *store.Download, p inspect.Probe) string {
 	return tags
 }
 
-// audioCodes are the file's tagged audio languages, or the language the
-// release was chosen for when the file tags none.
-func audioCodes(d *store.Download, p inspect.Probe) []string {
+// audioCodes are the file's tagged audio languages, or the language of the
+// tier when the file tags none.
+func audioCodes(tier string, p inspect.Probe) []string {
 	var codes []string
 	add := func(l release.Language) {
 		if c := strings.ToUpper(string(l)); len(c) == 2 && !slices.Contains(codes, c) {
@@ -142,7 +143,7 @@ func audioCodes(d *store.Download, p inspect.Probe) []string {
 		}
 	}
 	if len(codes) == 0 {
-		if f := strings.Fields(d.Tier); len(f) == 2 {
+		if f := strings.Fields(tier); len(f) == 2 {
 			if l, ok := release.LanguageNamed(f[0]); ok {
 				add(l)
 			}

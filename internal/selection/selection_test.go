@@ -184,3 +184,28 @@ func TestUpgrade(t *testing.T) {
 		t.Errorf("summary %q", got)
 	}
 }
+
+func TestFileTier(t *testing.T) {
+	for _, tc := range []struct {
+		profile Profile
+		audio   []release.Language
+		res     release.Resolution
+		want    string
+	}{
+		{TV, []release.Language{"en", "de"}, 1080, "German 1080p"},
+		{TV, []release.Language{"de"}, 720, "German 720p"},
+		{TV, []release.Language{"de"}, 2160, "German 1080p"}, // more than the best tier
+		{TV, []release.Language{"de"}, 480, "German 480p"},   // below every tier
+		{TV, []release.Language{"en"}, 1080, "English 1080p"},
+		{Anime, []release.Language{"ja", "en"}, 1080, "English 1080p"},
+		{TV, nil, 1080, ""},
+	} {
+		got := FileTier(tc.profile, tc.audio, tc.res)
+		if got != tc.want {
+			t.Errorf("%s %v %dp: %q, want %q", tc.profile.Name, tc.audio, tc.res, got, tc.want)
+		}
+		if got != "" && got != tc.profile.Tiers[0].String() && TierRank(tc.profile, got) == 0 {
+			t.Errorf("%q ranks as the best tier", got)
+		}
+	}
+}

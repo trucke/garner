@@ -2,6 +2,7 @@ package server
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -84,8 +85,9 @@ func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, list)
 }
 
-// handleAddSeries adds a show. monitor says which of its episodes the
-// monitor gets; new ones when left out.
+// handleAddSeries adds a show and takes over its files in the library.
+// monitor says which of its episodes the monitor gets; new ones when left
+// out.
 func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TVDBID  int64  `json:"tvdb_id"`
@@ -100,7 +102,9 @@ func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, `monitor must be "new", "all" or "off"`)
 		return
 	}
-	err := s.catalog.Add(r.Context(), req.TVDBID, req.Monitor)
+	// The show starts without the monitor, so it does not search episodes
+	// whose files are in the library before Garner took them over.
+	err := s.catalog.Add(r.Context(), req.TVDBID, store.MonitorOff)
 	switch {
 	case errors.Is(err, catalog.ErrExists):
 		writeError(w, http.StatusConflict, err.Error())
@@ -112,7 +116,28 @@ func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 		s.upstreamError(w, "add series", err)
 		return
 	}
-	s.writeSeries(w, r, req.TVDBID, http.StatusCreated)
+	// The show is added: finish it even when the client stops waiting.
+	ctx := context.WithoutCancel(r.Context())
+	var taken *api.TakeOver
+	if s.imports != nil {
+		t, err := s.imports.TakeOver(ctx, req.TVDBID)
+		if err != nil {
+			s.log.Error("take over files", "series", req.TVDBID, "err", err)
+			t.Notes = append(t.Notes, "Garner could not finish looking for files: "+err.Error())
+		}
+		taken = &t
+	}
+	if req.Monitor != store.MonitorOff {
+		if err := s.store.SetMonitor(ctx, req.TVDBID, req.Monitor, time.Now()); err != nil {
+			s.internalError(w, "set monitor", err)
+			return
+		}
+		s.wakeMonitor()
+	}
+	if d, ok := s.seriesDetail(w, r.WithContext(ctx), req.TVDBID); ok {
+		d.TakenOver = taken
+		writeJSON(w, http.StatusCreated, d)
+	}
 }
 
 func (s *Server) handleGetSeries(w http.ResponseWriter, r *http.Request) {
@@ -149,19 +174,27 @@ func (s *Server) handleRefreshSeries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, status int) {
+	if d, ok := s.seriesDetail(w, r, id); ok {
+		writeJSON(w, status, d)
+	}
+}
+
+// seriesDetail gathers what clients show of a show; on failure it answers
+// the request itself.
+func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request, id int64) (api.SeriesDetail, bool) {
 	d, err := s.store.LoadSeries(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
-		return
+		return api.SeriesDetail{}, false
 	}
 	if err != nil {
 		s.internalError(w, "load series", err)
-		return
+		return api.SeriesDetail{}, false
 	}
 	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.schedule())
 	if err != nil {
 		s.internalError(w, "summarise series", err)
-		return
+		return api.SeriesDetail{}, false
 	}
 	profile := selection.ProfileNamed(d.Series.Profile)
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
@@ -181,7 +214,7 @@ func (s *Server) writeSeries(w http.ResponseWriter, r *http.Request, id int64, s
 			detail.Searching = &p
 		}
 	}
-	writeJSON(w, status, detail)
+	return detail, true
 }
 
 // handleDeleteSeries removes a show and cancels its running downloads.

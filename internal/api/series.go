@@ -217,6 +217,42 @@ type SeriesDetail struct {
 	// Searching is the search of every missing episode, while it is asked
 	// for or runs.
 	Searching *ShowProgress `json:"searching,omitempty"`
+	// TakenOver is what adding the show found in the library; only the
+	// answer to adding a show has it.
+	TakenOver *TakeOver `json:"taken_over,omitempty"`
+}
+
+// TakeOver is what Garner found when it looked for a show's files in the
+// library: in its own folder for the show and the folders Jellyfin holds
+// the show in.
+type TakeOver struct {
+	Folders []string `json:"folders"`
+	// Files counts the files Garner took over; Episodes the episodes they
+	// hold.
+	Files    int `json:"files"`
+	Episodes int `json:"episodes"`
+	// Skipped are the video files Garner left alone, and why.
+	Skipped []SkippedFile `json:"skipped"`
+	// Renamable counts the show's taken-over files outside Garner's folder
+	// for it; renaming moves them there under Garner's names.
+	Renamable int `json:"renamable"`
+	// Notes are problems that did not stop the search, such as Jellyfin
+	// not answering.
+	Notes []string `json:"notes"`
+}
+
+// SkippedFile is a video file Garner did not take over.
+type SkippedFile struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// Renamed is what renaming a show's taken-over files did.
+type Renamed struct {
+	// Files counts the files moved into Garner's folder for the show.
+	Files int `json:"files"`
+	// Notes are what stayed behind, and why.
+	Notes []string `json:"notes"`
 }
 
 // ProfileInfo names a profile and its rules.

@@ -179,10 +179,17 @@ func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		message := gDone + " " + sNormal.Render("Added "+msg.name)
-		if msg.already {
+		switch {
+		case msg.already:
 			message = gDone + " " + sNormal.Render(msg.name+" is already in the library")
+		case msg.taken != nil && msg.taken.Files > 0:
+			message += sNormal.Render(" · took over " + plural(msg.taken.Files, "file") + " from the library")
 		}
-		a.screen = newShow(a.sess, a.library, msg.id, msg.name, message)
+		show := newShow(a.sess, a.library, msg.id, msg.name, message)
+		if worthShowing(msg.taken) {
+			show.files.show(*msg.taken)
+		}
+		a.screen = show
 		return a, tea.Batch(a.screen.init(), a.library.showAdded(msg))
 	case deletedMsg:
 		if a.library == nil {

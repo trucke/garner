@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -78,6 +79,8 @@ type Service struct {
 	log      *slog.Logger
 	now      func() time.Time
 	wake     chan struct{}
+	// files lets one take-over or rename run at a time.
+	files sync.Mutex
 	// OnChange is called whenever an import changes.
 	OnChange func(store.Download)
 	// OnRejected marks a download's release bad, so another one is tried.
@@ -246,7 +249,7 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 			}
 			problems = append(problems, pr)
 		}
-		f.Target, err = c.target(s.opts.Library, f.Episodes, releaseTags(d, p), filepath.Ext(f.Source))
+		f.Target, err = c.target(s.opts.Library, f.Episodes, releaseTags(d.Title, d.Tier, p), filepath.Ext(f.Source))
 		if err != nil {
 			s.fail(ctx, d, files, err.Error(), "Set library.tv and library.anime in garner.toml, restart Garner and retry the import.")
 			return
@@ -395,7 +398,7 @@ func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []st
 			if err == nil && found && prev.Path != f.Target {
 				old = append(old, prev.Path)
 			}
-			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size}, d.ID, s.now()); err != nil {
+			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier}, d.ID, s.now()); err != nil {
 				s.log.Error("record imported file", "episode", ep, "err", err)
 			}
 		}
@@ -545,6 +548,10 @@ func (s *Service) context(ctx context.Context, episodeID int64) (showContext, er
 	if err != nil {
 		return showContext{}, err
 	}
+	return s.seriesContext(ctx, seriesID)
+}
+
+func (s *Service) seriesContext(ctx context.Context, seriesID int64) (showContext, error) {
 	data, err := s.store.LoadSeries(ctx, seriesID)
 	if err != nil {
 		return showContext{}, err

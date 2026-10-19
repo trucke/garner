@@ -454,6 +454,32 @@ func compareBool(a, b bool) int {
 	return -1
 }
 
+// FileTier names the tier of a file with these audio languages and this
+// resolution, such as "German 720p": the best profile tier it meets or,
+// when it meets none, its own language and resolution, which rank below
+// every tier, such as "English 1080p" for the TV profile. A 2160p file
+// meets the 1080p tier of its language, so no upgrade replaces it with
+// less. It is empty when the audio languages are unknown.
+func FileTier(p Profile, audio []release.Language, res release.Resolution) string {
+	if len(audio) == 0 {
+		return ""
+	}
+	if res >= 720 {
+		if i := bestTier(p, audio, res, true); i >= 0 {
+			return p.Tiers[i].String()
+		}
+	}
+	// The profile's languages first, so a German file in 480p reads as such.
+	lang := audio[0]
+	for _, t := range p.Tiers {
+		if slices.Contains(audio, t.Language) {
+			lang = t.Language
+			break
+		}
+	}
+	return Tier{lang, res}.String()
+}
+
 // TierRank places a tier name such as "German 1080p" in the profile: 0 is
 // the best tier; an unknown or empty one ranks after every tier.
 func TierRank(p Profile, tier string) int {

@@ -63,7 +63,7 @@ func TestWanted(t *testing.T) {
 		if err := st.UpdateDownload(ctx, d, at); err != nil {
 			t.Fatal(err)
 		}
-		if err := st.SetEpisodeFile(ctx, EpisodeFile{EpisodeID: episode, Path: fmt.Sprintf("/lib/%d.mkv", episode), Size: 1}, d.ID, at); err != nil {
+		if err := st.SetEpisodeFile(ctx, EpisodeFile{EpisodeID: episode, Path: fmt.Sprintf("/lib/%d.mkv", episode), Size: 1, Tier: tier}, d.ID, at); err != nil {
 			t.Fatal(err)
 		}
 		if err := st.UpdateImport(ctx, d.ID, Import{State: ImportDone}, at); err != nil {
