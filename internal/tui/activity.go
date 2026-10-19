@@ -292,15 +292,15 @@ const (
 func (s *activityScreen) view(width, height int) string {
 	var b strings.Builder
 	b.WriteString(header(width, s.sess, "Garner", "Activity") + "\n\n")
-	w := min(width, designWidth)
-	// Narrow: the show names give way to State, down to a minimum.
+	// Wide: State takes the room, as on the other tables. Narrow: the show
+	// names give way to State, down to a minimum.
 	fixed := 3 + 1 + 3 + 3 + activityEpWidth + 3 + 3 + activitySinceWidth + 3
-	showWidth := max(16, min(activityShowWidth, w-fixed-24))
-	stateWidth := max(10, w-fixed-showWidth)
+	showWidth := max(16, min(activityShowWidth, width-fixed-24))
+	stateWidth := max(10, width-fixed-showWidth)
 	head := func(t string, n int, right bool) string { return sSubtle.Render(fit(t, n, right)) }
 	b.WriteString("       " + head("Show", showWidth, false) + "   " + head("Episode", activityEpWidth, false) + "   " +
 		head("State", stateWidth, false) + "   " + head("Since", activitySinceWidth, true) + "\n")
-	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, w-6))) + "\n")
+	b.WriteString("   " + sBorder.Render(strings.Repeat("─", max(0, width-6))) + "\n")
 
 	rows := s.rows()
 	switch {
@@ -316,7 +316,7 @@ func (s *activityScreen) view(width, height int) string {
 		s.offset = min(max(s.offset, cursor-page+1), cursor)
 		now := time.Now()
 		for _, it := range rows[s.offset:min(len(rows), s.offset+page)] {
-			b.WriteString(activityRow(it, it.Download.EpisodeID == s.selected, showWidth, stateWidth, w, now) + "\n")
+			b.WriteString(activityRow(it, it.Download.EpisodeID == s.selected, showWidth, stateWidth, width, now) + "\n")
 		}
 	}
 	page := screenLayout(width, height, b.String(), s.bottom())
