@@ -22,9 +22,9 @@ archives:
 checksum:
   name_template: SHA256SUMS
 
+# The commits since the previous release, newest first, as git lists them.
 changelog:
   use: git
-  sort: asc
   format: "{{ .Message }}"
 
 release:
