@@ -10,7 +10,10 @@ ARG GOLANG=docker.io/library/golang:1.27.2-alpine3.24@sha256:f92b6ef800e49966058
 # A static FFprobe built from the FFmpeg release, with only the container
 # readers and stream parsers the file check needs: no decoders, no network
 # and no devices. Less code faces untrusted downloads, and the binary is a
-# few MB instead of a full FFmpeg.
+# few MB instead of a full FFmpeg. Without --enable-gpl, this build is under
+# the LGPL 2.1 or later, with zlib linked in under the zlib license. The
+# LGPL text ships in the image; the source is the release named below,
+# built with these options.
 FROM ${ALPINE} AS ffprobe
 RUN apk add --no-cache build-base xz zlib-dev zlib-static
 WORKDIR /src
@@ -48,11 +51,14 @@ ARG COMMIT=
 # The source label links the image on ghcr.io to the repository.
 LABEL org.opencontainers.image.title="Garner" \
       org.opencontainers.image.source="https://github.com/trucke/garner" \
+      org.opencontainers.image.licenses="MIT AND LGPL-2.1-or-later AND Zlib" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}"
 # Turso's library needs libgcc_s.
 RUN apk add --no-cache libgcc
 COPY --from=ffprobe /src/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffprobe /src/COPYING.LGPLv2.1 /usr/share/licenses/ffprobe/COPYING.LGPLv2.1
+COPY LICENSE /usr/share/licenses/garner/LICENSE
 COPY --from=build /out/garnerd /usr/local/bin/garnerd
 # garnerd unpacks Turso's library into the data directory on first start.
 ENV GARNER_CONFIG=/config/garner.toml
