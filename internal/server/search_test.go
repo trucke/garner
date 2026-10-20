@@ -105,7 +105,7 @@ func TestSearchAndDownload(t *testing.T) {
 
 	for _, method := range []string{http.MethodPost, http.MethodGet} {
 		code, body := call(method, "/api/v1/episodes/101/search", "")
-		if code != http.StatusOK || strings.Contains(body, "SECRET") || strings.Contains(body, "download") {
+		if code != http.StatusOK || strings.Contains(body, "SECRET") || strings.Contains(body, "prowlarr/1/download") {
 			t.Fatalf("%s search: %d %s", method, code, body)
 		}
 		var sr store.Search

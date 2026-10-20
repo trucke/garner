@@ -1,11 +1,13 @@
 package selection
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
@@ -26,6 +28,24 @@ func evaluate(p Profile, show string, original release.Language, name string, la
 	return Evaluate(Context{Profile: p, Show: s, Want: want, Original: original},
 		Release{Claims: claims, Match: s.Match(claims, time.Time{}), IndexerLanguages: IndexerLanguages(languages)})
 }
+
+// german1080 accepts German 1080p only.
+var german1080 = func() Profile {
+	ps, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: []string{"de 1080p"}}})
+	if err != nil {
+		panic(err)
+	}
+	return ps.Named(TVName)
+}()
+
+// english is a profile configured for English audio.
+var english = func() Profile {
+	ps, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: []string{"en 1080p", "en 720p"}}})
+	if err != nil {
+		panic(err)
+	}
+	return ps.Named(TVName)
+}()
 
 func TestEvaluate(t *testing.T) {
 	tests := []struct {
@@ -55,6 +75,12 @@ func TestEvaluate(t *testing.T) {
 		{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP", []string{"English"}, Reject, "", "audio is English, not German"},
 		{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP", []string{"German"}, Accept, "German 1080p", "German audio, as the indexer reports"},
 		{TV, "Hafenwache", "de", "Hafenwache.S01E01.1080p.BluRay.x264-GRP", nil, Accept, "German 1080p", "German audio assumed"},
+
+		// A name without languages is in the show's original language.
+		{english, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP", nil, Accept, "English 1080p", "English audio assumed"},
+		{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", nil, Reject, "", "no English audio named"},
+		{german1080, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.720p.WEB-GRP", nil, Reject, "", "720p is not among the profile's tiers: German 1080p"},
+		{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", []string{"English", "Japanese"}, Accept, "English 1080p", "dual audio: English and Japanese"},
 
 		// Anime
 		{Anime, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.German.720p.WEB-GRP", nil, Accept, "German 720p", ""},
@@ -206,6 +232,63 @@ func TestFileTier(t *testing.T) {
 		}
 		if got != "" && got != tc.profile.Tiers[0].String() && TierRank(tc.profile, got) == 0 {
 			t.Errorf("%q ranks as the best tier", got)
+		}
+	}
+}
+
+func TestNewProfiles(t *testing.T) {
+	dual := false
+	ps, err := NewProfiles(config.Profiles{Anime: config.Profile{Tiers: []string{"English 1080p", "ja 720p"}, PreferDual: &dual}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ps.Named(AnimeName).Describe(); got != "English 1080p → Japanese 720p" {
+		t.Errorf("anime: %q", got)
+	}
+	if got := ps.Named(TVName).Describe(); got != TV.Describe() {
+		t.Errorf("tv keeps the built-in rules: %q", got)
+	}
+	if got := (Profiles{}).Named(AnimeName).Describe(); got != Anime.Describe() {
+		t.Errorf("zero value: %q", got)
+	}
+	for _, tiers := range [][]string{{}, {"en"}, {"xx 1080p"}, {"en 2160p"}, {"en 1080p", "English 1080p"}} {
+		if _, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: tiers}}); err == nil {
+			t.Errorf("tiers %q: no error", tiers)
+		}
+	}
+}
+
+func TestOriginalNote(t *testing.T) {
+	for _, tc := range []struct {
+		p        Profile
+		original release.Language
+		want     string
+	}{
+		{TV, "de", "Releases that name no language are assumed German and checked after download."},
+		{TV, "en", "German audio only comes from a dub."},
+		{english, "en", "Releases that name no language are assumed English and checked after download."},
+		{Anime, "ja", "German or English audio only comes from a dub."},
+	} {
+		if got := OriginalNote(tc.p, tc.original); got != tc.want {
+			t.Errorf("%s, %s: %q", tc.p.Describe(), tc.original, got)
+		}
+	}
+}
+
+// TestExampleProfiles checks that garner.example.toml shows the built-in
+// rules.
+func TestExampleProfiles(t *testing.T) {
+	cfg, err := config.Load("../../garner.example.toml", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := NewProfiles(cfg.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{TVName, AnimeName} {
+		if got, want := ps.Named(name), (Profiles{}).Named(name); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, built in %+v", name, got, want)
 		}
 	}
 }

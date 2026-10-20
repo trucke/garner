@@ -83,3 +83,25 @@ missing_older = "24h"
 upgrades = true
 upgrade_recent = "24h"
 upgrade_older = "7d"
+
+# Profiles say which releases a show accepts. Every show has one: tv, or
+# anime, which also matches anime's episode numbering. Leave a profile out
+# to keep its built-in rules, shown here.
+#
+# tiers are the acceptable audio language and resolution pairs, best
+# first: a language code (en, de, fr, es, it, ja, ...) or its English
+# name, and 1080p or 720p. A 2160p release is not accepted; a 2160p file
+# counts as 1080p. Garner downloads the best tier it finds and, with
+# upgrades on, replaces a file below the best tier with a better one.
+#
+# A release that names no language is taken to be in the show's original
+# language; the file check after download confirms it.
+[profiles.tv]
+tiers = ["de 1080p", "de 720p"]
+# Rank a release with both the tier's language and the show's original
+# audio, such as German and English, above one with the tier's alone.
+prefer_dual = true
+
+[profiles.anime]
+tiers = ["de 1080p", "de 720p", "en 1080p", "en 720p"]
+prefer_dual = false

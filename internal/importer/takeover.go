@@ -242,8 +242,10 @@ func (c showContext) garnerEpisodes(rest string) []int64 {
 }
 
 // fileTier is the tier of a library file: its tagged audio languages, else
-// those its name states, else German for a German show, with the
-// resolution of its video.
+// those its name states, else the show's original language when the
+// profile wants it, with the resolution of its video. Without that, the
+// tier stays unknown, so an untagged file in another language, such as a
+// dub, is not taken for one the profile rejects and replaced.
 func (c showContext) fileTier(path string, p inspect.Probe) string {
 	var audio []release.Language
 	add := func(l release.Language) {
@@ -266,8 +268,8 @@ func (c showContext) fileTier(path string, p inspect.Probe) string {
 			}
 		}
 	}
-	if len(audio) == 0 && original == "de" {
-		add("de")
+	if len(audio) == 0 && c.profile.Has(original) {
+		add(original)
 	}
 	res := release.Resolution(api.ResolutionClass(p.Video[0].Width, p.Video[0].Height))
 	return selection.FileTier(c.profile, audio, res)

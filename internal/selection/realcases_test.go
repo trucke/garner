@@ -60,8 +60,8 @@ func TestRealSelectCases(t *testing.T) {
 			catalog[tc.Series] = d
 		}
 		t.Run(tc.Name, func(t *testing.T) {
-			profile := ProfileNamed(tc.Profile)
-			show := match.NewShow(d, match.Options{Anime: profile.Name == Anime.Name, ServiceOrders: tc.Rules})
+			profile := Profiles{}.Named(tc.Profile)
+			show := match.NewShow(d, match.Options{Anime: profile.Name == AnimeName, ServiceOrders: tc.Rules})
 			var published time.Time
 			if tc.Published != "" {
 				published, _ = time.Parse(time.DateOnly, tc.Published)

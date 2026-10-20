@@ -17,6 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/trucke/garner/internal/release"
+	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -39,6 +40,9 @@ type Catalog struct {
 	xem         *XEM
 	log         *slog.Logger
 	corrections corrections
+	// Profiles are the profiles shows choose from; the zero value holds
+	// the built-in ones.
+	Profiles selection.Profiles
 	// OnChange is called after a show was added or refreshed.
 	OnChange func(seriesID int64)
 }

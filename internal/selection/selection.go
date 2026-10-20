@@ -4,11 +4,13 @@ package selection
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 )
@@ -18,8 +20,8 @@ type Profile struct {
 	Name string
 	// Tiers are the acceptable language and resolution pairs, best first.
 	Tiers []Tier
-	// PreferDual ranks German plus original audio above German alone
-	// within a tier.
+	// PreferDual ranks the tier's language plus the show's original audio
+	// above the tier's language alone.
 	PreferDual bool
 	// UnnamedFallback allows releases whose audio is marked dual, multi or
 	// dubbed without naming languages, as a last resort.
@@ -34,43 +36,129 @@ type Tier struct {
 
 func (t Tier) String() string { return t.Language.Name() + " " + t.Resolution.String() }
 
-// The built-in profiles. Editable shared profiles come later.
-var (
-	// TV needs German audio; 720p is accepted until 1080p turns up.
-	TV = Profile{Name: "tv", Tiers: []Tier{{"de", 1080}, {"de", 720}}, PreferDual: true}
-	// Anime falls back to English audio when no German release exists.
-	Anime = Profile{Name: "anime", Tiers: []Tier{{"de", 1080}, {"de", 720}, {"en", 1080}, {"en", 720}}, UnnamedFallback: true}
+// The profile names. Every show has one; anime also changes how episode
+// numbers are matched.
+const (
+	TVName    = "tv"
+	AnimeName = "anime"
 )
 
-// ProfileNamed returns the profile with that name, TV by default.
-func ProfileNamed(name string) Profile {
-	if name == Anime.Name {
+// The built-in profiles; garner.toml's [profiles] can change their rules.
+var (
+	// TV needs German audio; 720p is accepted until 1080p turns up.
+	TV = Profile{Name: TVName, Tiers: []Tier{{"de", 1080}, {"de", 720}}, PreferDual: true}
+	// Anime falls back to English audio when no German release exists.
+	Anime = Profile{Name: AnimeName, Tiers: []Tier{{"de", 1080}, {"de", 720}, {"en", 1080}, {"en", 720}}, UnnamedFallback: true}
+)
+
+// Profiles are the profiles shows choose from. The zero value holds the
+// built-in ones.
+type Profiles struct {
+	tv, anime Profile
+}
+
+// NewProfiles applies garner.toml's [profiles] to the built-in profiles.
+func NewProfiles(c config.Profiles) (Profiles, error) {
+	tv, err := configure(TV, c.TV)
+	if err != nil {
+		return Profiles{}, fmt.Errorf("profiles.tv: %w", err)
+	}
+	anime, err := configure(Anime, c.Anime)
+	if err != nil {
+		return Profiles{}, fmt.Errorf("profiles.anime: %w", err)
+	}
+	return Profiles{tv: tv, anime: anime}, nil
+}
+
+// Named returns the profile with that name, TV by default.
+func (ps Profiles) Named(name string) Profile {
+	switch {
+	case name == AnimeName && ps.anime.Name != "":
+		return ps.anime
+	case name == AnimeName:
 		return Anime
+	case ps.tv.Name != "":
+		return ps.tv
 	}
 	return TV
+}
+
+// All lists the profiles in the order shows offer them.
+func (ps Profiles) All() []Profile { return []Profile{ps.Named(AnimeName), ps.Named(TVName)} }
+
+func configure(p Profile, c config.Profile) (Profile, error) {
+	if c.Tiers != nil {
+		if len(c.Tiers) == 0 {
+			return p, errors.New("tiers must name at least one tier")
+		}
+		p.Tiers = nil
+		for _, s := range c.Tiers {
+			t, err := parseTier(s)
+			if err != nil {
+				return p, err
+			}
+			if slices.Contains(p.Tiers, t) {
+				return p, fmt.Errorf("tier %q is listed twice", s)
+			}
+			p.Tiers = append(p.Tiers, t)
+		}
+	}
+	if c.PreferDual != nil {
+		p.PreferDual = *c.PreferDual
+	}
+	return p, nil
+}
+
+// parseTier reads a tier such as "en 1080p" or "English 720p".
+func parseTier(s string) (Tier, error) {
+	lang, res, ok := strings.Cut(strings.TrimSpace(s), " ")
+	if !ok {
+		return Tier{}, fmt.Errorf(`tier %q: expected a language and a resolution, such as "en 1080p"`, s)
+	}
+	l, ok := release.LanguageNamed(lang)
+	if !ok {
+		return Tier{}, fmt.Errorf("tier %q: unknown language %q; use a code such as en, de, fr or ja", s, lang)
+	}
+	switch strings.ToLower(strings.TrimSpace(res)) {
+	case "1080p":
+		return Tier{l, 1080}, nil
+	case "720p":
+		return Tier{l, 720}, nil
+	}
+	return Tier{}, fmt.Errorf("tier %q: the resolution must be 1080p or 720p", s)
+}
+
+// Has reports whether one of the profile's tiers is in that language.
+func (p Profile) Has(l release.Language) bool {
+	return slices.ContainsFunc(p.Tiers, func(t Tier) bool { return t.Language == l })
 }
 
 // Describe states the profile's tiers in order, such as "German 1080p →
 // German 720p · dual audio preferred".
 func (p Profile) Describe() string {
-	tiers := make([]string, len(p.Tiers))
-	for i, t := range p.Tiers {
-		tiers[i] = t.String()
-	}
-	s := strings.Join(tiers, " → ")
+	s := p.tierList()
 	if p.PreferDual {
 		s += " · dual audio preferred"
 	}
 	return s
 }
 
-// OriginalNote says what a show's original language means for its
-// releases' audio.
-func OriginalNote(original release.Language) string {
-	if original == "de" {
-		return "Releases that name no language are assumed German and checked after download."
+// tierList names the tiers in order, such as "German 1080p → German 720p".
+func (p Profile) tierList() string {
+	tiers := make([]string, len(p.Tiers))
+	for i, t := range p.Tiers {
+		tiers[i] = t.String()
 	}
-	return "German audio only comes from a dub."
+	return strings.Join(tiers, " → ")
+}
+
+// OriginalNote says what a show's original language means for its
+// releases' audio under the profile.
+func OriginalNote(p Profile, original release.Language) string {
+	if original != "" && p.Has(original) {
+		return fmt.Sprintf("Releases that name no language are assumed %s and checked after download.", original.Name())
+	}
+	return p.Wanted() + " audio only comes from a dub."
 }
 
 // Wanted names the profile's audio languages, such as "German or English".
@@ -223,8 +311,16 @@ func Evaluate(ctx Context, r Release) Evaluation {
 	case len(audio) > 0:
 		info = append(info, why)
 		tier := bestTier(ctx.Profile, audio, res, state == release.Unambiguous)
-		if tier < 0 {
+		switch {
+		case tier < 0 && slices.ContainsFunc(audio, ctx.Profile.Has):
+			// The language fits, but no tier in it has this resolution.
+			rejects = append(rejects, fmt.Sprintf("%s is not among the profile's tiers: %s", res, ctx.Profile.tierList()))
+		case tier < 0 && e.rank.assumed:
+			rejects = append(rejects, fmt.Sprintf("no %s audio named", ctx.Profile.Wanted()))
+		case tier < 0:
 			rejects = append(rejects, fmt.Sprintf("audio is %s, not %s", languageList(audio), ctx.Profile.Wanted()))
+		}
+		if tier < 0 {
 			break
 		}
 		e.rank.tier = tier
@@ -238,8 +334,8 @@ func Evaluate(ctx Context, r Release) Evaluation {
 				info = append(info, fmt.Sprintf("meets %s; %s would be better", e.Tier, ctx.Profile.Tiers[0]))
 			}
 		}
-		if ctx.Original != "de" && slices.Contains(audio, "de") && slices.Contains(audio, ctx.Original) {
-			info = append(info, fmt.Sprintf("dual audio: German and %s", ctx.Original.Name()))
+		if l := ctx.Profile.Tiers[tier].Language; l != ctx.Original && slices.Contains(audio, ctx.Original) {
+			info = append(info, fmt.Sprintf("dual audio: %s and %s", l.Name(), ctx.Original.Name()))
 			e.rank.dual = ctx.Profile.PreferDual
 		}
 	case ctx.Profile.UnnamedFallback && markers:
@@ -291,10 +387,10 @@ func Evaluate(ctx Context, r Release) Evaluation {
 }
 
 // decideAudio settles the audio languages from one source: the indexer's
-// when it reports any, otherwise the name's, otherwise German for German
-// shows. The file check after download catches the rare wrong indexer
-// report. why explains the result; markers reports dual, multi or dubbed
-// marks.
+// when it reports any, otherwise the name's, otherwise the show's original
+// language, as names leave it unmarked. The file check after download
+// catches a wrong guess. why explains the result; markers reports dual,
+// multi or dubbed marks.
 func decideAudio(ctx Context, r Release) (audio []release.Language, why string, markers bool) {
 	for _, m := range r.Claims.Markers {
 		switch m.Value {
@@ -322,10 +418,14 @@ func decideAudio(ctx Context, r Release) (audio []release.Language, why string, 
 		}
 		return named, why, markers
 	}
-	if ctx.Original == "de" {
-		return []release.Language{"de"}, "German audio assumed, because the show is German and the name names no language; checked after download", markers
+	// Marks without languages say there is more than the original audio;
+	// when the profile wants another language, the audio stays unknown and
+	// the release can only be a last resort.
+	if ctx.Original == "" || markers && !ctx.Profile.Has(ctx.Original) {
+		return nil, "", markers
 	}
-	return nil, "", markers
+	name := ctx.Original.Name()
+	return []release.Language{ctx.Original}, fmt.Sprintf("%s audio assumed, because the show is %s and the name names no language; checked after download", name, name), markers
 }
 
 // bestTier is the first tier whose language the audio has and whose

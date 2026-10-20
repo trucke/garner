@@ -33,6 +33,9 @@ type Config struct {
 	SABnzbd  SABnzbd `toml:"sabnzbd"`
 	Jellyfin Service `toml:"jellyfin"`
 	Monitor  Monitor `toml:"monitor"`
+	// Profiles change the built-in profiles' rules; package selection
+	// checks them.
+	Profiles Profiles `toml:"profiles"`
 }
 
 // Monitor is the background search: it searches the episodes monitored
@@ -54,6 +57,22 @@ type Monitor struct {
 	Upgrades      bool     `toml:"upgrades"`
 	UpgradeRecent Duration `toml:"upgrade_recent"`
 	UpgradeOlder  Duration `toml:"upgrade_older"`
+}
+
+// Profiles holds the settings of the two profiles shows choose from.
+type Profiles struct {
+	TV    Profile `toml:"tv"`
+	Anime Profile `toml:"anime"`
+}
+
+// Profile changes a profile's rules; unset fields keep the built-in ones.
+type Profile struct {
+	// Tiers are the acceptable audio language and resolution pairs, best
+	// first, such as "en 1080p".
+	Tiers []string `toml:"tiers"`
+	// PreferDual ranks releases with the tier's language plus the show's
+	// original audio above the tier's language alone.
+	PreferDual *bool `toml:"prefer_dual"`
 }
 
 // Recent is how long after airing an episode counts as recent.

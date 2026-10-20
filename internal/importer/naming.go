@@ -69,7 +69,7 @@ func (c showContext) target(lib config.Library, episodes []int64, tags, ext stri
 //	<library root>/Show.2013.[tvdbid-1]
 func ShowFolder(lib config.Library, sr store.Series, profile selection.Profile) (string, error) {
 	root := lib.TV
-	if profile.Name == selection.Anime.Name {
+	if profile.Name == selection.AnimeName {
 		root = lib.Anime
 	}
 	if root == "" {

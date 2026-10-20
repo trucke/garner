@@ -28,6 +28,9 @@ type Service struct {
 	rules func(seriesID int64) map[release.Service]string
 	log   *slog.Logger
 	now   func() time.Time
+	// Profiles are the profiles shows choose from; the zero value holds
+	// the built-in ones.
+	Profiles selection.Profiles
 	// OnDone is called after a search was stored.
 	OnDone func(store.Search)
 	// OnProgress is called when a search starts asking the indexers and
@@ -69,8 +72,8 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 		return store.Search{}, err
 	}
 	start := s.now()
-	profile := selection.ProfileNamed(d.Series.Profile)
-	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: s.rules(seriesID)})
+	profile := s.Profiles.Named(d.Series.Profile)
+	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
 	judge := selection.Context{Profile: profile, Show: show, Want: episodeID, Original: original,
 		Missing: missing(d, seasonEpisodes(d, "official", pos.Season), files, start), Have: files[episodeID]}
@@ -164,8 +167,8 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 	}
 	start := s.now()
 	wanted := missing(d, episodes, files, start)
-	profile := selection.ProfileNamed(d.Series.Profile)
-	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: s.rules(seriesID)})
+	profile := s.Profiles.Named(d.Series.Profile)
+	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
 
 	sr := store.Search{Season: season, Searched: start, Indexers: []store.SearchIndexer{}}

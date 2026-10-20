@@ -212,11 +212,12 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 	original, _ := release.LanguageNamed(s.OriginalLanguage)
 	d := described{order: "official", Preview: api.Preview{
 		SearchResult: api.SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
-		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
+		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage),
 		FirstAired: s.FirstAired, LastAired: s.LastAired, Runtime: s.AverageRuntime, Orders: []string{},
 		URL: SeriesURL(s.Slug, s.ID),
 	}}
-	d.Rules = selection.ProfileNamed(d.Type).Describe()
+	profile := c.Profiles.Named(d.Type)
+	d.Rules, d.LanguageNote = profile.Describe(), selection.OriginalNote(profile, original)
 	if s.OriginalNetwork != nil {
 		d.Network = s.OriginalNetwork.Name
 	}

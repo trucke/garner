@@ -35,6 +35,7 @@ func (s *Server) setupSearch() error {
 	}
 	s.prowlarr = prowlarr.New(p.URL, p.APIKey.Value(), client)
 	svc := search.New(s.store, s.prowlarr, rules, s.log)
+	svc.Profiles = s.profiles
 	svc.OnProgress = func(p api.SearchProgress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
 	svc.OnDone = func(sr store.Search) {
 		s.events.publish(Event{Type: "search.finished", Data: map[string]any{"episode_id": sr.EpisodeID, "outcome": sr.Outcome}})
@@ -190,7 +191,7 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 	err := readJSON(r, &req)
 	switch {
 	case err != nil || req.Profile == "" && req.Monitor == "",
-		req.Profile != "" && req.Profile != selection.TV.Name && req.Profile != selection.Anime.Name,
+		req.Profile != "" && req.Profile != selection.TVName && req.Profile != selection.AnimeName,
 		req.Monitor != "" && !slices.Contains(store.MonitorModes, req.Monitor):
 		writeError(w, http.StatusBadRequest, `expected {"profile": "tv" or "anime"}, {"monitor": "new", "all" or "off"}, or both`)
 		return

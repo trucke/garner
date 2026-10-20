@@ -196,14 +196,14 @@ func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request, id int64) 
 		s.internalError(w, "summarise series", err)
 		return api.SeriesDetail{}, false
 	}
-	profile := selection.ProfileNamed(d.Series.Profile)
+	profile := s.profiles.Named(d.Series.Profile)
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
 	detail := api.SeriesDetail{
 		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
-		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(original),
+		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(profile, original),
 		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(),
 	}
-	for _, p := range []selection.Profile{selection.Anime, selection.TV} {
+	for _, p := range s.profiles.All() {
 		detail.Profiles = append(detail.Profiles, api.ProfileInfo{Name: p.Name, Rules: p.Describe()})
 	}
 	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series, profile); err == nil {

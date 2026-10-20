@@ -224,8 +224,7 @@ func (m *Service) held(ctx context.Context, seriesID int64) (map[int64]bool, err
 	if err != nil {
 		return nil, err
 	}
-	profile := selection.ProfileNamed(d.Series.Profile)
-	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.Anime.Name, ServiceOrders: m.rules(seriesID)})
+	show := match.NewShow(d, match.Options{Anime: d.Series.Profile == selection.AnimeName, ServiceOrders: m.rules(seriesID)})
 	held := map[int64]bool{}
 	for _, dl := range busy {
 		held[dl.EpisodeID] = true

@@ -49,6 +49,7 @@ type Server struct {
 	downloads *download.Service // nil without SABnzbd
 	imports   *importer.Service // nil without library folders or ffprobe
 	monitor   *monitor.Service  // nil without searching and downloading; runs show searches even when the monitor is off
+	profiles  selection.Profiles
 	// The services' clients, for the status checks; nil when not set up.
 	prowlarr *prowlarr.Client
 	sabnzbd  *sabnzbd.Client
@@ -69,7 +70,11 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	}
 	defer st.Close()
 
-	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), started: time.Now()}
+	profiles, err := selection.NewProfiles(cfg.Profiles)
+	if err != nil {
+		return err
+	}
+	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), started: time.Now(), profiles: profiles}
 	if err := s.setupCatalog(); err != nil {
 		return err
 	}
@@ -174,6 +179,7 @@ func (s *Server) setupCatalog() error {
 	if err != nil {
 		return err
 	}
+	c.Profiles = s.profiles
 	c.OnChange = func(id int64) {
 		s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}})
 		// New air dates may make episodes due.
@@ -207,7 +213,7 @@ func (s *Server) schedule() *store.Schedule {
 		MissingRecent: time.Duration(m.MissingRecent), MissingOlder: time.Duration(m.MissingOlder),
 		Upgrades:      m.Upgrades,
 		UpgradeRecent: time.Duration(m.UpgradeRecent), UpgradeOlder: time.Duration(m.UpgradeOlder),
-		Best: func(profile string) string { return selection.ProfileNamed(profile).Tiers[0].String() },
+		Best: func(profile string) string { return s.profiles.Named(profile).Tiers[0].String() },
 	}
 }
 
