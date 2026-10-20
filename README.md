@@ -1,86 +1,60 @@
 # Garner
 
-Garner manages TV shows and anime for a self-hosted media library. It finds releases through Prowlarr, downloads them with SABnzbd, inspects the files and imports them for Jellyfin.
+Garner manages TV shows and anime for a self-hosted media library. It finds releases through [Prowlarr](https://prowlarr.com), downloads them with [SABnzbd](https://sabnzbd.org), checks every file with FFprobe, moves it into the library and confirms the import through [Jellyfin](https://jellyfin.org). You run the server, `garnerd`, next to those services and use it from a terminal interface, `garner`, on any machine.
 
-Garner is in early development and not ready for use.
+![The library in Garner's terminal interface](docs/screenshot.png)
 
-## Run it locally
+- **Watches your shows.** The monitor searches for new episodes, or every missing one, and downloads the best release that fits the show's rules. With upgrades on, it replaces a file below the best tier, such as 720p, when a better release turns up.
+- **Explains every decision.** Every release in a search gets a verdict and the reasons for it: which episode it holds, which language and resolution it has and why it ranks where it does.
+- **Checks files before they reach the library.** FFprobe confirms the audio language, resolution and runtime of each file. Jellyfin then has to identify the file as the intended episode.
+- **Handles anime numbering.** Scene numbering and absolute episode numbers come from [TheXEM](https://thexem.info), so releases of long-running anime match the right episodes.
+- **Takes over the files you already have.** When you add a show, Garner adopts its existing files instead of downloading them again.
 
-Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches the production services or library. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io), a Usenet account, at least one Newznab indexer and a [TheTVDB API key](https://thetvdb.com/api-information).
+Garner is young: versions start with `0.`, and a new version can change how things work. It handles TV shows and anime from Usenet only; it has no movies, no torrents and no 4K.
 
-1. Copy `devstack.example.toml` to `devstack.toml` and fill in your Usenet server and indexers. Set `TVDB_API_KEY` in the environment, for example in `mise.local.toml`:
+## What you need
 
-   ```toml
-   [env]
-   TVDB_API_KEY = "..."
+- A Linux server with Podman or Docker. Release images are built for x86 (`linux/amd64`).
+- Prowlarr with at least one Newznab indexer, SABnzbd with a Usenet provider, and Jellyfin with the TheTVDB plugin.
+- One filesystem or share that holds both SABnzbd's completed downloads and the library. Garner moves files with a rename, which works only within one filesystem.
+- A [TheTVDB API key](https://thetvdb.com/api-information) for show and episode data.
+
+## Get started
+
+1. Install the server: [docs/install.md](docs/install.md) walks through the configuration, the container and the first connection.
+2. Install the terminal interface on the machine you use it from. Download the file for that machine from the [latest release](https://github.com/trucke/garner/releases/latest): `garner-<version>-darwin-arm64` for a Mac with Apple silicon, or `garner-<version>-linux-amd64` for Linux on x86. Then move it into your path and make it executable. On a Mac:
+
+   ```bash
+   mkdir -p ~/.local/bin
+   mv ~/Downloads/garner-*-darwin-arm64 ~/.local/bin/garner
+   chmod +x ~/.local/bin/garner
    ```
 
-   Both files are ignored by Git. A `devstack.toml` value written as `"${NAME}"` is read from that environment variable, so secrets can stay in a secret manager; `mise.local.toml` can also redefine the `dev` and `devstack` tasks to run through one.
-2. Run `mise run devstack up`. It creates the stack in `~/garner-dev` and sets it up: SABnzbd with your Usenet server, Prowlarr with your indexers, and Jellyfin with the TVDB plugin and the TV and Anime libraries. It also writes `garner.toml` for the stack, with the monitor turned off: the development server searches and downloads only what you ask for. The first run downloads the images; later runs only bring the setup up to date.
-3. Run `mise run dev`. The task builds the server, `bin/garnerd`, and starts it against the stack. [Air](https://github.com/air-verse/air) rebuilds and restarts it whenever the code changes; the terminal interface reconnects on its own.
-4. In a second terminal, run `./bin/garnerd token create <name>` to create an API token.
-5. Run `mise run tui` to build `bin/garner`, the terminal interface, and open it, and paste the connection code from step 4. It stores the connection in `~/.config/garner/connection`.
+   On Linux, use the file ending in `linux-amd64` instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
 
-| Service | Address | Sign-in |
-| --- | --- | --- |
-| SABnzbd | <http://127.0.0.1:8080> | None |
-| Prowlarr | <http://127.0.0.1:9696> | Set up on first visit |
-| Jellyfin | <http://127.0.0.1:8096> | User `garner-dev`, password in `~/garner-dev/secrets/jellyfin_admin_password` |
+3. Run `garnerd token create <device>` on the server, run `garner` on your machine and paste the connection code. The terminal interface remembers the connection in `~/.config/garner/connection`.
+4. Press `a` to add a show. Press `?` on any screen for its keys.
 
-The stack listens on `127.0.0.1` only. Downloads, the library, the settings and Garner's development database all live in `~/garner-dev`.
+## Choose which releases Garner accepts
 
-* `mise run devstack status` shows the containers.
-* `mise run devstack down` stops them and keeps the data.
-* `mise run devstack reset` deletes everything in `~/garner-dev` and builds the stack again. Stop Garner first.
+Every show has a profile: `tv`, or `anime`, which also matches anime's episode numbering. A profile lists its tiers, the acceptable audio language and resolution pairs, best first. The built-in profiles want German audio:
 
-The stack's own API keys stay in `~/garner-dev/secrets`. `mise run devstack up` replaces any Usenet server or indexer that is not in `devstack.toml`, so change them there rather than in SABnzbd or Prowlarr.
+| Profile | Built-in tiers |
+| --- | --- |
+| `tv` | German 1080p, German 720p; releases with German and the original audio rank first |
+| `anime` | German 1080p, German 720p, English 1080p, English 720p |
 
-Some providers and indexers limit how many places may use an account at once. Give the stack an account, or an allowance, nothing else needs.
+To change them, set the tiers in `garner.toml`. For English audio:
 
-`mise run check` checks the working copy: formatting, vet, the generated database code and known vulnerabilities; the tests on macOS and again on Linux in the Go image the container is built with; and builds for Linux x86. Run it before every push. The real-case tests from the private `garner-research` repository are not part of it; run them as `AGENTS.md` describes.
+```toml
+[profiles.tv]
+tiers = ["en 1080p", "en 720p"]
 
-`mise run build` builds both programs without starting the server. `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
-
-## Releases
-
-Versions follow semantic versioning: `v0.x.y` until Garner is ready for others.
-`mise run release v0.2.0 [revision]` tags a commit of `main`, the newest by default, and pushes the
-tag. The commit must be on `main` on GitHub and newer than the previous release; every push passed
-`mise run check`, so it is checked. GitHub's release workflow (`.github/workflows/release.yml`)
-then builds:
-
-* the server image, `ghcr.io/trucke/garner:v0.2.0`, private while the repository is. Its build cache
-  lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes;
-* with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS (Apple silicon) and Linux
-  (x86) with their SHA-256 sums, and the GitHub release with the image reference and the commits
-  since the previous version.
-
-`goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without
-publishing anything. The workflow keeps the twenty newest image versions, build cache included.
-
-To install the terminal interface from a release, pick the file for the machine, `darwin-arm64` for a
-Mac with Apple silicon or `linux-amd64` for Linux on x86:
-
-```bash
-mkdir -p ~/.local/bin
-gh release download v0.2.0 -R trucke/garner -p 'garner-*-darwin-arm64' -O ~/.local/bin/garner
-chmod +x ~/.local/bin/garner
+[profiles.anime]
+tiers = ["en 1080p", "en 720p"]
 ```
 
-## Container image
-
-`mise run image` builds `localhost/garner:dev` with Podman from the `Dockerfile`. The image contains the server, `garnerd`, and an FFprobe that only reads MKV, MP4, AVI, MPEG-TS and WMV files.
-
-| Item | Value |
-| --- | --- |
-| Command | `garnerd serve`; admin commands run with `podman exec <container> garnerd …` |
-| User | UID and GID 1000 |
-| Root filesystem | Can be read-only |
-| `/config/garner.toml` | Configuration, read-only (`GARNER_CONFIG`) |
-| `/data` | Database, backups, TLS key and the database engine's library, which `garnerd` unpacks on first start; set `data_dir = "/data"`. Use local disk, not a network share. Must be writable by UID 1000 in the container: with rootless Podman, run with `--userns=keep-id` so it maps to your own user, or set the owner with `podman unshare chown 1000:1000 <dir>` |
-| Media | Mount the share at the paths in `library`, `sabnzbd.paths` and `jellyfin.paths` |
-| Secrets | Environment variables or `*_FILE`, as in `garner.example.toml` |
-| Port | 7979 |
+A release that names no language counts as the show's original language. The file check after download confirms the language. `garner.example.toml` describes every setting.
 
 ## Files in the library
 
@@ -93,7 +67,7 @@ When you add a show, Garner looks for the show's video files before the monitor 
 - Garner's folder for the show, such as `Harbor.Precinct.Night.Shift.2013.[tvdbid-42]`
 - every folder that Jellyfin holds the show in, found by the show's TVDB ID, whatever the folder is called
 
-Garner takes over a file when its name clearly names episodes that have no file yet. FFprobe reads the file's audio languages and resolution, which give the file its tier, as for a download. A file in a tier the profile does not accept, such as English audio for a TV show, ranks below every tier, so an upgrade replaces it. Of two files for one episode, Garner takes the one in the better tier, then the larger one. The terminal interface lists the files that Garner left alone, with the reason. To look again, for example after copying files into the library by hand, press `t` on the show's details page.
+Garner takes over a file when its name clearly names episodes that have no file yet. FFprobe reads the file's audio languages and resolution, which give the file its tier, as for a download. A file in a tier the profile does not accept, such as English audio under the built-in `tv` profile, ranks below every tier, so an upgrade replaces it. Of two files for one episode, Garner takes the one in the better tier, then the larger one. The terminal interface lists the files that Garner left alone, with the reason. To look again, for example after copying files into the library by hand, press `t` on the show's details page.
 
 Garner reaches Jellyfin's folders only through `jellyfin.paths` in `garner.toml`. Map every folder that Jellyfin's libraries use, including the folders of a library from before Garner, and mount each one into Garner's container at the mapped path. When no mapping covers a folder, the terminal interface names the folder, and Garner looks only in its own folder.
 
@@ -107,8 +81,20 @@ A taken-over file belongs to Garner from then on, like a file it imported:
 
 Renaming moves the subtitle files along, never overwrites a file and tells Jellyfin about the moves. It removes the folders that the moves left empty. A folder that still holds other files, such as Jellyfin's `tvshow.nfo`, stays, and Jellyfin may still list it as a show. Garner moves files without copying them, so a file on another filesystem than Garner's folder stays where it is.
 
+## Responsible use
+
+Garner automates searching and downloading. It provides no content and no indexers. Download only what you have the right to download where you live.
+
+## Contributing
+
+Bug reports and pull requests are welcome; [CONTRIBUTING.md](CONTRIBUTING.md) explains the development setup. To report a security problem, follow [SECURITY.md](SECURITY.md).
+
 ## Data sources
 
 Metadata provided by [TheTVDB](https://thetvdb.com). Please consider adding missing information or subscribing.
 
 Scene numbering and alternative titles come from [TheXEM](https://thexem.info). Reviewed corrections to that data live in `internal/catalog/corrections.toml`.
+
+## License
+
+Garner is released under the [MIT license](LICENSE). The container image also contains an FFprobe built from [FFmpeg](https://ffmpeg.org) under the LGPL 2.1 or later; its license text is in the image at `/usr/share/licenses/ffprobe`.
