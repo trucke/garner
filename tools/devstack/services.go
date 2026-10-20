@@ -120,8 +120,9 @@ func sabSettled(sab *client, key string, server sabServer) bool {
 }
 
 // setupProwlarr adds the indexers as Newznab entries with redirect on, so
-// SABnzbd fetches NZBs from the indexer itself, and removes any other
-// indexer. It returns Prowlarr's API key.
+// SABnzbd fetches NZBs from the indexer itself, and then removes any other
+// indexer, so a replacement that Prowlarr rejects leaves the old one in
+// place. It returns Prowlarr's API key.
 func setupProwlarr(wanted []indexer) (string, error) {
 	var key string
 	if err := waitFor("Prowlarr writing its settings", 2*time.Minute, func() bool {
@@ -140,13 +141,6 @@ func setupProwlarr(wanted []indexer) (string, error) {
 	var existing []map[string]any
 	if err := p.json(http.MethodGet, "/api/v1/indexer", nil, &existing); err != nil {
 		return "", err
-	}
-	for _, e := range existing {
-		if !slices.ContainsFunc(wanted, func(w indexer) bool { return w.Name == e["name"] }) {
-			if err := p.json(http.MethodDelete, fmt.Sprintf("/api/v1/indexer/%v", e["id"]), nil, nil); err != nil {
-				return "", err
-			}
-		}
 	}
 	var schema []map[string]any
 	if err := p.json(http.MethodGet, "/api/v1/indexer/schema", nil, &schema); err != nil {
@@ -180,6 +174,13 @@ func setupProwlarr(wanted []indexer) (string, error) {
 		// Prowlarr tests the indexer before saving, which checks the key.
 		if err := p.json(method, target, def, nil); err != nil {
 			return "", fmt.Errorf("indexer %s: %w", w.Name, err)
+		}
+	}
+	for _, e := range existing {
+		if !slices.ContainsFunc(wanted, func(w indexer) bool { return w.Name == e["name"] }) {
+			if err := p.json(http.MethodDelete, fmt.Sprintf("/api/v1/indexer/%v", e["id"]), nil, nil); err != nil {
+				return "", err
+			}
 		}
 	}
 	return key, nil
