@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/importer"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -37,7 +38,8 @@ func TestDeleteSeries(t *testing.T) {
 	}, true, now); err != nil {
 		t.Fatal(err)
 	}
-	video := filepath.Join(t.TempDir(), "Harbor.Precinct.[tvdbid-42]", "Season.01", "Harbor.Precinct.S01E01.mkv")
+	library := t.TempDir()
+	video := filepath.Join(library, "Harbor.Precinct.[tvdbid-42]", "Season.01", "Harbor.Precinct.S01E01.mkv")
 	if err := os.MkdirAll(filepath.Dir(video), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +64,8 @@ func TestDeleteSeries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
+	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff,
+		imports: importer.New(st, nil, nil, importer.Options{Library: config.Library{TV: library}}, log)}
 	api := httptest.NewServer(s.Routes())
 	defer api.Close()
 	token, err := st.CreateToken(ctx, "test")
@@ -107,6 +110,15 @@ func TestDeleteSeries(t *testing.T) {
 	}
 	if ok, _ := st.HasSeries(ctx, 42); !ok {
 		t.Fatal("a refused delete removed the show")
+	}
+	// Deleting files needs the importer, whose guard checks they are Garner's.
+	bare := &Server{cfg: s.cfg, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/series/42?files=delete", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	bare.Routes().ServeHTTP(rec, req)
+	if ok, _ := st.HasSeries(ctx, 42); rec.Code != http.StatusServiceUnavailable || !ok {
+		t.Fatalf("delete files without an importer: %d, show kept: %v; want 503 and the show", rec.Code, ok)
 	}
 	if code := call(http.MethodDelete, "/api/v1/series/42?files=delete", ""); code != http.StatusOK {
 		t.Fatalf("delete: %d", code)

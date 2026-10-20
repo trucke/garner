@@ -5,31 +5,37 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
 )
 
-// subtitleExtensions are external subtitle files Jellyfin reads.
-var subtitleExtensions = map[string]bool{".srt": true, ".ass": true, ".ssa": true, ".vtt": true, ".sup": true, ".sub": true, ".idx": true}
-
-// repeatedJob is the suffix SABnzbd adds when a job name already exists.
-var repeatedJob = regexp.MustCompile(`^\.\d+$`)
-
 // tidy runs after the videos were moved: it puts the release's subtitle
 // files next to their videos and removes the rest of SABnzbd's job folder.
 // It never fails the import; what stays behind is returned as notes.
-func (s *Service) tidy(d *store.Download, files []store.ImportFile) []string {
-	dir, why := s.jobFolder(d)
-	if why != "" {
-		return []string{"SABnzbd's folder was left in place: " + why}
+func (s *Service) tidy(ctx context.Context, d *store.Download, files []store.ImportFile) []string {
+	job, err := s.guard.Job(d.Storage, d.Title)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // removed already, before a restart
 	}
-	notes := s.moveSubtitles(dir, files, false)
+	if err == nil && job.KeepReason() != "" {
+		err = errors.New(job.KeepReason())
+	}
+	if err != nil {
+		return []string{"SABnzbd's folder was left in place: " + err.Error()}
+	}
+	dir := job.Dir()
+	notes := s.moveSubtitles(ctx, dir, files, false, func(_ store.ImportFile, p string) (guard.File, error) {
+		return s.guard.InJob(job, p)
+	})
 	remaining, err := videoFiles(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -43,7 +49,9 @@ func (s *Service) tidy(d *store.Download, files []store.ImportFile) []string {
 	if subs := subtitleFiles(dir); subs > 0 {
 		return append(notes, fmt.Sprintf("SABnzbd's folder %s was left in place: it holds %s that could not be moved", dir, count(subs, "subtitle file")))
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := s.guard.RemoveJob(ctx, job); refused(err) {
+		return append(notes, fmt.Sprintf("SABnzbd's folder %s was left in place: %v", dir, err))
+	} else if err != nil {
 		s.log.Warn("could not remove SABnzbd's folder", "download", d.ID, "dir", dir, "err", err)
 		return append(notes, fmt.Sprintf("SABnzbd's folder %s could not be removed: %v", dir, unwrapPath(err)))
 	}
@@ -52,93 +60,20 @@ func (s *Service) tidy(d *store.Download, files []store.ImportFile) []string {
 }
 
 // discard removes the job folder of a rejected release.
-func (s *Service) discard(d *store.Download) {
-	dir, why := s.jobFolder(d)
-	if why != "" {
-		s.log.Warn("left the rejected release's files in place", "download", d.ID, "reason", why)
-		return
+func (s *Service) discard(ctx context.Context, d *store.Download) {
+	job, err := s.guard.Job(d.Storage, d.Title)
+	if err == nil {
+		err = s.guard.RemoveJob(ctx, job)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		s.log.Warn("could not remove the rejected release's files", "download", d.ID, "dir", dir, "err", err)
-		return
-	}
-	s.log.Info("removed the rejected release's files", "download", d.ID, "dir", dir)
-}
-
-// jobFolder is SABnzbd's folder for the download, as Garner reaches it, and
-// why it must not be deleted, if so. A folder qualifies only when it is
-// named after the release (SABnzbd may append ".1" for a repeated name),
-// which rules out category folders, lies inside a sabnzbd.paths folder and
-// neither is nor contains a mapped or library folder.
-func (s *Service) jobFolder(d *store.Download) (dir, why string) {
-	if d.Storage == "" {
-		return "", "SABnzbd did not say where the files are"
-	}
-	dir, ok := s.opts.SABnzbdPaths.Local(d.Storage)
-	if !ok {
-		return "", "no sabnzbd.paths entry covers " + d.Storage
-	}
-	dir = filepath.Clean(dir)
-	// For a job with a single file, SABnzbd reports the file, which lies in
-	// the job folder.
-	if !isJobName(filepath.Base(dir), d.Title) && isJobName(filepath.Base(filepath.Dir(dir)), d.Title) {
-		dir = filepath.Dir(dir)
-	}
-	if name := filepath.Base(dir); !isJobName(name, d.Title) {
-		return "", fmt.Sprintf("its name %q is not the release's", name)
-	}
-	if st, err := os.Lstat(dir); err != nil || !st.IsDir() {
-		return "", dir + " is not a folder"
-	}
-	// Compare real paths, so a symbolic link on the way cannot lead into the
-	// library or a mapped folder.
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", fmt.Sprintf("cannot resolve %s: %v", dir, unwrapPath(err))
-	}
-	inside := len(s.opts.SABnzbdPaths) == 0
-	for _, local := range s.opts.SABnzbdPaths {
-		root := realPath(local)
-		if contains(real, root) {
-			return "", fmt.Sprintf("%s is or contains the mapped folder %s", dir, root)
-		}
-		inside = inside || contains(root, real)
-	}
-	if !inside {
-		return "", dir + " is outside the sabnzbd.paths folders"
-	}
-	for _, lib := range []string{s.opts.Library.TV, s.opts.Library.Anime} {
-		if lib == "" {
-			continue
-		}
-		lib = realPath(lib)
-		if contains(real, lib) || contains(lib, real) {
-			return "", fmt.Sprintf("%s overlaps the library folder %s", dir, lib)
-		}
-	}
-	return real, ""
-}
-
-// isJobName reports whether a folder name is SABnzbd's job name for the
-// release: its title, or its title with ".1" and so on for a repeat.
-func isJobName(name, title string) bool {
-	suffix, found := cutPrefixFold(name, title)
-	return found && (suffix == "" || repeatedJob.MatchString(suffix))
-}
-
-// realPath resolves symbolic links in the part of p that exists, such as
-// a parent of a library folder that is not there yet.
-func realPath(p string) string {
-	p = filepath.Clean(p)
-	var rest []string
-	for dir := p; ; dir = filepath.Dir(dir) {
-		if r, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(append([]string{r}, rest...)...)
-		}
-		if parent := filepath.Dir(dir); parent == dir {
-			return p
-		}
-		rest = append([]string{filepath.Base(dir)}, rest...)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Removed already.
+	case refused(err):
+		s.log.Warn("left the rejected release's files in place", "download", d.ID, "reason", err)
+	case err != nil:
+		s.log.Warn("could not remove the rejected release's files", "download", d.ID, "dir", job.Dir(), "err", err)
+	default:
+		s.log.Info("removed the rejected release's files", "download", d.ID, "dir", job.Dir())
 	}
 }
 
@@ -146,7 +81,7 @@ func realPath(p string) string {
 func subtitleFiles(dir string) int {
 	n := 0
 	filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
-		if err == nil && !e.IsDir() && subtitleExtensions[strings.ToLower(filepath.Ext(p))] {
+		if err == nil && !e.IsDir() && guard.IsSubtitle(p) {
 			n++
 		}
 		return nil
@@ -160,11 +95,13 @@ func subtitleFiles(dir string) int {
 // start with the video's original name, except in a download's folder with
 // one video, where every subtitle file belongs to it. shared means dir holds
 // other videos too, such as a library's season folder, so names decide.
-func (s *Service) moveSubtitles(dir string, files []store.ImportFile, shared bool) []string {
+// claim asks the guard for a subtitle file of its video.
+func (s *Service) moveSubtitles(ctx context.Context, dir string, files []store.ImportFile, shared bool,
+	claim func(video store.ImportFile, subtitle string) (guard.File, error)) []string {
 	var notes []string
 	moved := 0
 	filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() || !subtitleExtensions[strings.ToLower(filepath.Ext(p))] {
+		if err != nil || e.IsDir() || !guard.IsSubtitle(p) {
 			return nil
 		}
 		base := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
@@ -191,7 +128,11 @@ func (s *Service) moveSubtitles(dir string, files []store.ImportFile, shared boo
 			notes = append(notes, fmt.Sprintf("subtitle %s was left behind: its name is taken next to the video", filepath.Base(p)))
 			return nil
 		}
-		if err := os.Rename(p, target); err != nil {
+		sub, err := claim(*owner, p)
+		if err == nil {
+			err = s.guard.Move(ctx, sub, target)
+		}
+		if err != nil {
 			notes = append(notes, fmt.Sprintf("subtitle %s could not be moved: %v", filepath.Base(p), unwrapPath(err)))
 			return nil
 		}
@@ -238,21 +179,6 @@ func subtitleTarget(video, rest, ext string) string {
 	return ""
 }
 
-// removeSubtitles deletes the external subtitles of a video, such as the
-// previous version's when an upgrade replaced it.
-func removeSubtitles(video string) {
-	base := filepath.Base(strings.TrimSuffix(video, filepath.Ext(video))) + "."
-	entries, err := os.ReadDir(filepath.Dir(video))
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), base) && subtitleExtensions[strings.ToLower(filepath.Ext(e.Name()))] {
-			os.Remove(filepath.Join(filepath.Dir(video), e.Name()))
-		}
-	}
-}
-
 // contains reports whether dir is parent or lies inside it.
 func contains(parent, dir string) bool {
 	return dir == parent || strings.HasPrefix(dir, parent+string(filepath.Separator))
@@ -274,32 +200,49 @@ func count(n int, noun string) string {
 
 var seasonFolder = regexp.MustCompile(`^Season\.\d+$`)
 
-// DeleteFiles removes a show's imported files and their subtitle files,
+// ClaimFiles claims a show's files while the database still records them,
+// so DeleteFiles may remove them after the records went.
+func (s *Service) ClaimFiles(ctx context.Context, paths []string) ([]guard.File, error) {
+	files := make([]guard.File, 0, len(paths))
+	for _, p := range paths {
+		f, err := s.guard.Recorded(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// DeleteFiles removes a show's claimed files and their subtitle files,
 // then the season and show folders that are left empty. Only folders named
 // the way Garner names them are removed, so a library root or someone
 // else's folder never goes. It returns the files it removed and the
 // problems it met.
-func DeleteFiles(seriesID int64, paths []string) (removed, problems []string) {
+func (s *Service) DeleteFiles(ctx context.Context, seriesID int64, files []guard.File) (removed, problems []string) {
 	showSuffix := fmt.Sprintf(".[tvdbid-%d]", seriesID)
-	folders := map[string]bool{}
-	for _, p := range paths {
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	emptied := map[string]guard.File{} // by folder: a file that lay in it
+	for _, f := range files {
+		if err := s.guard.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			problems = append(problems, err.Error())
 			continue
 		} else if err == nil {
-			removed = append(removed, p)
+			removed = append(removed, f.Path())
 		}
-		removeSubtitles(p)
-		folders[filepath.Dir(p)] = true
+		s.guard.RemoveSubtitles(f)
+		emptied[filepath.Dir(f.Path())] = f
 	}
-	for season := range folders {
-		if !seasonFolder.MatchString(filepath.Base(season)) || os.Remove(season) != nil {
+	folders := s.guard.Folders(ctx)
+	for _, season := range slices.Sorted(maps.Keys(emptied)) {
+		if !seasonFolder.MatchString(filepath.Base(season)) {
 			continue
 		}
+		stop := season
 		if show := filepath.Dir(season); strings.HasSuffix(filepath.Base(show), showSuffix) {
-			// Fails while other seasons are left; they go in their turn.
-			os.Remove(show)
+			// Stays while other seasons are left; it goes with the last.
+			stop = show
 		}
+		folders.RemoveEmpty(emptied[season], stop)
 	}
 	return removed, problems
 }

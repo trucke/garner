@@ -14,6 +14,7 @@ import (
 	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/importer"
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
@@ -264,6 +265,19 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 			size += f.Size
 		}
 	}
+	deleteFiles := !keep && len(paths) > 0
+	if deleteFiles && s.imports == nil {
+		writeError(w, http.StatusServiceUnavailable, "deleting a show's files needs library.tv or library.anime and ffprobe; delete it with files=keep to leave them in place")
+		return
+	}
+	// Claimed while the records still say the files are Garner's.
+	var claimed []guard.File
+	if deleteFiles {
+		if claimed, err = s.imports.ClaimFiles(ctx, paths); err != nil {
+			s.internalError(w, "delete series", err)
+			return
+		}
+	}
 	if len(busy) > 0 && s.downloads == nil {
 		writeError(w, http.StatusConflict, "the show has running downloads, and SABnzbd is not configured to cancel them")
 		return
@@ -307,11 +321,12 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"files": 0, "kept": len(paths), "bytes": size, "problems": []string{}})
 		return
 	}
-	removed, problems := importer.DeleteFiles(id, paths)
-	if len(problems) > 0 {
-		s.log.Error("delete series files", "series", id, "problems", problems)
-	}
-	if s.imports != nil {
+	var removed, problems []string
+	if deleteFiles {
+		removed, problems = s.imports.DeleteFiles(ctx, id, claimed)
+		if len(problems) > 0 {
+			s.log.Error("delete series files", "series", id, "problems", problems)
+		}
 		s.imports.Removed(ctx, removed)
 	}
 	s.log.Info("deleted a show", "series", id, "files", len(removed))

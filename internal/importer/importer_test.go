@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/jellyfin"
 	"github.com/trucke/garner/internal/selection"
@@ -57,6 +58,8 @@ func (f *fakeJellyfin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				f.created = append(f.created, u.Path)
 			}
 		}
+	case "/Library/VirtualFolders":
+		json.NewEncoder(w).Encode([]map[string]any{{"Name": "TV Shows", "Locations": []string{"/data/library/tv"}}})
 	case "/Library/Refresh":
 		f.scans++
 		f.created, f.pending = append(f.created, f.pending...), nil
@@ -175,6 +178,50 @@ func TestImport(t *testing.T) {
 	}
 	if f, found, _ := e.st.EpisodeFile(ctx, 101); !found || f.Path != filepath.Join(e.share, target) {
 		t.Errorf("episode file = %+v, %v", f, found)
+	}
+}
+
+// TestImportSamePaths imports with Garner, SABnzbd and Jellyfin seeing the
+// files under the same paths, as on one machine: garner.toml has no paths
+// entries.
+func TestImportSamePaths(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	e.svc = New(e.st, fakeProber{german}, e.svc.jellyfin, Options{Library: e.svc.opts.Library}, slog.New(slog.DiscardHandler))
+	d.Storage = filepath.Join(e.share, jobDir)
+	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.work(ctx)
+
+	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
+		t.Fatalf("import = %+v", got.Import)
+	}
+	if want := filepath.Join(e.share, target); len(e.jf.created) != 1 || e.jf.created[0] != want {
+		t.Errorf("Jellyfin was told %q, want %q", e.jf.created, want)
+	}
+	if _, err := os.Stat(filepath.Join(e.share, jobDir)); !os.IsNotExist(err) {
+		t.Errorf("SABnzbd's folder stayed: %v", err)
+	}
+}
+
+// TestImportMovedAlready moves again after a restart that came after
+// SABnzbd's folder was removed: the files count as moved, and no note
+// claims the folder was left in place.
+func TestImportMovedAlready(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	e.svc.work(ctx)
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if got.Import.State != store.ImportDone {
+		t.Fatalf("import = %+v", got.Import)
+	}
+	if err := e.st.UpdateImport(ctx, d.ID, store.Import{State: store.ImportMoving, Files: got.Import.Files}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.work(ctx)
+	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone || len(got.Import.Notes) != 0 {
+		t.Errorf("after moving again: %+v", got.Import)
 	}
 }
 
@@ -375,8 +422,13 @@ func TestSubtitleOwner(t *testing.T) {
 	for _, name := range []string{"Episode10.en.srt", "Episode1.de.srt", "Unrelated.srt"} {
 		os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
 	}
-	s := &Service{}
-	s.moveSubtitles(dir, files, false)
+	g := guard.New(guard.Options{Library: config.Library{TV: lib}})
+	job, err := g.Job(dir, filepath.Base(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{guard: g}
+	s.moveSubtitles(context.Background(), dir, files, false, func(_ store.ImportFile, p string) (guard.File, error) { return g.InJob(job, p) })
 	for _, want := range []string{"Show.S01E10.en.srt", "Show.S01E01.de.srt"} {
 		if _, err := os.Stat(filepath.Join(lib, want)); err != nil {
 			t.Errorf("missing %s", want)
@@ -392,52 +444,6 @@ func TestVideoFilesSingleSample(t *testing.T) {
 	os.WriteFile(f, []byte("x"), 0o644)
 	if got, err := videoFiles(f); err != nil || len(got) != 0 {
 		t.Errorf("videoFiles(sample file) = %v, %v", got, err)
-	}
-}
-
-// TestJobFolder deletes only a folder named after the release, inside the
-// SABnzbd folders and apart from the library.
-func TestJobFolder(t *testing.T) {
-	share := t.TempDir()
-	for _, dir := range []string{"usenet/complete/tv/Show.S01E01-GRP", "usenet/complete/tv/Show.S01E01-GRP.1", "usenet/complete/tv/tv", "library/tv", "other/Show.S01E01-GRP"} {
-		os.MkdirAll(filepath.Join(share, dir), 0o755)
-	}
-	s := &Service{opts: Options{
-		SABnzbdPaths: config.PathMap{"/data/usenet": filepath.Join(share, "usenet")},
-		Library:      config.Library{TV: filepath.Join(share, "library", "tv")},
-	}}
-	for _, tc := range []struct {
-		storage, title string
-		ok             bool
-	}{
-		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Show.S01E01-GRP", true},
-		{"/data/usenet/complete/tv/Show.S01E01-GRP.1", "Show.S01E01-GRP", true},
-		{"/data/usenet/complete/tv/Show.S01E01-GRP/Show.S01E01-GRP.mkv", "Show.S01E01-GRP", true}, // a single-file job names the file
-		{"/data/usenet/complete/tv/Show.S01E01-GRP.mkv", "Show.S01E01-GRP", false},                // a file directly in the category folder
-		{"/data/usenet/complete/tv/Show.S01E01-GRP", "Other.S01E01-GRP", false},                   // named after another release
-		{"/data/usenet/complete/tv", "Show.S01E01-GRP", false},                                    // a category folder is not named after the release
-		{"/data/usenet", "usenet", false},                                                         // the mapped root itself
-		{"/data/other/Show.S01E01-GRP", "Show.S01E01-GRP", false},                                 // no mapping covers it
-		{"", "Show.S01E01-GRP", false},
-	} {
-		dir, why := s.jobFolder(&store.Download{Storage: tc.storage, Title: tc.title})
-		if why == "" && !strings.HasPrefix(filepath.Base(dir), tc.title) {
-			t.Errorf("jobFolder(%q) = %q; want the job folder", tc.storage, dir)
-		}
-		if (why == "") != tc.ok {
-			t.Errorf("jobFolder(%q, %q) = %q, %q; want ok=%v", tc.storage, tc.title, dir, why, tc.ok)
-		}
-	}
-	// A symbolic link on the way into the library does not make it deletable.
-	os.Symlink(filepath.Join(share, "library"), filepath.Join(share, "usenet", "linked"))
-	os.MkdirAll(filepath.Join(share, "library", "Show.S01E01-GRP"), 0o755)
-	if _, why := s.jobFolder(&store.Download{Storage: "/data/usenet/linked/Show.S01E01-GRP", Title: "Show.S01E01-GRP"}); why == "" {
-		t.Error("a folder reached through a link into the library qualified for deletion")
-	}
-	// A library folder inside SABnzbd's job folder is never deleted with it.
-	s.opts.Library.TV = filepath.Join(share, "usenet/complete/tv/Show.S01E01-GRP/library")
-	if _, why := s.jobFolder(&store.Download{Storage: "/data/usenet/complete/tv/Show.S01E01-GRP", Title: "Show.S01E01-GRP"}); why == "" {
-		t.Error("a folder holding the library qualified for deletion")
 	}
 }
 

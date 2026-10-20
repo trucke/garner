@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/api"
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
@@ -334,6 +336,7 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 	note := func(format string, args ...any) { out.Notes = append(out.Notes, fmt.Sprintf(format, args...)) }
 
 	var moved []store.ImportFile
+	claims := map[string]guard.File{} // by the moved file's old path
 	for _, f := range files {
 		slices.SortFunc(f.Episodes, func(a, b int64) int {
 			x, y := c.episodes[a].Numbers["official"], c.episodes[b].Numbers["official"]
@@ -352,11 +355,16 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 			note("%s stayed: %s exists already", f.Source, f.Target)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(f.Target), 0o775); err != nil {
+		source, err := s.guard.Recorded(ctx, f.Source)
+		if err != nil {
+			note("%s stayed: %v", f.Source, err)
+			continue
+		}
+		if err := s.guard.Mkdir(filepath.Dir(f.Target)); err != nil {
 			note("%s stayed: cannot create %s: %v", f.Source, filepath.Dir(f.Target), unwrapPath(err))
 			continue
 		}
-		if err := os.Rename(f.Source, f.Target); err != nil {
+		if err := s.guard.Move(ctx, source, f.Target); err != nil {
 			if errors.Is(err, syscall.EXDEV) {
 				note("%s stayed: it is on another filesystem than the library, and Garner moves files without copying", f.Source)
 			} else {
@@ -370,6 +378,7 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 		}
 		s.log.Info("renamed a taken-over file", "series", seriesID, "from", f.Source, "to", f.Target)
 		moved = append(moved, f)
+		claims[f.Source] = source
 	}
 	out.Files = len(moved)
 
@@ -380,13 +389,21 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 		byDir[filepath.Dir(f.Source)] = append(byDir[filepath.Dir(f.Source)], f)
 	}
 	folders, _ := s.showFolders(ctx, c)
-	for dir, inDir := range byDir {
-		for _, n := range s.moveSubtitles(dir, inDir, true) {
+	emptied := s.guard.Folders(ctx)
+	for _, dir := range slices.Sorted(maps.Keys(byDir)) {
+		inDir := byDir[dir]
+		subtitle := func(video store.ImportFile, p string) (guard.File, error) {
+			return s.guard.Subtitle(claims[video.Source], p)
+		}
+		for _, n := range s.moveSubtitles(ctx, dir, inDir, true, subtitle) {
 			if !strings.HasPrefix(n, "moved ") {
 				out.Notes = append(out.Notes, n)
 			}
 		}
-		removeEmpty(dir, folders)
+		// Up to the show's folder among folders that holds dir.
+		if i := slices.IndexFunc(folders, func(f string) bool { return contains(f, dir) }); i >= 0 {
+			emptied.RemoveEmpty(claims[inDir[0].Source], folders[i])
+		}
 	}
 	for _, dir := range folders {
 		if dir == own {
@@ -398,20 +415,6 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 	}
 	s.announceMoves(ctx, moved)
 	return out, nil
-}
-
-// removeEmpty removes dir and its parents while they are empty, up to and
-// including the show folder among folders that holds it.
-func removeEmpty(dir string, folders []string) {
-	i := slices.IndexFunc(folders, func(f string) bool { return contains(f, dir) })
-	if i < 0 {
-		return
-	}
-	for ; contains(folders[i], dir); dir = filepath.Dir(dir) {
-		if os.Remove(dir) != nil {
-			return
-		}
-	}
 }
 
 // countFiles counts the files in dir and below it.

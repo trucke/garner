@@ -1,16 +1,22 @@
 package importer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/trucke/garner/internal/store"
 )
 
 // TestDeleteFiles checks that deleting a show removes its videos, their
 // subtitles and the folders left empty, but nothing Garner did not put
 // there and never the library root.
 func TestDeleteFiles(t *testing.T) {
-	root := t.TempDir()
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	root := filepath.Join(e.share, "library", "tv")
 	show := filepath.Join(root, "Harbor.Precinct.2013.[tvdbid-42]")
 	write := func(rel string) string {
 		t.Helper()
@@ -31,8 +37,20 @@ func TestDeleteFiles(t *testing.T) {
 	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	for episode, path := range map[int64]string{101: a, 102: b} {
+		if err := e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: episode, Path: path, Size: 1}, 0, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.svc.ClaimFiles(ctx, []string{a, outside}); err == nil {
+		t.Fatal("claimed a file the database does not record")
+	}
+	claimed, err := e.svc.ClaimFiles(ctx, []string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	removed, problems := DeleteFiles(42, []string{a, b, filepath.Join(show, "Season.01/already-gone.mkv")})
+	removed, problems := e.svc.DeleteFiles(ctx, 42, claimed)
 	if len(removed) != 2 || len(problems) != 0 {
 		t.Fatalf("removed %v, problems %v; want 2 files and none", removed, problems)
 	}
@@ -48,8 +66,11 @@ func TestDeleteFiles(t *testing.T) {
 	}
 
 	// Once the other file is gone too, the empty folders go, the root stays.
+	// A file that is gone already is no problem.
 	os.Remove(notes)
-	DeleteFiles(42, []string{b})
+	if removed, problems := e.svc.DeleteFiles(ctx, 42, claimed[1:]); len(removed) != 0 || len(problems) != 0 {
+		t.Errorf("deleting a file that is gone: removed %v, problems %v", removed, problems)
+	}
 	if _, err := os.Stat(show); !os.IsNotExist(err) {
 		t.Error("the empty show folder stayed")
 	}

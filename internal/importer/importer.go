@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/jellyfin"
 	"github.com/trucke/garner/internal/match"
@@ -79,9 +80,11 @@ type Service struct {
 	probe    Prober
 	jellyfin *jellyfin.Client // nil: imports are not confirmed
 	opts     Options
-	log      *slog.Logger
-	now      func() time.Time
-	wake     chan struct{}
+	// guard makes every change to files and folders.
+	guard *guard.Guard
+	log   *slog.Logger
+	now   func() time.Time
+	wake  chan struct{}
 	// files lets one take-over or rename run at a time.
 	files sync.Mutex
 	// OnChange is called whenever an import changes.
@@ -95,7 +98,33 @@ func New(st *store.Store, probe Prober, jf *jellyfin.Client, opts Options, log *
 	if opts.Rules == nil {
 		opts.Rules = func(int64) map[release.Service]string { return nil }
 	}
-	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, log: log, now: time.Now, wake: make(chan struct{}, 1)}
+	g := guard.New(guard.Options{
+		Library: opts.Library, SABnzbdPaths: opts.SABnzbdPaths,
+		Recorded: st.FileInUse, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths),
+	})
+	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, guard: g, log: log, now: time.Now, wake: make(chan struct{}, 1)}
+}
+
+// jellyfinFolders lists Jellyfin's library folders as Garner reaches them;
+// nil without Jellyfin. A folder no jellyfin.paths entry covers is out of
+// Garner's reach, so it is left out.
+func jellyfinFolders(jf *jellyfin.Client, paths config.PathMap) func(context.Context) ([]string, error) {
+	if jf == nil {
+		return nil
+	}
+	return func(ctx context.Context) ([]string, error) {
+		remote, err := jf.LibraryFolders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var local []string
+		for _, r := range remote {
+			if l, ok := paths.Local(r); ok {
+				local = append(local, l)
+			}
+		}
+		return local, nil
+	}
 }
 
 // Wake makes Run look for work now, such as after a download completed.
@@ -274,6 +303,16 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 // After a restart they are no longer known and stay in the folder.
 func (s *Service) move(ctx context.Context, d *store.Download, dropped []string) {
 	files := d.Import.Files
+	// SABnzbd's folder is looked up only when a file is still in it: after a
+	// restart, it may be gone with every file moved already.
+	job := sync.OnceValues(func() (guard.Job, error) { return s.guard.Job(d.Storage, d.Title) })
+	claim := func(path string) (guard.File, error) {
+		j, err := job()
+		if err != nil {
+			return guard.File{}, err
+		}
+		return s.guard.InJob(j, path)
+	}
 	for _, f := range files {
 		root := s.rootOf(f.Target)
 		if root == "" {
@@ -301,12 +340,23 @@ func (s *Service) move(ctx context.Context, d *store.Download, dropped []string)
 				return
 			}
 		}
-		if err := os.MkdirAll(filepath.Dir(f.Target), 0o775); err != nil {
-			s.fail(ctx, d, files, fmt.Sprintf("cannot create %s: %v", filepath.Dir(f.Target), unwrapPath(err)), permissionFix)
+		source, err := claim(f.Source)
+		if err != nil {
+			s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
 			return
 		}
-		if err := os.Rename(f.Source, f.Target); err != nil {
+		if err := s.guard.Mkdir(filepath.Dir(f.Target)); err != nil {
+			fix := permissionFix
+			if refused(err) {
+				fix = guardFix
+			}
+			s.fail(ctx, d, files, fmt.Sprintf("cannot create %s: %v", filepath.Dir(f.Target), unwrapPath(err)), fix)
+			return
+		}
+		if err := s.guard.Move(ctx, source, f.Target); err != nil {
 			switch {
+			case refused(err):
+				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
 			case errors.Is(err, syscall.EXDEV):
 				s.fail(ctx, d, files, "the download and the library are on different filesystems, so the file would have to be copied",
 					"Keep SABnzbd's completed folder and the library on the same share and dataset, then retry the import. Garner moves files; it does not copy them.")
@@ -321,11 +371,15 @@ func (s *Service) move(ctx context.Context, d *store.Download, dropped []string)
 	}
 	s.recordFiles(ctx, d, files)
 	for _, f := range dropped {
-		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		c, err := claim(f)
+		if err == nil {
+			err = s.guard.Remove(c)
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			s.log.Warn("could not remove a file it does not import", "download", d.ID, "file", f, "err", err)
 		}
 	}
-	notes := append(slices.Clone(d.Import.Notes), s.tidy(d, files)...)
+	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
 	if notes == nil {
 		notes = []string{}
 	}
@@ -353,6 +407,16 @@ func (s *Service) move(ctx context.Context, d *store.Download, dropped []string)
 }
 
 const permissionFix = "On the NAS, give the account Garner uses write access to SABnzbd's completed folder and the library (UID 1000 in this setup), then retry the import."
+
+// guardFix is the recovery step when the guard refused to change a file
+// that Garner does not own.
+const guardFix = "Check sabnzbd.paths, jellyfin.paths, library.tv and library.anime in garner.toml, then retry the import. Garner changes only files and folders it owns."
+
+// refused reports whether the guard refused a change.
+func refused(err error) bool {
+	var r *guard.Refusal
+	return errors.As(err, &r)
+}
 
 // keepBetter drops a pack's files for episodes, other than the one it was
 // chosen for, whose file came from a release of the same tier or a better
@@ -394,28 +458,34 @@ func (s *Service) keepBetter(ctx context.Context, d *store.Download, c showConte
 // recordFiles remembers each episode's file and removes the version Garner
 // imported before: one version per episode.
 func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) {
-	var old []string
+	// The previous versions are claimed while their records still point at
+	// them.
+	var old []guard.File
 	for _, f := range files {
 		for _, ep := range f.Episodes {
 			prev, found, err := s.store.EpisodeFile(ctx, ep)
 			if err == nil && found && prev.Path != f.Target {
-				old = append(old, prev.Path)
+				if c, err := s.guard.Recorded(ctx, prev.Path); err != nil {
+					s.log.Warn("left the previous version in place", "path", prev.Path, "err", err)
+				} else {
+					old = append(old, c)
+				}
 			}
 			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier}, d.ID, s.now()); err != nil {
 				s.log.Error("record imported file", "episode", ep, "err", err)
 			}
 		}
 	}
-	for _, p := range old {
-		if used, err := s.store.FileInUse(ctx, p); err != nil || used {
+	for _, c := range old {
+		if used, err := s.store.FileInUse(ctx, c.Path()); err != nil || used {
 			continue
 		}
-		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			s.log.Warn("could not remove the previous version", "path", p, "err", err)
+		if err := s.guard.Remove(c); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.log.Warn("could not remove the previous version", "path", c.Path(), "err", err)
 			continue
 		}
-		removeSubtitles(p)
-		s.log.Info("removed the previous version", "path", p)
+		s.guard.RemoveSubtitles(c)
+		s.log.Info("removed the previous version", "path", c.Path())
 	}
 }
 
@@ -523,7 +593,7 @@ func (s *Service) fail(ctx context.Context, d *store.Download, files []store.Imp
 // lets the download service try the next release.
 func (s *Service) reject(ctx context.Context, d *store.Download, files []store.ImportFile, reason string) {
 	s.save(ctx, d, store.Import{State: store.ImportRejected, Detail: reason, Files: files})
-	s.discard(d)
+	s.discard(ctx, d)
 	if s.OnRejected != nil {
 		s.OnRejected(ctx, *d, reason)
 	}
