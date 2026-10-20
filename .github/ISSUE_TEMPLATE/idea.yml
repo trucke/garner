@@ -1,0 +1,15 @@
+name: Idea
+description: Suggest something Garner should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The situation and what is in the way today. Describe the goal rather than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How Garner could help

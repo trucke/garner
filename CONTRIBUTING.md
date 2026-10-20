@@ -6,7 +6,7 @@ Bug reports, ideas and pull requests are welcome. For a larger change, open an i
 
 - Develop and test against the development stack below, never against a library you care about.
 - Keep real release names out of the repository: in tests, comments and commit messages, use made-up ones such as `Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP`.
-- Run `mise run check` before you push. Pull requests run the same checks.
+- Run `mise run check` before you push. Every pull request runs the same checks on GitHub, without the macOS tests.
 - Keep changes focused, with tests for the behaviour they change.
 
 ## Run it locally
@@ -76,6 +76,6 @@ The maintainer also runs tests against real release names, which stay private. W
 Maintainers release with `mise run release vX.Y.Z [revision]`. The task tags a commit of `main`, the newest by default, and pushes the tag. The commit must be on `main` on GitHub and newer than the previous release. GitHub's release workflow (`.github/workflows/release.yml`) then builds:
 
 - the server image, `ghcr.io/trucke/garner:vX.Y.Z`. Its build cache lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes.
-- with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS on Apple silicon and Linux on x86, with SHA-256 sums, and the GitHub release with the image reference and the commits since the previous version.
+- with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS and Linux, on ARM and x86, with SHA-256 sums, and the GitHub release with the image reference and the commits since the previous version.
 
 `goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without publishing anything. The workflow keeps the twenty newest image versions, build cache included. Versions follow semantic versioning.

@@ -1,0 +1,31 @@
+name: Bug report
+description: Garner does something wrong or fails.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what Garner did, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add the show …
+        2. Press …
+  - type: input
+    id: version
+    attributes:
+      label: Garner version
+      description: The About screen (`?`, then `a`) or `garnerd status` shows it.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server log
+      description: The lines around the problem, from `podman logs garner` or `docker logs garner`. Remove API keys, tokens and addresses you want to keep private.
+      render: text

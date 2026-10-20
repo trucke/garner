@@ -1,0 +1,84 @@
+# Checks every pull request and every push to main as `mise run check` does
+# locally: formatting, vet, the generated database code, known
+# vulnerabilities, the tests on Linux as the container image builds Garner,
+# and builds for every release platform. The private real-case tests are
+# not part of it.
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Go and sqlc in the versions mise.toml pins.
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install_args: go sqlc
+
+      - name: Read the build settings from the Dockerfile and mise.toml
+        id: settings
+        run: |
+          {
+            echo "image=$(sed -n 's/^ARG GOLANG=//p' Dockerfile)"
+            echo "tags=$(sed -n 's/.*go build -tags \([^ ]*\) .*/\1/p' Dockerfile)"
+            echo "govulncheck=$(sed -n 's/^"go:golang.org\/x\/vuln\/cmd\/govulncheck" = "\(.*\)"$/\1/p' mise.toml)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Formatting
+        run: |
+          unformatted=$(gofmt -l cmd internal tools)
+          if [ -n "$unformatted" ]; then
+            echo "::error::not formatted: $unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Generated database code
+        working-directory: internal/store
+        run: sqlc diff
+
+      - name: Known vulnerabilities, on macOS and in the server as the container image builds it
+        env:
+          TAGS: ${{ steps.settings.outputs.tags }}
+          VERSION: ${{ steps.settings.outputs.govulncheck }}
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@v$VERSION"
+          GOOS=darwin GOARCH=arm64 govulncheck ./...
+          GOOS=linux GOARCH=amd64 govulncheck -tags "$TAGS" ./...
+
+      - name: Tests on Linux, as the container image builds
+        env:
+          IMAGE: ${{ steps.settings.outputs.image }}
+          TAGS: ${{ steps.settings.outputs.tags }}
+        run: |
+          docker run --rm -v "$PWD:/src:ro" \
+            -e CGO_ENABLED=0 -e GOFLAGS="-tags=$TAGS" -e GOTOOLCHAIN=local \
+            -w /src "$IMAGE" \
+            sh -c 'set -e; apk add --no-cache -q libgcc; go vet ./...; go test ./...'
+
+      - name: Builds for the release platforms
+        env:
+          TAGS: ${{ steps.settings.outputs.tags }}
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags "$TAGS" -o /dev/null ./cmd/garnerd
+          for platform in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            GOOS=${platform%/*} GOARCH=${platform#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/garner
+          done
