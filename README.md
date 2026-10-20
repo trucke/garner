@@ -22,7 +22,7 @@ Garner is young: versions start with `0.`, and a new version can change how thin
 ## Get started
 
 1. Install the server: [docs/install.md](docs/install.md) walks through the configuration, the container and the first connection.
-2. Install the terminal interface on the machine you use it from. Download the file for that machine from the [latest release](https://github.com/trucke/garner/releases/latest): `garner-<version>-darwin-arm64` for a Mac with Apple silicon, or `garner-<version>-linux-amd64` for Linux on x86. Then move it into your path and make it executable. On a Mac:
+2. Install the terminal interface on the machine you use it from. Download the file for that machine from the [latest release](https://github.com/trucke/garner/releases/latest): `garner-<version>-darwin-arm64` for a Mac with Apple silicon, `darwin-amd64` for an Intel Mac, `linux-amd64` for Linux on x86 or `linux-arm64` for Linux on ARM. Then move it into your path and make it executable. On a Mac with Apple silicon:
 
    ```bash
    mkdir -p ~/.local/bin
@@ -30,7 +30,7 @@ Garner is young: versions start with `0.`, and a new version can change how thin
    chmod +x ~/.local/bin/garner
    ```
 
-   On Linux, use the file ending in `linux-amd64` instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
+   On other machines, use their file instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
 
 3. Run `garnerd token create <device>` on the server, run `garner` on your machine and paste the connection code. The terminal interface remembers the connection in `~/.config/garner/connection`.
 4. Press `a` to add a show. Press `?` on any screen for its keys.
