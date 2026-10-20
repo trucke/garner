@@ -3,7 +3,7 @@ package api
 import "time"
 
 // Services is how the services the server uses are doing, and what the
-// library holds. Board "About" in the Paper file.
+// library holds.
 type Services struct {
 	Services []ServiceCheck `json:"services"`
 	Library  LibraryTotals  `json:"library"`

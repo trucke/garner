@@ -18,7 +18,6 @@ import (
 
 // About shows the versions, the connection, how the services the server
 // uses are doing, and what the library holds, with TVDB's attribution.
-// Board "About" in the Paper file.
 
 const sourceURL = "https://github.com/trucke/garner"
 

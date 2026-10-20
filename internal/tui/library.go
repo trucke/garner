@@ -21,8 +21,7 @@ import (
 	"github.com/trucke/garner/internal/client"
 )
 
-// Library lists the shows with what Garner has of each. Boards "Home · …"
-// in the Paper file.
+// Library lists the shows with what Garner has of each.
 
 type category int
 
@@ -829,7 +828,7 @@ func lowerFirst(s string) string {
 
 func episodes(sh api.Show) string { return fmt.Sprintf("%d/%d", sh.Imported, sh.Aired) }
 
-// size uses decimal units, as the boards do.
+// size uses decimal units.
 func size(n int64) string {
 	switch {
 	case n <= 0:

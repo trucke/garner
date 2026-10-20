@@ -19,8 +19,7 @@ import (
 	"github.com/trucke/garner/internal/client"
 )
 
-// Show lists a show's episodes by season. Boards "Show" and "Show · 8
-// seasons" in the Paper file.
+// Show lists a show's episodes by season.
 
 type (
 	seriesMsg struct {

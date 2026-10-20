@@ -18,7 +18,7 @@ import (
 )
 
 // Connect takes a connection code, checks the server in three steps and
-// stores the code. Boards "Connect · …" in the Paper file.
+// stores the code.
 
 type checkState int
 

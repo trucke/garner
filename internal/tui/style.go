@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Palette from the "Style" board in the Paper file "Garner".
+// The palette; docs/tui.md lists the colours' uses.
 var (
 	cFg     = lipgloss.Color("#EDF1F2")
 	cMuted  = lipgloss.Color("#9199A3")
@@ -37,7 +37,7 @@ var (
 	sCommand = sBold.Background(cSelect)
 )
 
-// Glyphs, one set everywhere (see docs/tui-design.md).
+// Glyphs, one set everywhere (see docs/tui.md).
 var (
 	gDone    = sMint.Render("✓")
 	gWorking = sAmber.Render("●")
@@ -202,7 +202,7 @@ func indent(s string, n int) string {
 var cFaded = lipgloss.Color("#3A3A44")
 
 // overlay draws a rounded box with lines centred over base, everything
-// behind it in the faded colour, as the overlay boards show.
+// behind it in the faded colour.
 func overlay(base string, lines []string, width, height int) string {
 	boxWidth := 0
 	for _, l := range lines {

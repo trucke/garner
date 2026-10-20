@@ -20,8 +20,7 @@ import (
 )
 
 // Episode follows one episode through Garner: its release, the six steps
-// from SABnzbd to Jellyfin, and what to fix or what was noted. Boards
-// "Episode · …" in the Paper file.
+// from SABnzbd to Jellyfin, and what to fix or what was noted.
 
 type (
 	episodeMsg struct {
@@ -323,7 +322,7 @@ func (s *episodeScreen) view(width, height int) string {
 	case s.detail == nil:
 		b.WriteString("\n   " + sMuted.Render("Loading…"))
 	default:
-		// As wide as the boards at most, so times stay near their steps.
+		// As wide as the design at most, so times stay near their steps.
 		w := min(width, designWidth)
 		if d, ok := s.latest(); ok {
 			b.WriteString("   " + s.releaseFacts(d, w-6) + "\n\n")
@@ -486,7 +485,7 @@ type step struct {
 
 const stepNameWidth = len("Moving into the library")
 
-// designWidth is the boards' width in cells.
+// designWidth is the width the screens are designed for, in cells.
 const designWidth = 120
 
 // render draws the step: glyph, name, detail, and its time at the right.

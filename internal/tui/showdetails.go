@@ -17,8 +17,7 @@ import (
 )
 
 // Show details describes a show in the library, with the delete, profile
-// and monitor overlays. Boards "Show · details …" in the Paper file. Its
-// content follows what was agreed for Add show's details page.
+// and monitor overlays. Its content follows Add show's details page.
 
 type detailsOverlay int
 

@@ -21,8 +21,7 @@ import (
 )
 
 // Releases shows what a search found for one episode, ranked, with the
-// reasons for the release under the cursor. Board "Releases" in the Paper
-// file.
+// reasons for the release under the cursor.
 
 type (
 	releasesMsg struct {

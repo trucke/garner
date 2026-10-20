@@ -7,7 +7,7 @@ import (
 )
 
 // Help is an overlay that lists the current screen's keys, the keys every
-// screen has, and the glyphs. Board "Help" in the Paper file.
+// screen has, and the glyphs.
 
 // capturer is a screen that takes every key itself for now: while text is
 // typed or a question is open. ? and A are then its own.

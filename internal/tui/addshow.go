@@ -25,7 +25,7 @@ import (
 )
 
 // Add show searches TVDB in the bottom line and opens a show's details
-// before adding it. Boards "Add show · …" in the Paper file.
+// before adding it.
 
 // searchPause is how long typing must pause before Garner asks TVDB.
 const searchPause = 350 * time.Millisecond

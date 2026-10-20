@@ -18,8 +18,7 @@ import (
 )
 
 // Activity lists what runs, what waits for the user, and what ended within
-// the last day: one row per episode, its latest download. Boards
-// "Activity" and "Activity · empty" in the Paper file.
+// the last day: one row per episode, its latest download.
 
 type activityMsg struct {
 	from  *activityScreen

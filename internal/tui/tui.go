@@ -1,5 +1,5 @@
-// Package tui is Garner's terminal interface. The mockups in the Paper file
-// "Garner" are the source of truth; docs/tui-design.md explains them.
+// Package tui is Garner's terminal interface. docs/tui.md describes its
+// conventions.
 package tui
 
 import (
