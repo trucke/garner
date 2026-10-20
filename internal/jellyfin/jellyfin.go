@@ -135,6 +135,22 @@ func (c *Client) ShowFolders(ctx context.Context, tvdbID int64) ([]string, error
 	return out, nil
 }
 
+// LibraryFolders lists the folders of all of Jellyfin's libraries, as
+// Jellyfin sees them.
+func (c *Client) LibraryFolders(ctx context.Context) ([]string, error) {
+	var libraries []struct {
+		Locations []string `json:"Locations"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/Library/VirtualFolders", nil, &libraries); err != nil {
+		return nil, err
+	}
+	var folders []string
+	for _, l := range libraries {
+		folders = append(folders, l.Locations...)
+	}
+	return folders, nil
+}
+
 // Info reports Jellyfin's version and how many shows its libraries hold.
 func (c *Client) Info(ctx context.Context) (version string, shows int, err error) {
 	var info struct{ Version string }
