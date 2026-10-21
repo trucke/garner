@@ -46,9 +46,10 @@ type Service struct {
 	// asked for are searched.
 	schedule *store.Schedule
 	// rules returns a show's reviewed streaming-service order rules.
-	rules  func(seriesID int64) map[release.Service]string
-	log    *slog.Logger
-	now    func() time.Time
+	rules func(seriesID int64) map[release.Service]string
+	log   *slog.Logger
+	// Now tells the time: time.Now, or the simulation's clock.
+	Now    func() time.Time
 	wake   chan struct{}
 	paused map[int64]time.Time // by episode: until when
 	shows  showQueue
@@ -64,7 +65,7 @@ func New(st *store.Store, s *search.Service, d *download.Service, schedule *stor
 		rules = func(int64) map[release.Service]string { return nil }
 	}
 	return &Service{
-		store: st, search: s, downloads: d, schedule: schedule, rules: rules, log: log, now: time.Now,
+		store: st, search: s, downloads: d, schedule: schedule, rules: rules, log: log, Now: time.Now,
 		wake: make(chan struct{}, 1), paused: map[int64]time.Time{}, shows: showQueue{progress: map[int64]api.ShowProgress{}},
 	}
 }
@@ -82,13 +83,7 @@ func (m *Service) Wake() {
 // ahead of the rest of a round.
 func (m *Service) Run(ctx context.Context) {
 	for {
-		for id, ok := m.shows.next(); ok && ctx.Err() == nil; id, ok = m.shows.next() {
-			m.searchShow(ctx, id)
-		}
-		if m.schedule != nil {
-			m.round(ctx)
-		}
-		if m.shows.waiting() {
+		if m.Step(ctx) && ctx.Err() == nil {
 			continue
 		}
 		select {
@@ -100,10 +95,23 @@ func (m *Service) Run(ctx context.Context) {
 	}
 }
 
+// Step searches the shows asked for, then runs one round of the
+// schedule. It reports whether more shows were asked for meanwhile, which
+// go ahead of waiting.
+func (m *Service) Step(ctx context.Context) bool {
+	for id, ok := m.shows.next(); ok && ctx.Err() == nil; id, ok = m.shows.next() {
+		m.searchShow(ctx, id)
+	}
+	if m.schedule != nil {
+		m.round(ctx)
+	}
+	return m.shows.waiting()
+}
+
 // round gets every due episode, one after another, so the indexers see one
 // search at a time.
 func (m *Service) round(ctx context.Context) {
-	now := m.now()
+	now := m.Now()
 	wanted, err := m.store.Wanted(ctx, now, *m.schedule)
 	if err != nil {
 		m.log.Error("monitor: list wanted episodes", "err", err)
@@ -139,7 +147,7 @@ func (m *Service) round(ctx context.Context) {
 		}
 	}
 	if missing+upgrades > 0 {
-		m.log.Info("monitor: searched episodes", "missing", missing, "upgrades", upgrades, "downloads", started, "duration", m.now().Sub(now).Round(time.Second))
+		m.log.Info("monitor: searched episodes", "missing", missing, "upgrades", upgrades, "downloads", started, "duration", m.Now().Sub(now).Round(time.Second))
 	}
 }
 
@@ -174,13 +182,13 @@ func (m *Service) get(ctx context.Context, w store.Wanted) bool {
 	if err != nil {
 		if ctx.Err() == nil {
 			m.log.Warn("monitor: search failed", "episode", w.EpisodeID, "upgrade", w.Upgrade, "err", err)
-			m.paused[w.EpisodeID] = m.now().Add(pause)
+			m.paused[w.EpisodeID] = m.Now().Add(pause)
 		}
 		return false
 	}
 	if err := m.store.SaveMonitorSearch(ctx, w.EpisodeID, sr.Searched, sr.Outcome); err != nil {
 		m.log.Error("monitor: record search", "episode", w.EpisodeID, "err", err)
-		m.paused[w.EpisodeID] = m.now().Add(pause)
+		m.paused[w.EpisodeID] = m.Now().Add(pause)
 	}
 	if sr.Outcome != "found" {
 		return false

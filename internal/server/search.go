@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/api"
-	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/monitor"
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/release"
@@ -25,7 +24,7 @@ func (s *Server) setupSearch() error {
 		return nil
 	}
 	// Prowlarr waits for slow indexers, so allow more than a usual request.
-	client, err := httpx.New("Garner/"+s.version, p.CAFile, 2*time.Minute)
+	client, err := s.httpClient(p.CAFile, 2*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -34,7 +33,12 @@ func (s *Server) setupSearch() error {
 		rules = s.catalog.ServiceOrders
 	}
 	s.prowlarr = prowlarr.New(p.URL, p.APIKey.Value(), client)
+	s.prowlarr.Now = s.now
+	if s.deps.Sleep != nil {
+		s.prowlarr.Sleep = s.deps.Sleep
+	}
 	svc := search.New(s.store, s.prowlarr, rules, s.log)
+	svc.Now = s.now
 	svc.Profiles = s.profiles
 	svc.OnProgress = func(p api.SearchProgress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
 	svc.OnDone = func(sr store.Search) {
@@ -124,7 +128,7 @@ func (s *Server) handleSearchShow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
 		return
 	}
-	missing, err := s.store.Missing(ctx, time.Now(), id)
+	missing, err := s.store.Missing(ctx, s.now(), id)
 	if err != nil {
 		s.internalError(w, "search show", err)
 		return
@@ -165,7 +169,7 @@ func (s *Server) nextSearch(ctx context.Context, episodeID int64) *time.Time {
 	if err != nil {
 		return nil
 	}
-	_, states, err := s.store.ShowStatus(ctx, seriesID, time.Now(), s.schedule())
+	_, states, err := s.store.ShowStatus(ctx, seriesID, s.now(), s.schedule())
 	if err != nil {
 		s.log.Warn("next search", "episode", episodeID, "err", err)
 		return nil
@@ -201,7 +205,7 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 		err = s.store.ChangeProfile(ctx, id, req.Profile)
 	}
 	if err == nil && req.Monitor != "" {
-		err = s.store.SetMonitor(ctx, id, req.Monitor, time.Now())
+		err = s.store.SetMonitor(ctx, id, req.Monitor, s.now())
 	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")

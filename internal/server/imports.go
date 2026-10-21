@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/importer"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/jellyfin"
@@ -26,14 +25,18 @@ func (s *Server) setupImports() error {
 			s.log.Warn("library folder is missing; imports fail until it is there (is the share mounted?)", "path", dir)
 		}
 	}
-	prober, err := inspect.NewProber(s.cfg.FFprobe)
-	if err != nil {
-		s.log.Warn(err.Error() + "; importing is unavailable")
-		return nil
+	prober := s.deps.Prober
+	if prober == nil {
+		p, err := inspect.NewProber(s.cfg.FFprobe)
+		if err != nil {
+			s.log.Warn(err.Error() + "; importing is unavailable")
+			return nil
+		}
+		prober = p
 	}
 	var jf *jellyfin.Client
 	if j := s.cfg.Jellyfin; j.URL != "" && j.APIKey != "" {
-		client, err := httpx.New("Garner/"+s.version, j.CAFile, 30*time.Second)
+		client, err := s.httpClient(j.CAFile, 30*time.Second)
 		if err != nil {
 			return err
 		}
@@ -50,6 +53,7 @@ func (s *Server) setupImports() error {
 		Profiles:     s.profiles,
 		SABnzbdPaths: s.cfg.SABnzbd.Paths, JellyfinPaths: s.cfg.Jellyfin.Paths, Library: lib, Rules: rules,
 	}, s.log)
+	imp.Now = s.now
 	imp.OnChange = func(d store.Download) { s.events.publish(Event{Type: "download.updated", Data: d}) }
 	if s.downloads != nil {
 		imp.OnRejected = s.downloads.Reject

@@ -44,9 +44,10 @@ type Service struct {
 	sab      *sabnzbd.Client
 	category string
 	log      *slog.Logger
-	now      func() time.Time
-	wake     chan struct{}
-	missing  map[int64]int // polls a job was not found, by download
+	// Now tells the time: time.Now, or the simulation's clock.
+	Now     func() time.Time
+	wake    chan struct{}
+	missing map[int64]int // polls a job was not found, by download
 	// OnChange is called whenever a download changes.
 	OnChange func(store.Download)
 	// OnCompleted is called once a download finished and its import was
@@ -57,7 +58,7 @@ type Service struct {
 // New returns a download service using the SABnzbd category.
 func New(st *store.Store, sab *sabnzbd.Client, category string, log *slog.Logger) *Service {
 	return &Service{
-		store: st, sab: sab, category: category, log: log, now: time.Now,
+		store: st, sab: sab, category: category, log: log, Now: time.Now,
 		wake: make(chan struct{}, 1), missing: map[int64]int{},
 	}
 }
@@ -129,7 +130,7 @@ func (s *Service) submit(ctx context.Context, episodeID int64, c store.Candidate
 	d, err := s.store.StartDownload(ctx, store.Download{
 		EpisodeID: episodeID, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Size: c.Size,
 		Verdict: c.Verdict, Tier: c.Tier, Reasons: c.Reasons, Decisive: c.Decisive, Manual: manual,
-	}, s.now())
+	}, s.Now())
 	if err != nil {
 		return d, err
 	}
@@ -164,7 +165,7 @@ func (s *Service) submit(ctx context.Context, episodeID int64, c store.Candidate
 func (s *Service) Run(ctx context.Context) {
 	for {
 		wait := pollIdle
-		if s.poll(ctx) {
+		if s.Poll(ctx) {
 			wait = pollActive
 		}
 		select {
@@ -178,7 +179,7 @@ func (s *Service) Run(ctx context.Context) {
 
 // poll updates every running download from SABnzbd and reports whether any
 // is still running.
-func (s *Service) poll(ctx context.Context) bool {
+func (s *Service) Poll(ctx context.Context) bool {
 	active, err := s.store.ActiveDownloads(ctx)
 	if err != nil {
 		s.log.Error("list running downloads", "err", err)
@@ -250,7 +251,7 @@ func (s *Service) poll(ctx context.Context) bool {
 				}
 			} else if d.State == store.Completed {
 				s.log.Info("download completed", "download", d.ID, "title", d.Title, "storage", d.Storage)
-				if err := s.store.MarkImportPending(ctx, d.ID, s.now()); err != nil {
+				if err := s.store.MarkImportPending(ctx, d.ID, s.Now()); err != nil {
 					s.log.Error("queue import", "download", d.ID, "err", err)
 				} else if s.OnCompleted != nil {
 					s.OnCompleted(d)
@@ -264,7 +265,7 @@ func (s *Service) poll(ctx context.Context) bool {
 
 // confirm looks up a download SABnzbd never confirmed, by name.
 func (s *Service) confirm(ctx context.Context, d *store.Download) {
-	age := s.now().Sub(d.Created)
+	age := s.Now().Sub(d.Created)
 	if age < confirmAfter {
 		return
 	}
@@ -317,7 +318,7 @@ func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) (
 			return d, err
 		}
 	}
-	d, err := s.store.CancelDownload(ctx, d.ID, reason, s.now())
+	d, err := s.store.CancelDownload(ctx, d.ID, reason, s.Now())
 	if err != nil {
 		return d, err
 	}
@@ -356,7 +357,7 @@ func (s *Service) replace(ctx context.Context, failed store.Download) {
 }
 
 func (s *Service) save(ctx context.Context, d store.Download) error {
-	if err := s.store.UpdateDownload(ctx, d, s.now()); err != nil {
+	if err := s.store.UpdateDownload(ctx, d, s.Now()); err != nil {
 		return err
 	}
 	s.changed(d)

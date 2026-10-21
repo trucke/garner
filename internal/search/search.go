@@ -27,7 +27,8 @@ type Service struct {
 	// rules returns a show's reviewed streaming-service order rules.
 	rules func(seriesID int64) map[release.Service]string
 	log   *slog.Logger
-	now   func() time.Time
+	// Now tells the time: time.Now, or the simulation's clock.
+	Now func() time.Time
 	// Profiles are the profiles shows choose from; the zero value holds
 	// the built-in ones.
 	Profiles selection.Profiles
@@ -43,7 +44,7 @@ func New(st *store.Store, p *prowlarr.Client, rules func(int64) map[release.Serv
 	if rules == nil {
 		rules = func(int64) map[release.Service]string { return nil }
 	}
-	return &Service{store: st, prowlarr: p, rules: rules, log: log, now: time.Now}
+	return &Service{store: st, prowlarr: p, rules: rules, log: log, Now: time.Now}
 }
 
 // Episode searches for an episode and stores the outcome, replacing the
@@ -71,7 +72,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 	if err != nil {
 		return store.Search{}, err
 	}
-	start := s.now()
+	start := s.Now()
 	profile := s.Profiles.Named(d.Series.Profile)
 	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
 	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
@@ -131,7 +132,7 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 		return store.Search{}, err
 	}
 	s.log.Info("searched", "series", seriesID, "episode", show.Label(episodeID), "outcome", saved.Outcome,
-		"candidates", len(saved.Candidates), "duration", s.now().Sub(start).Round(time.Millisecond))
+		"candidates", len(saved.Candidates), "duration", s.Now().Sub(start).Round(time.Millisecond))
 	if s.OnDone != nil {
 		s.OnDone(saved)
 	}
@@ -165,7 +166,7 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 	if err != nil {
 		return store.Search{}, err
 	}
-	start := s.now()
+	start := s.Now()
 	wanted := missing(d, episodes, files, start)
 	profile := s.Profiles.Named(d.Series.Profile)
 	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
@@ -252,7 +253,7 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 		return store.Search{}, err
 	}
 	s.log.Info("searched a season", "series", seriesID, "season", season, "outcome", saved.Outcome,
-		"packs", len(saved.Candidates), "duration", s.now().Sub(start).Round(time.Millisecond))
+		"packs", len(saved.Candidates), "duration", s.Now().Sub(start).Round(time.Millisecond))
 	// No OnDone: a season search changes no episode's state, so clients
 	// have nothing to reload; the caller gets the result itself.
 	return saved, nil

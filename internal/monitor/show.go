@@ -98,7 +98,7 @@ func (m *Service) ShowSearch(seriesID int64) (api.ShowProgress, bool) { return m
 // searchShow searches every missing episode of a show, oldest first, as
 // the monitor does: each search counts as the monitor's.
 func (m *Service) searchShow(ctx context.Context, seriesID int64) {
-	start := m.now()
+	start := m.Now()
 	p := api.ShowProgress{SeriesID: seriesID}
 	defer func() {
 		p.Waiting, p.Finished = false, true
@@ -143,7 +143,7 @@ func (m *Service) searchShow(ctx context.Context, seriesID int64) {
 		m.report(p)
 	}
 	m.log.Info("searched the missing episodes of a show", "series", seriesID, "episodes", p.Total,
-		"downloads", p.Downloads, "duration", m.now().Sub(start).Round(time.Second))
+		"downloads", p.Downloads, "duration", m.Now().Sub(start).Round(time.Second))
 }
 
 func (m *Service) report(p api.ShowProgress) {

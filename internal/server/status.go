@@ -28,7 +28,7 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 			out.Services[i] = check(ctx)
 		})
 	}
-	shows, err := s.store.Library(ctx, time.Now(), s.schedule())
+	shows, err := s.store.Library(ctx, s.now(), s.schedule())
 	wg.Wait()
 	if err != nil {
 		s.internalError(w, "library totals", err)

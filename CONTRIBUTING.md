@@ -54,6 +54,27 @@ Other tasks:
 - `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
 - `mise run image` builds the container image `localhost/garner:dev` with Podman.
 
+### The simulation
+
+`internal/simulation` runs Garner's server against a simulated SABnzbd, Prowlarr, Jellyfin and FFprobe, on a temporary share and a simulated clock. A seed drives every event: what the user does, how the services answer and fail, when time jumps and when Garner restarts. After every step, the test checks Garner's promises about files:
+
+- A video leaves the library only when a better file for its episodes replaced it, or when the user deleted its show with its files.
+- Garner changes nothing outside the library and SABnzbd's folders, and removes a download's folder only when it is done with the download.
+- Every file Garner records exists.
+- Downloads and imports change state only along the allowed transitions.
+
+After a calm period at the end, every download and every import must have ended.
+
+`go test ./...` runs a fixed list of seeds, each twice: the second run must tell the same story. A failure names the seed, the step, the broken rule and the last steps, and ends with a command that replays it:
+
+```bash
+go test ./internal/simulation -run TestSimulation -seed 1842 -steps 317 -v
+```
+
+With `-v`, the replay prints every step. To explore, run `-seeds 1000` for a thousand fresh seeds instead of the fixed ones.
+
+A failure is a bug in Garner or in the simulation. When you fix a bug it found, also add a focused test for it: after later changes, the same seed may take another path.
+
 The maintainer also runs tests against real release names, which stay private. When `GARNER_MATCH_CASES`, `GARNER_SELECT_CASES` and `GARNER_RELEASE_CASES` point at such case files, `go test ./...` includes them; without them, those tests are skipped.
 
 ## How the code is organised

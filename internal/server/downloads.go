@@ -8,7 +8,6 @@ import (
 
 	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/download"
-	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/store"
 )
@@ -19,12 +18,13 @@ func (s *Server) setupDownloads() error {
 		s.log.Warn("SABnzbd is not configured (sabnzbd.url and SABNZBD_API_KEY); downloading is unavailable")
 		return nil
 	}
-	client, err := httpx.New("Garner/"+s.version, c.CAFile, 30*time.Second)
+	client, err := s.httpClient(c.CAFile, 30*time.Second)
 	if err != nil {
 		return err
 	}
 	s.sabnzbd = sabnzbd.New(c.URL, c.APIKey.Value(), client)
 	svc := download.New(s.store, s.sabnzbd, c.Category, s.log)
+	svc.Now = s.now
 	svc.OnChange = func(d store.Download) { s.events.publish(Event{Type: "download.updated", Data: d}) }
 	s.downloads = svc
 	return nil
@@ -181,7 +181,7 @@ const activityFor = 24 * time.Hour
 // handleActivity lists what runs, what waits for the user, and what ended
 // within the last day: one row per episode, its latest download.
 func (s *Server) handleActivity(w http.ResponseWriter, r *http.Request) {
-	items, err := s.store.Activity(r.Context(), time.Now().Add(-activityFor))
+	items, err := s.store.Activity(r.Context(), s.now().Add(-activityFor))
 	if err != nil {
 		s.internalError(w, "list activity", err)
 		return

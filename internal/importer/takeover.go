@@ -100,7 +100,7 @@ func (s *Service) TakeOver(ctx context.Context, seriesID int64) (api.TakeOver, e
 	for id := range have {
 		taken[id] = true
 	}
-	now := s.now()
+	now := s.Now()
 	for _, f := range found {
 		if i := slices.IndexFunc(f.episodes, func(id int64) bool { return taken[id] }); i >= 0 {
 			why := "a better file holds " + c.show.Label(f.episodes[i])

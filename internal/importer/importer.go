@@ -83,8 +83,9 @@ type Service struct {
 	// guard makes every change to files and folders.
 	guard *guard.Guard
 	log   *slog.Logger
-	now   func() time.Time
-	wake  chan struct{}
+	// Now tells the time: time.Now, or the simulation's clock.
+	Now  func() time.Time
+	wake chan struct{}
 	// files lets one take-over or rename run at a time.
 	files sync.Mutex
 	// OnChange is called whenever an import changes.
@@ -102,7 +103,7 @@ func New(st *store.Store, probe Prober, jf *jellyfin.Client, opts Options, log *
 		Library: opts.Library, SABnzbdPaths: opts.SABnzbdPaths,
 		Recorded: st.FileInUse, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths),
 	})
-	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, guard: g, log: log, now: time.Now, wake: make(chan struct{}, 1)}
+	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, guard: g, log: log, Now: time.Now, wake: make(chan struct{}, 1)}
 }
 
 // jellyfinFolders lists Jellyfin's library folders as Garner reaches them;
@@ -138,7 +139,7 @@ func (s *Service) Wake() {
 // Run imports completed downloads until ctx is cancelled.
 func (s *Service) Run(ctx context.Context) {
 	for {
-		s.work(ctx)
+		s.Work(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -148,7 +149,7 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-func (s *Service) work(ctx context.Context) {
+func (s *Service) Work(ctx context.Context) {
 	due, err := s.store.DueImports(ctx)
 	if err != nil {
 		s.log.Error("list due imports", "err", err)
@@ -471,7 +472,7 @@ func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []st
 					old = append(old, c)
 				}
 			}
-			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier}, d.ID, s.now()); err != nil {
+			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier}, d.ID, s.Now()); err != nil {
 				s.log.Error("record imported file", "episode", ep, "err", err)
 			}
 		}
@@ -548,17 +549,17 @@ func (s *Service) verify(ctx context.Context, d *store.Download) {
 		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "Jellyfin lists it as " + strings.Join(labels, "; "), Files: files})
 	case progress:
 		s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: d.Import.Detail, Files: files})
-	case !listed && d.Import.Detail == detailWaiting && s.now().Sub(d.Import.Updated) > fullScanAfter:
+	case !listed && d.Import.Detail == detailWaiting && s.Now().Sub(d.Import.Updated) > fullScanAfter:
 		if err := s.jellyfin.RefreshLibrary(ctx); err != nil {
 			s.log.Warn("could not ask Jellyfin to scan all libraries", "err", err)
 			return
 		}
 		s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailFullScan, Files: files})
-	case s.now().Sub(d.Import.Updated) > scanTimeout && listed:
+	case s.Now().Sub(d.Import.Updated) > scanTimeout && listed:
 		s.save(ctx, d, store.Import{State: store.ImportUnverified, Files: files,
 			Detail:   fmt.Sprintf("Jellyfin lists the files but has not identified them through TVDB after %s", scanTimeout),
 			Recovery: "Check that the TheTVDB plugin comes first for this library in Jellyfin, refresh the show's metadata, then retry the import."})
-	case s.now().Sub(d.Import.Updated) > scanTimeout:
+	case s.Now().Sub(d.Import.Updated) > scanTimeout:
 		s.save(ctx, d, store.Import{State: store.ImportUnverified, Files: files,
 			Detail:   fmt.Sprintf("the files are in the library, but Jellyfin has not listed them after %s", scanTimeout),
 			Recovery: "Scan the library in Jellyfin, then retry the import so Garner checks again."})
@@ -572,11 +573,11 @@ func (s *Service) save(ctx context.Context, d *store.Download, im store.Import) 
 	if im.Notes == nil {
 		im.Notes = d.Import.Notes
 	}
-	if err := s.store.UpdateImport(ctx, d.ID, im, s.now()); err != nil {
+	if err := s.store.UpdateImport(ctx, d.ID, im, s.Now()); err != nil {
 		s.log.Error("save import", "download", d.ID, "err", err)
 		return err
 	}
-	im.Updated = s.now()
+	im.Updated = s.Now()
 	d.Import = im
 	s.log.Info("import", "download", d.ID, "state", im.State, "detail", im.Detail)
 	if s.OnChange != nil {

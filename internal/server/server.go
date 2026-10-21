@@ -60,6 +60,20 @@ type Server struct {
 	tlsMode  string
 	pin      string // set for TLSOwn
 	started  time.Time
+	deps     Deps
+}
+
+// Deps stand in for what Garner reaches outside its own code, so the
+// simulation can run it against a simulated world. A zero field means the
+// real one.
+type Deps struct {
+	// Now tells the time, and Sleep waits on the same clock.
+	Now   func() time.Time
+	Sleep func(ctx context.Context, d time.Duration) error
+	// Transport carries every request to Prowlarr, SABnzbd and Jellyfin.
+	Transport http.RoundTripper
+	// Prober reads video files instead of ffprobe.
+	Prober importer.Prober
 }
 
 // Run opens the database and serves until ctx is cancelled.
@@ -70,24 +84,10 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	}
 	defer st.Close()
 
-	profiles, err := selection.NewProfiles(cfg.Profiles)
+	s, err := New(cfg, st, version, Deps{}, log)
 	if err != nil {
 		return err
 	}
-	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), started: time.Now(), profiles: profiles}
-	if err := s.setupCatalog(); err != nil {
-		return err
-	}
-	if err := s.setupSearch(); err != nil {
-		return err
-	}
-	if err := s.setupDownloads(); err != nil {
-		return err
-	}
-	if err := s.setupImports(); err != nil {
-		return err
-	}
-	s.setupMonitor()
 	tlsConf, err := s.tlsConfig()
 	if err != nil {
 		return err
@@ -165,12 +165,68 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 	return err
 }
 
+// New sets Garner's services up on an open database, without serving or
+// starting their loops: Run does both, the simulation drives the steps
+// itself.
+func New(cfg *config.Config, st *store.Store, version string, deps Deps, log *slog.Logger) (*Server, error) {
+	profiles, err := selection.NewProfiles(cfg.Profiles)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), profiles: profiles, deps: deps}
+	s.started = s.now()
+	for _, setup := range []func() error{s.setupCatalog, s.setupSearch, s.setupDownloads, s.setupImports} {
+		if err := setup(); err != nil {
+			return nil, err
+		}
+	}
+	s.setupMonitor()
+	return s, nil
+}
+
+// now is the time on Garner's clock: the real one unless Deps set another.
+func (s *Server) now() time.Time {
+	if s.deps.Now == nil {
+		return time.Now()
+	}
+	return s.deps.Now()
+}
+
+// httpClient is the client for one of the services Garner uses.
+func (s *Server) httpClient(caFile string, timeout time.Duration) (*http.Client, error) {
+	if s.deps.Transport != nil {
+		return &http.Client{Transport: s.deps.Transport, Timeout: timeout}, nil
+	}
+	return httpx.New("Garner/"+s.version, caFile, timeout)
+}
+
+// PollDownloads, WorkImports and StepMonitor run one step of a background
+// loop, for the simulation. Each does nothing when its service is not set
+// up.
+func (s *Server) PollDownloads(ctx context.Context) {
+	if s.downloads != nil {
+		s.downloads.Poll(ctx)
+	}
+}
+
+func (s *Server) WorkImports(ctx context.Context) {
+	if s.imports != nil {
+		s.imports.Work(ctx)
+	}
+}
+
+func (s *Server) StepMonitor(ctx context.Context) {
+	if s.monitor != nil {
+		s.monitor.Step(ctx)
+	}
+}
+
 func (s *Server) setupCatalog() error {
 	if s.cfg.TVDB.APIKey == "" {
 		s.log.Warn("TVDB_API_KEY is not set; the catalogue is unavailable")
 		return nil
 	}
-	client, err := httpx.New("Garner/"+s.version, "", 30*time.Second)
+	client, err := s.httpClient("", 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -229,6 +285,7 @@ func (s *Server) setupMonitor() {
 		rules = s.catalog.ServiceOrders
 	}
 	s.monitor = monitor.New(s.store, s.search, s.downloads, s.schedule(), rules, s.log)
+	s.monitor.Now = s.now
 	s.monitor.OnShowProgress = func(p api.ShowProgress) { s.events.publish(Event{Type: "series.search", Data: p}) }
 }
 

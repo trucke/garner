@@ -37,6 +37,10 @@ type Client struct {
 	base string
 	key  string
 	http *http.Client
+	// Now and Sleep space the requests out: the real clock, or the
+	// simulation's.
+	Now   func() time.Time
+	Sleep func(ctx context.Context, d time.Duration) error
 
 	mu   sync.Mutex
 	next time.Time // earliest start of the next request
@@ -44,7 +48,19 @@ type Client struct {
 
 // New returns a client for the Prowlarr at baseURL.
 func New(baseURL, apiKey string, client *http.Client) *Client {
-	return &Client{base: strings.TrimRight(baseURL, "/"), key: apiKey, http: client}
+	return &Client{base: strings.TrimRight(baseURL, "/"), key: apiKey, http: client, Now: time.Now, Sleep: sleep}
+}
+
+// sleep waits for d or until ctx is done.
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // Indexer is an indexer configured in Prowlarr.
@@ -157,7 +173,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 // wait spaces requests out by requestGap.
 func (c *Client) wait(ctx context.Context) error {
 	c.mu.Lock()
-	now := time.Now()
+	now := c.Now()
 	start := c.next
 	if now.After(start) {
 		start = now
@@ -165,13 +181,7 @@ func (c *Client) wait(ctx context.Context) error {
 	c.next = start.Add(requestGap)
 	c.mu.Unlock()
 	if d := start.Sub(now); d > 0 {
-		t := time.NewTimer(d)
-		defer t.Stop()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-t.C:
-		}
+		return c.Sleep(ctx, d)
 	}
 	return nil
 }

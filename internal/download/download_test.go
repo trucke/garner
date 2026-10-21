@@ -150,14 +150,14 @@ func TestDownload(t *testing.T) {
 		t.Errorf("second download while one runs: %v", err)
 	}
 	fake.progress("job-1", "Downloading", 40)
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Downloading || d.Progress != 40 {
 		t.Errorf("after progress: %+v", d)
 	}
 
 	// Missing articles: another release may succeed, so B starts.
 	fake.finish("job-1", "Failed", "Aborted, cannot be completed - https://sabnzbd.org/not-complete", "")
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Failed || !d.Retryable {
 		t.Errorf("after missing articles: %+v", d)
 	}
@@ -167,7 +167,7 @@ func TestDownload(t *testing.T) {
 
 	// A full disk would stop any release, so nothing new starts.
 	fake.finish("job-2", "Failed", "Unpacking failed, write error or disk is full?", "")
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	if got := fake.submitted(); len(got) != 2 {
 		t.Errorf("submitted %q after a full disk; want no new release", got)
 	}
@@ -179,7 +179,7 @@ func TestDownload(t *testing.T) {
 		t.Fatalf("Candidate = %+v, %v", d, err)
 	}
 	fake.finish("job-3", "Completed", "", "/data/usenet/complete/tv/x")
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Completed || d.Storage != "/data/usenet/complete/tv/x" {
 		t.Errorf("after completion: %+v", d)
 	}
@@ -198,9 +198,9 @@ func TestReplaceAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	fake.finish("job-1", "Failed", "Aborted, cannot be completed", "")
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	fake.finish("job-2", "Failed", "Aborted, cannot be completed", "")
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	if got := fake.submitted(); len(got) != 2 || got[1] != show+"German.DL.1080p.WEB-B" {
 		t.Fatalf("submitted %q; want A, then B, and no last resort", got)
 	}
@@ -213,7 +213,7 @@ func TestRestart(t *testing.T) {
 	ctx := context.Background()
 	st, svc, fake := setup(t)
 	start := time.Now()
-	svc.now = func() time.Time { return start }
+	svc.Now = func() time.Time { return start }
 	links, _ := st.CandidateLinks(ctx, 101)
 	got, err := st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: links[0].Title, Link: links[0].Link, Verdict: "accept"}, start)
 	if err != nil {
@@ -228,13 +228,13 @@ func TestRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc.now = func() time.Time { return start.Add(45 * time.Second) }
-	svc.poll(ctx)
+	svc.Now = func() time.Time { return start.Add(45 * time.Second) }
+	svc.Poll(ctx)
 	if d, _ := st.GetDownload(ctx, got.ID); d.JobID != "job-9" || d.State != store.Queued {
 		t.Errorf("found job: %+v", d)
 	}
-	svc.now = func() time.Time { return start.Add(3 * time.Minute) }
-	svc.poll(ctx)
+	svc.Now = func() time.Time { return start.Add(3 * time.Minute) }
+	svc.Poll(ctx)
 	if d, _ := st.GetDownload(ctx, lost.ID); d.State != store.Failed || !strings.Contains(d.Failure, "SABnzbd has no job") {
 		t.Errorf("lost job: %+v", d)
 	}
@@ -257,7 +257,7 @@ func TestCancel(t *testing.T) {
 		t.Errorf("the download lost its release's reasons: %q %d", d.Reasons, d.Decisive)
 	}
 	fake.progress("job-1", "Downloading", 40)
-	svc.poll(ctx)
+	svc.Poll(ctx)
 	stale, _ := st.GetDownload(ctx, d.ID)
 
 	got, err := svc.Cancel(ctx, stale, "cancelled")

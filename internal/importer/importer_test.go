@@ -158,7 +158,7 @@ const target = "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.0
 func TestImport(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportDone || !strings.Contains(got.Import.Detail, `S01E01 "Pilot", TVDB episode 101`) {
@@ -192,7 +192,7 @@ func TestImportSamePaths(t *testing.T) {
 	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
 		t.Fatalf("import = %+v", got.Import)
@@ -211,7 +211,7 @@ func TestImportSamePaths(t *testing.T) {
 func TestImportMovedAlready(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportDone {
 		t.Fatalf("import = %+v", got.Import)
@@ -219,7 +219,7 @@ func TestImportMovedAlready(t *testing.T) {
 	if err := e.st.UpdateImport(ctx, d.ID, store.Import{State: store.ImportMoving, Files: got.Import.Files}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone || len(got.Import.Notes) != 0 {
 		t.Errorf("after moving again: %+v", got.Import)
 	}
@@ -232,14 +232,14 @@ func TestImportEmptyLibrary(t *testing.T) {
 	e, d := setup(t, german)
 	e.jf.ignoreHints = true
 	start := time.Now()
-	e.svc.now = func() time.Time { return start }
-	e.svc.work(ctx)
+	e.svc.Now = func() time.Time { return start }
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportScanning || e.jf.scans != 0 {
 		t.Fatalf("right after the move: %+v, %d scans", got.Import, e.jf.scans)
 	}
-	e.svc.now = func() time.Time { return start.Add(2 * time.Minute) }
-	e.svc.work(ctx)
-	e.svc.work(ctx)
+	e.svc.Now = func() time.Time { return start.Add(2 * time.Minute) }
+	e.svc.Work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportDone || e.jf.scans != 1 {
 		t.Errorf("after the fallback: %+v, %d scans", got.Import, e.jf.scans)
@@ -252,9 +252,9 @@ func TestImportWithoutJellyfin(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
 	e.jf.ignoreHints = true
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	e.svc.jellyfin = nil
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone || !strings.Contains(got.Import.Detail, "not configured") {
 		t.Errorf("import = %+v", got.Import)
 	}
@@ -266,11 +266,11 @@ func TestImportWaitsForIdentification(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
 	e.jf.unidentified = 1
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportScanning {
 		t.Fatalf("while Jellyfin identifies: %+v", got.Import)
 	}
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
 		t.Errorf("after identification: %+v", got.Import)
 	}
@@ -281,7 +281,7 @@ func TestImportRejectsWrongAudio(t *testing.T) {
 	japanese := german
 	japanese.Audio = []inspect.Track{{Language: "jpn"}}
 	e, d := setup(t, japanese)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportRejected || len(e.rejected) != 1 || !strings.Contains(e.rejected[0], "no German track") {
 		t.Errorf("import = %+v, rejected %q", got.Import, e.rejected)
@@ -302,7 +302,7 @@ func TestImportFailsAndRetries(t *testing.T) {
 	e, d := setup(t, german)
 	lib := filepath.Join(e.share, "library", "tv")
 	os.Remove(lib)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportFailed || !strings.Contains(got.Import.Detail, "is missing") || got.Import.Recovery == "" {
 		t.Fatalf("import = %+v", got.Import)
@@ -318,7 +318,7 @@ func TestImportFailsAndRetries(t *testing.T) {
 	if _, err := e.svc.Retry(ctx, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
 		t.Errorf("after retry: %+v", got.Import)
 	}
@@ -330,7 +330,7 @@ func TestImportKeepsForeignFiles(t *testing.T) {
 	existing := filepath.Join(e.share, target)
 	os.MkdirAll(filepath.Dir(existing), 0o755)
 	os.WriteFile(existing, []byte("someone else's file"), 0o644)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportFailed || !strings.Contains(got.Import.Detail, "not imported by Garner") {
 		t.Errorf("import = %+v", got.Import)
@@ -351,7 +351,7 @@ func TestImportReplacesOldVersion(t *testing.T) {
 	oldSub := strings.TrimSuffix(old, ".avi") + ".de.srt"
 	os.WriteFile(oldSub, []byte("sub"), 0o644)
 	e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: old, Size: 3}, 0, time.Now())
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportDone {
 		t.Fatalf("import = %+v", got.Import)
 	}
@@ -374,7 +374,7 @@ func TestImportTidies(t *testing.T) {
 	os.WriteFile(filepath.Join(job, "x7f3a.eng.forced.srt"), []byte("2"), 0o644)
 	os.MkdirAll(filepath.Join(job, "Subs"), 0o755)
 	os.WriteFile(filepath.Join(job, "Subs", "2_English.srt"), []byte("3"), 0o644)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || got.Import.Notes[0] != "moved 3 subtitle files next to the video" {
@@ -400,7 +400,7 @@ func TestImportKeepsUnassignedVideos(t *testing.T) {
 	os.Remove(filepath.Join(job, "x7f3a.mkv"))
 	os.WriteFile(filepath.Join(job, "Harbor.Precinct.Night.Shift.S01E01.mkv"), make([]byte, 1000), 0o644)
 	os.WriteFile(filepath.Join(job, "Harbor.Precinct.Night.Shift.Making.Of.mkv"), make([]byte, 900), 0o644)
-	e.svc.work(ctx)
+	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
 	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || !strings.Contains(got.Import.Notes[0], "holds 1 video file that could not be assigned") {
 		t.Fatalf("import = %+v", got.Import)
@@ -529,7 +529,7 @@ func TestImportPackKeepsBetter(t *testing.T) {
 		os.WriteFile(old, []byte("old"), 0o644)
 		e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 102, Path: old, Size: 3, Tier: tc.existing}, earlier.ID, time.Now())
 
-		e.svc.work(ctx)
+		e.svc.Work(ctx)
 		got, _ := e.st.GetDownload(ctx, d.ID)
 		f, _, _ := e.st.EpisodeFile(ctx, 102)
 		kept := slices.ContainsFunc(got.Import.Notes, func(n string) bool { return strings.HasPrefix(n, "kept the existing file of S01E02") })

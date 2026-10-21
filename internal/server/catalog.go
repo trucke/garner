@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/catalog"
@@ -75,7 +74,7 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 // handleListSeries lists the shows with a summary of each: episode counts,
 // size, next air date and the most urgent episode.
 func (s *Server) handleListSeries(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.Library(r.Context(), time.Now(), s.schedule())
+	list, err := s.store.Library(r.Context(), s.now(), s.schedule())
 	if err != nil {
 		s.internalError(w, "list series", err)
 		return
@@ -129,7 +128,7 @@ func (s *Server) handleAddSeries(w http.ResponseWriter, r *http.Request) {
 		taken = &t
 	}
 	if req.Monitor != store.MonitorOff {
-		if err := s.store.SetMonitor(ctx, req.TVDBID, req.Monitor, time.Now()); err != nil {
+		if err := s.store.SetMonitor(ctx, req.TVDBID, req.Monitor, s.now()); err != nil {
 			s.internalError(w, "set monitor", err)
 			return
 		}
@@ -192,7 +191,7 @@ func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request, id int64) 
 		s.internalError(w, "load series", err)
 		return api.SeriesDetail{}, false
 	}
-	summary, states, err := s.store.ShowStatus(r.Context(), id, time.Now(), s.schedule())
+	summary, states, err := s.store.ShowStatus(r.Context(), id, s.now(), s.schedule())
 	if err != nil {
 		s.internalError(w, "summarise series", err)
 		return api.SeriesDetail{}, false
