@@ -1,8 +1,13 @@
 package release
 
 import (
+	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
+	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 var extensions = []string{".mkv", ".mp4", ".avi", ".m4v", ".ts", ".nzb"}
@@ -11,6 +16,30 @@ var extensions = []string{".mkv", ".mp4", ".avi", ".m4v", ".ts", ".nzb"}
 // yield no claims; anything the parser cannot read is left out rather than
 // guessed.
 func Parse(name string) Claims {
+	if testing.Testing() {
+		return parse(name)
+	}
+	// In the running server a broken invariant must not take garnerd down:
+	// the monitor would search the same episode again after a restart and
+	// crash in a loop. Tests and fuzzers see the panic instead, so the bug
+	// is found.
+	return degrade(name, func() Claims { return parse(name) })
+}
+
+// degrade runs build and, when an invariant breaks, logs it together with
+// the input and falls back to the claims of an unreadable name.
+func degrade(name string, build func() Claims) (c Claims) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Default().Error("release: treating the name as unreadable after a broken invariant",
+				"invariant", r, "name", name)
+			c = Claims{Name: name}
+		}
+	}()
+	return build()
+}
+
+func parse(name string) Claims {
 	c := Claims{Name: name}
 	if name == "" || len(name) > MaxNameLength {
 		return c
@@ -25,7 +54,40 @@ func Parse(name string) Claims {
 	p := &parser{toks: tokenize(body), c: &c}
 	p.used = make([]bool, len(p.toks))
 	p.parse()
+	c.verify()
 	return c
+}
+
+// verify panics when a claim breaks an invariant the parser must hold:
+// every span lies inside the name, ranges stay within maxEpisodes, every
+// numbering claim names a season or episodes, and text values carry no
+// control or format characters, which could hide their meaning in a
+// terminal. Checked here, they hold in every test, on every fuzz input and
+// on every real release name.
+func (c *Claims) verify() {
+	inName := func(what string, s Span) {
+		if s.Start < 0 || s.End > len(c.Name) || s.Start >= s.End {
+			panic(fmt.Sprintf("invariant broken: the %s span %v does not lie inside the %d-byte name", what, s, len(c.Name)))
+		}
+	}
+	for _, n := range c.Numbering {
+		inName("numbering", n.Span)
+		if len(n.Episodes) > maxEpisodes {
+			panic(fmt.Sprintf("invariant broken: a range stays within %d episodes, but %v expands to %d", maxEpisodes, n, len(n.Episodes)))
+		}
+		if !n.Seasoned && len(n.Episodes) == 0 {
+			panic(fmt.Sprintf("invariant broken: a numbering claim names a season or episodes, but %v names neither", n))
+		}
+	}
+	unsafe := func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }
+	for _, lists := range [][]Claim[string]{c.Series, c.EpisodeTitle, c.Group, c.Extras} {
+		for _, t := range lists {
+			inName("text", t.Span)
+			if !utf8.ValidString(t.Value) || strings.IndexFunc(t.Value, unsafe) >= 0 {
+				panic(fmt.Sprintf("invariant broken: text values hold no control characters, but %q does", t.Value))
+			}
+		}
+	}
 }
 
 type parser struct {

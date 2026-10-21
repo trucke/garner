@@ -1,12 +1,12 @@
 package release
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
-	"unicode"
-	"unicode/utf8"
 )
 
 // summary renders claims compactly so a table can assert every field.
@@ -338,35 +338,38 @@ func TestUnreadableInputYieldsNothing(t *testing.T) {
 	}
 }
 
+// TestParseDegrades checks the production path, which tests and fuzzers
+// never take: when an invariant breaks outside go test, Parse reports an
+// unreadable name and logs the invariant and the input instead of
+// crashing the server.
+func TestParseDegrades(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+
+	const name = "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP"
+	got := degrade(name, func() Claims {
+		panic("invariant broken: a test panic")
+	})
+	if got.Name != name || len(got.Series) > 0 || len(got.Numbering) > 0 {
+		t.Errorf("degrade yielded %+v, want only the name", got)
+	}
+	if log := buf.String(); !strings.Contains(log, "a test panic") || !strings.Contains(log, name) {
+		t.Errorf("the log does not name the invariant and the input: %s", log)
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	for _, tc := range cases {
 		f.Add(tc.name)
 	}
 	f.Add("Show\x1b[31m.S01E01\x00.1080p")
 	f.Add("Show\u202e.S01E01\xff.1080p")
+	// The invariants on the claims are checked inside Parse, so a broken
+	// one fails the fuzzer with the panic itself.
 	f.Fuzz(func(t *testing.T, name string) {
 		c := Parse(name)
-		check := func(what string, s Span) {
-			if s.Start < 0 || s.End > len(name) || s.Start >= s.End {
-				t.Fatalf("%s span %v outside %d-byte name", what, s, len(name))
-			}
-		}
-		for _, n := range c.Numbering {
-			check("numbering", n.Span)
-			if len(n.Episodes) > maxEpisodes {
-				t.Fatalf("numbering expanded to %d episodes", len(n.Episodes))
-			}
-			if !n.Seasoned && len(n.Episodes) == 0 {
-				t.Fatalf("claim without season or episodes: %+v", n)
-			}
-		}
-		for _, text := range append(append(append([]Claim[string]{}, c.Series...), c.EpisodeTitle...), c.Group...) {
-			check("text", text.Span)
-			unsafe := func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }
-			if !utf8.ValidString(text.Value) || strings.IndexFunc(text.Value, unsafe) >= 0 {
-				t.Fatalf("text %q contains invalid or control characters", text.Value)
-			}
-		}
 		_ = fmt.Sprint(c)
 	})
 }

@@ -4,8 +4,10 @@ package match
 
 import (
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/trucke/garner/internal/release"
@@ -50,6 +52,30 @@ type Match struct {
 // Match reads which of the show's episodes a release holds. published is
 // when the indexer received the release; zero if unknown.
 func (s *Show) Match(c release.Claims, published time.Time) Match {
+	if testing.Testing() {
+		return s.match(c, published)
+	}
+	// In the running server a broken invariant must not take garnerd down:
+	// the monitor would search the same episode again after a restart and
+	// crash in a loop. Tests and fuzzers see the panic instead, so the bug
+	// is found.
+	return s.degrade(c, func() Match { return s.match(c, published) })
+}
+
+// degrade runs build and, when an invariant breaks, logs it together with
+// the name and falls back to a match without episodes, with a reason.
+func (s *Show) degrade(c release.Claims, build func() Match) (m Match) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Default().Error("match: treating the release as unmatched after a broken invariant",
+				"invariant", r, "name", c.Name)
+			m = Match{Reason: "an internal check failed while matching this release"}
+		}
+	}()
+	return build()
+}
+
+func (s *Show) match(c release.Claims, published time.Time) Match {
 	if len(c.Extras) > 0 {
 		var extras []string
 		for _, e := range c.Extras {
@@ -122,7 +148,25 @@ func (s *Show) Match(c release.Claims, published time.Time) Match {
 	}
 	m.checkSpecial(&res)
 	res.Notes = m.notes
+	s.verify(res)
 	return res
+}
+
+// verify panics when a match breaks an invariant: episodes and season
+// packs list episodes, and matched episodes belong to the show. Every id
+// comes from the catalogue today; the check keeps future edits honest.
+func (s *Show) verify(m Match) {
+	if m.Kind != Episodes && m.Kind != Season {
+		return
+	}
+	if len(m.Episodes) == 0 {
+		panic("invariant broken: a match lists episodes, but none were given")
+	}
+	for _, id := range m.Episodes {
+		if _, ok := s.episodes[id]; !ok {
+			panic(fmt.Sprintf("invariant broken: matched episodes belong to the show, but TVDB episode %d does not", id))
+		}
+	}
 }
 
 type matcher struct {

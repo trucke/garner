@@ -6,8 +6,10 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/trucke/garner/internal/config"
@@ -255,6 +257,35 @@ type rankKey struct {
 
 // Evaluate judges one release.
 func Evaluate(ctx Context, r Release) Evaluation {
+	if testing.Testing() {
+		return judge(ctx, r)
+	}
+	// In the running server a broken invariant must not take garnerd down:
+	// the monitor would search the same episode again after a restart and
+	// crash in a loop. Tests and fuzzers see the panic instead, so the bug
+	// is found.
+	return degrade(ctx, r, func() Evaluation { return judge(ctx, r) })
+}
+
+// degrade runs build and, when an invariant breaks, logs it together with
+// the name and falls back to a rejection that says Garner could not judge
+// the release.
+func degrade(ctx Context, r Release, build func() Evaluation) (e Evaluation) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Default().Error("selection: rejecting the release after a broken invariant",
+				"invariant", rec, "name", r.Claims.Name)
+			e = Evaluation{
+				Verdict: Reject,
+				Reasons: []string{"Garner could not judge the release: an internal check failed"},
+				rank:    rankKey{verdict: 2, tier: len(ctx.Profile.Tiers) + 2, published: r.Published},
+			}
+		}
+	}()
+	return build()
+}
+
+func judge(ctx Context, r Release) Evaluation {
 	// info supports the verdict; notes are caveats and other facts.
 	var rejects, fallbacks, info, notes []string
 	e := Evaluation{rank: rankKey{tier: len(ctx.Profile.Tiers) + 2, published: r.Published}}
@@ -383,7 +414,24 @@ func Evaluate(ctx Context, r Release) Evaluation {
 	if v, ok := release.Value(r.Claims.Version); ok == release.Unambiguous {
 		e.rank.fixes += v
 	}
+	e.verify(ctx)
 	return e
+}
+
+// verify panics when an evaluation breaks an invariant: it has at least
+// one reason, Decisive ends the leading decisive reasons, so it lies
+// between 1 and the number of reasons, and an accepted release meets a
+// tier of the profile.
+func (e *Evaluation) verify(ctx Context) {
+	if len(e.Reasons) == 0 {
+		panic("invariant broken: an evaluation has at least one reason, but this one has none")
+	}
+	if e.Decisive <= 0 || e.Decisive > len(e.Reasons) {
+		panic(fmt.Sprintf("invariant broken: Decisive ends the decisive reasons, but %d lies outside 1 to %d", e.Decisive, len(e.Reasons)))
+	}
+	if e.Verdict == Accept && (e.Tier == "" || TierRank(ctx.Profile, e.Tier) >= len(ctx.Profile.Tiers)) {
+		panic(fmt.Sprintf("invariant broken: an accepted release meets a tier of the profile, but %q meets none", e.Tier))
+	}
 }
 
 // decideAudio settles the audio languages from one source: the indexer's
@@ -453,7 +501,7 @@ func Rank(evals []Evaluation) []int {
 	for i := range order {
 		order[i] = i
 	}
-	slices.SortStableFunc(order, func(a, b int) int {
+	compare := func(a, b int) int {
 		x, y := evals[a].rank, evals[b].rank
 		return cmp.Or(
 			cmp.Compare(x.verdict, y.verdict),
@@ -467,8 +515,28 @@ func Rank(evals []Evaluation) []int {
 			-cmp.Compare(x.fixes, y.fixes),
 			-x.published.Compare(y.published),
 		)
-	})
+	}
+	slices.SortStableFunc(order, compare)
+	verifyRank(evals, order, compare)
 	return order
+}
+
+// verifyRank panics when the ranking breaks an invariant: the order is a
+// permutation of the indexes and sorted by the comparator, so it is a
+// consistent order. The comparator ranks by fields in lexicographic order,
+// which cannot disagree for any input; the check keeps future edits to it
+// honest.
+func verifyRank(evals []Evaluation, order []int, compare func(a, b int) int) {
+	seen := make([]bool, len(evals))
+	for k, i := range order {
+		if i < 0 || i >= len(evals) || seen[i] {
+			panic("invariant broken: Rank returns every index exactly once")
+		}
+		seen[i] = true
+		if k > 0 && compare(order[k-1], i) > 0 {
+			panic("invariant broken: Rank's order is consistent with its comparator")
+		}
+	}
 }
 
 // Summary states the outcome of a search in plain words. have is the tier

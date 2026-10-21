@@ -1,7 +1,9 @@
 package match
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -113,79 +115,86 @@ func precinct100() store.SeriesData {
 	return d
 }
 
+var (
+	anime       = Options{Anime: true}
+	netflixRule = Options{Anime: true, ServiceOrders: map[release.Service]string{"netflix": "alternate"}}
+)
+
+func posted(s string) time.Time { d, _ := time.Parse(time.DateOnly, s); return d }
+
+// matchTests are made-up release names and what matching them must yield.
+// FuzzMatch seeds its corpus from them.
+var matchTests = []struct {
+	show      func() store.SeriesData
+	opts      Options
+	name      string
+	published time.Time
+	want      string
+	// detail must appear in the reason or a note.
+	detail string
+}{
+	// Show titles
+	{lanternHarbor, anime, "Lantern.Harbor.S01E04.1080p.WEB-DL-GRP", time.Time{}, "S01E04", ""},
+	{lanternHarbor, anime, "Toro.no.Minato.S01E04.1080p.WEB-DL-GRP", time.Time{}, "S01E04", ""},
+	{lanternHarbor, anime, "Laternenhafen.S01E06.German.DL.1080p.WEB-GRP", time.Time{}, "S01E06", ""},
+	{lanternHarbor, anime, "Lanterns.and.Tides.S01E02.1080p.WEB-GRP", time.Time{}, "S01E02", ""},
+	{lanternHarbor, anime, "The.Lantern.Harbor.S01E02.1080p.WEB-GRP", time.Time{}, "S01E02", ""},
+	{lanternHarbor, anime, "Lantern.Harbor.Night.Shift.Diaries.S01E02.1080p.WEB-GRP", time.Time{}, "unknown", "does not match"},
+	{lanternHarbor, anime, "[Grp] Lantern Harbor - Night Shift - 03 [1080p]", time.Time{}, "unknown", "only part of the title"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - Lantern Harbor - 03 [1080p]", time.Time{}, "S01E03", ""},
+	{lanternHarbor, anime, "Tide.Runners.S01E01.1080p.WEB-GRP", time.Time{}, "unknown", "does not match"},
+
+	// Episode titles
+	{lanternHarbor, anime, "Lantern.Harbor.S01E09.The.Quiet.Pier.1080p.WEB-GRP", time.Time{}, "S01E04", "episode title"},
+	{lanternHarbor, anime, "Laternenhafen.S01E09.Ueber.den.Daechern.German.1080p.WEB-GRP", time.Time{}, "S01E05", "episode title"},
+	{lanternHarbor, anime, "Lantern.Harbor.S01E08.Gehen.wir.German.1080p.WEB-GRP", time.Time{}, "S01E08", "fits 2 episodes"},
+	{lanternHarbor, anime, "Lantern.Harbor.E11.5.Erinnerung.an.die.Gefallenen.German.1080p.WEB-GRP", time.Time{}, "S00E02", "half episodes"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - 12.5 [1080p]", time.Time{}, "unknown", "half episodes"},
+
+	// Absolute numbers count regular episodes; seasons in titles
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - 26 (S02E03) [1080p]", time.Time{}, "S02E03", ""},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - 27 (S02E03) [1080p]", time.Time{}, "unknown", "disagree"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato Ni no Shou - 24 [1080p]", time.Time{}, "S02E24", "season 2 comes from the title"},
+	{lanternHarbor, anime, "[Grp] Lantern Harbor II - Dawn - 24 [1080p]", time.Time{}, "S02E24", "season 2 comes from the title"},
+	{lanternHarbor, anime, "[Grp] Lantern Harbor II - 05 [1080p]", time.Time{}, "S02E05", "season 2 comes from the title"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato II - 05 [1080p]", time.Time{}, "S02E05", "season 2 comes from the title"},
+	{lanternHarbor, anime, "[Grp] Lantern Harbor II - Dawn - 30 [1080p]", time.Time{}, "unknown", "TVDB has no S02E30"},
+	{lanternHarbor, anime, "[Grp] Lantern Harbor - 30 [1080p]", time.Time{}, "S02E07", ""},
+
+	// Streaming-service orders
+	{lanternHarbor, anime, "Lantern.Harbor.S02.1080p.NF.WEB-DL-GRP", time.Time{}, "unknown", "no reviewed rule"},
+	{lanternHarbor, netflixRule, "Lantern.Harbor.S02.1080p.NF.WEB-DL-GRP", time.Time{}, "season S00E03-S00E06 (4)", "reviewed rule"},
+	{lanternHarbor, anime, "Lantern.Harbor.S01E05.1080p.NF.WEB-DL-GRP", time.Time{}, "S01E05", ""},
+
+	// TheXEM scene numbering
+	{lanternHarbor, anime, "Lantern.Harbor.S03E01.1080p.WEB-GRP", time.Time{}, "S02E13", "TheXEM maps S03E01 to TVDB S02E13"},
+	{lanternHarbor, anime, "Lantern.Harbor.S02E25.1080p.WEB-GRP", time.Time{}, "unknown", "which TVDB does not list"},
+	{lanternHarbor, anime, "Lantern.Harbor.S04E01.1080p.WEB-GRP", time.Time{}, "unknown", "TVDB has no S04E01"},
+
+	// Contents
+	{lanternHarbor, anime, "Lantern.Harbor.S01.1080p.BluRay.x264-GRP", time.Time{}, "season S01E01-S01E23 (23)", ""},
+	{lanternHarbor, anime, "Lantern.Harbor.S01.NCOP.1080p.BluRay.x264-GRP", time.Time{}, "extra", "NCOP"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - 01 (720p) [2 Hours Special]", time.Time{}, "S01E01 uncertain", "3 episodes aired on 2024-04-05"},
+	{lanternHarbor, anime, "[Grp] Tourou no Minato - 04 (720p) [Special]", time.Time{}, "S01E04", ""},
+
+	// Ambiguous bare numbers
+	{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", posted("2013-10-02"), "S01E01", "had not aired"},
+	{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", time.Time{}, "S01E01", "regular TV reads season and episode first"},
+	{harborPrecinct, anime, "harbor.precinct.101.hdtv-grp", time.Time{}, "S05E13", "anime reads an absolute number first"},
+	{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", posted("2013-09-01"), "unknown", "had aired"},
+
+	// Regular TV
+	{harborPrecinct, Options{}, "Harbor.Precinct.S01E04.Nicht.auf.meinem.Sofa.German.720p.WEB-GRP", time.Time{}, "S01E03", "the name says S01E04"},
+	{harborPrecinct, Options{}, "Hafenrevier.S01E04.Geschmackssache.German.720p.WEB-GRP", time.Time{}, "S01E04", ""},
+	{harborPrecinct, Options{}, "Harbor Precinct Season 2 (E01+02) 1080p WEB", time.Time{}, "S02E01-S02E02 (2)", ""},
+
+	// Numbers that belong to the title
+	{precinct100, Options{}, "Precinct.100.1080p.WEB-DL-GRP", time.Time{}, "unknown", `"100" belongs to the title`},
+	{precinct100, Options{}, "Precinct.100.S01E03.1080p.WEB-DL-GRP", time.Time{}, "S01E03", ""},
+}
+
 func TestMatch(t *testing.T) {
-	anime := Options{Anime: true}
-	netflixRule := Options{Anime: true, ServiceOrders: map[release.Service]string{"netflix": "alternate"}}
-	posted := func(s string) time.Time { d, _ := time.Parse(time.DateOnly, s); return d }
-	tests := []struct {
-		show      func() store.SeriesData
-		opts      Options
-		name      string
-		published time.Time
-		want      string
-		// detail must appear in the reason or a note.
-		detail string
-	}{
-		// Show titles
-		{lanternHarbor, anime, "Lantern.Harbor.S01E04.1080p.WEB-DL-GRP", time.Time{}, "S01E04", ""},
-		{lanternHarbor, anime, "Toro.no.Minato.S01E04.1080p.WEB-DL-GRP", time.Time{}, "S01E04", ""},
-		{lanternHarbor, anime, "Laternenhafen.S01E06.German.DL.1080p.WEB-GRP", time.Time{}, "S01E06", ""},
-		{lanternHarbor, anime, "Lanterns.and.Tides.S01E02.1080p.WEB-GRP", time.Time{}, "S01E02", ""},
-		{lanternHarbor, anime, "The.Lantern.Harbor.S01E02.1080p.WEB-GRP", time.Time{}, "S01E02", ""},
-		{lanternHarbor, anime, "Lantern.Harbor.Night.Shift.Diaries.S01E02.1080p.WEB-GRP", time.Time{}, "unknown", "does not match"},
-		{lanternHarbor, anime, "[Grp] Lantern Harbor - Night Shift - 03 [1080p]", time.Time{}, "unknown", "only part of the title"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - Lantern Harbor - 03 [1080p]", time.Time{}, "S01E03", ""},
-		{lanternHarbor, anime, "Tide.Runners.S01E01.1080p.WEB-GRP", time.Time{}, "unknown", "does not match"},
-
-		// Episode titles
-		{lanternHarbor, anime, "Lantern.Harbor.S01E09.The.Quiet.Pier.1080p.WEB-GRP", time.Time{}, "S01E04", "episode title"},
-		{lanternHarbor, anime, "Laternenhafen.S01E09.Ueber.den.Daechern.German.1080p.WEB-GRP", time.Time{}, "S01E05", "episode title"},
-		{lanternHarbor, anime, "Lantern.Harbor.S01E08.Gehen.wir.German.1080p.WEB-GRP", time.Time{}, "S01E08", "fits 2 episodes"},
-		{lanternHarbor, anime, "Lantern.Harbor.E11.5.Erinnerung.an.die.Gefallenen.German.1080p.WEB-GRP", time.Time{}, "S00E02", "half episodes"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - 12.5 [1080p]", time.Time{}, "unknown", "half episodes"},
-
-		// Absolute numbers count regular episodes; seasons in titles
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - 26 (S02E03) [1080p]", time.Time{}, "S02E03", ""},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - 27 (S02E03) [1080p]", time.Time{}, "unknown", "disagree"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato Ni no Shou - 24 [1080p]", time.Time{}, "S02E24", "season 2 comes from the title"},
-		{lanternHarbor, anime, "[Grp] Lantern Harbor II - Dawn - 24 [1080p]", time.Time{}, "S02E24", "season 2 comes from the title"},
-		{lanternHarbor, anime, "[Grp] Lantern Harbor II - 05 [1080p]", time.Time{}, "S02E05", "season 2 comes from the title"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato II - 05 [1080p]", time.Time{}, "S02E05", "season 2 comes from the title"},
-		{lanternHarbor, anime, "[Grp] Lantern Harbor II - Dawn - 30 [1080p]", time.Time{}, "unknown", "TVDB has no S02E30"},
-		{lanternHarbor, anime, "[Grp] Lantern Harbor - 30 [1080p]", time.Time{}, "S02E07", ""},
-
-		// Streaming-service orders
-		{lanternHarbor, anime, "Lantern.Harbor.S02.1080p.NF.WEB-DL-GRP", time.Time{}, "unknown", "no reviewed rule"},
-		{lanternHarbor, netflixRule, "Lantern.Harbor.S02.1080p.NF.WEB-DL-GRP", time.Time{}, "season S00E03-S00E06 (4)", "reviewed rule"},
-		{lanternHarbor, anime, "Lantern.Harbor.S01E05.1080p.NF.WEB-DL-GRP", time.Time{}, "S01E05", ""},
-
-		// TheXEM scene numbering
-		{lanternHarbor, anime, "Lantern.Harbor.S03E01.1080p.WEB-GRP", time.Time{}, "S02E13", "TheXEM maps S03E01 to TVDB S02E13"},
-		{lanternHarbor, anime, "Lantern.Harbor.S02E25.1080p.WEB-GRP", time.Time{}, "unknown", "which TVDB does not list"},
-		{lanternHarbor, anime, "Lantern.Harbor.S04E01.1080p.WEB-GRP", time.Time{}, "unknown", "TVDB has no S04E01"},
-
-		// Contents
-		{lanternHarbor, anime, "Lantern.Harbor.S01.1080p.BluRay.x264-GRP", time.Time{}, "season S01E01-S01E23 (23)", ""},
-		{lanternHarbor, anime, "Lantern.Harbor.S01.NCOP.1080p.BluRay.x264-GRP", time.Time{}, "extra", "NCOP"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - 01 (720p) [2 Hours Special]", time.Time{}, "S01E01 uncertain", "3 episodes aired on 2024-04-05"},
-		{lanternHarbor, anime, "[Grp] Tourou no Minato - 04 (720p) [Special]", time.Time{}, "S01E04", ""},
-
-		// Ambiguous bare numbers
-		{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", posted("2013-10-02"), "S01E01", "had not aired"},
-		{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", time.Time{}, "S01E01", "regular TV reads season and episode first"},
-		{harborPrecinct, anime, "harbor.precinct.101.hdtv-grp", time.Time{}, "S05E13", "anime reads an absolute number first"},
-		{harborPrecinct, Options{}, "harbor.precinct.101.hdtv-grp", posted("2013-09-01"), "unknown", "had aired"},
-
-		// Regular TV
-		{harborPrecinct, Options{}, "Harbor.Precinct.S01E04.Nicht.auf.meinem.Sofa.German.720p.WEB-GRP", time.Time{}, "S01E03", "the name says S01E04"},
-		{harborPrecinct, Options{}, "Hafenrevier.S01E04.Geschmackssache.German.720p.WEB-GRP", time.Time{}, "S01E04", ""},
-		{harborPrecinct, Options{}, "Harbor Precinct Season 2 (E01+02) 1080p WEB", time.Time{}, "S02E01-S02E02 (2)", ""},
-
-		// Numbers that belong to the title
-		{precinct100, Options{}, "Precinct.100.1080p.WEB-DL-GRP", time.Time{}, "unknown", `"100" belongs to the title`},
-		{precinct100, Options{}, "Precinct.100.S01E03.1080p.WEB-DL-GRP", time.Time{}, "S01E03", ""},
-	}
-	for _, tc := range tests {
+	for _, tc := range matchTests {
 		t.Run(tc.name, func(t *testing.T) {
 			show := NewShow(tc.show(), tc.opts)
 			m := show.Match(release.Parse(tc.name), tc.published)
@@ -200,3 +209,26 @@ func TestMatch(t *testing.T) {
 
 func ptr(n int) *int       { return &n }
 func ptr64(n int64) *int64 { return &n }
+
+// TestMatchDegrades checks the production path, which tests and fuzzers
+// never take: when an invariant breaks outside go test, Match reports no
+// match with a reason and logs the invariant and the name instead of
+// crashing the server.
+func TestMatchDegrades(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+
+	show := NewShow(harborPrecinct(), Options{})
+	claims := release.Parse("Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP")
+	got := show.degrade(claims, func() Match {
+		panic("invariant broken: a test panic")
+	})
+	if got.Kind != Unknown || got.Reason == "" || len(got.Episodes) > 0 {
+		t.Errorf("degrade yielded %+v, want unknown with a reason and no episodes", got)
+	}
+	if log := buf.String(); !strings.Contains(log, "a test panic") || !strings.Contains(log, claims.Name) {
+		t.Errorf("the log does not name the invariant and the input: %s", log)
+	}
+}
