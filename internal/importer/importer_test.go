@@ -544,3 +544,54 @@ func TestImportPackKeepsBetter(t *testing.T) {
 		}
 	}
 }
+
+// TestImportPackRetryRemovesKeptFiles retries a pack's import whose move
+// failed on a missing library folder: the pack's file of an episode whose
+// library file was kept goes with the rest of SABnzbd's folder, as without
+// the failure, and no note claims it could not be assigned (GRR-40).
+func TestImportPackRetryRemovesKeptFiles(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	job := filepath.Join(e.share, jobDir)
+	os.Remove(filepath.Join(job, "x7f3a.mkv"))
+	for _, name := range []string{"Harbor.Precinct.Night.Shift.S01E01.mkv", "Harbor.Precinct.Night.Shift.S01E02.mkv"} {
+		os.WriteFile(filepath.Join(job, name), make([]byte, 1000), 0o644)
+	}
+	earlier, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 102, Title: "Harbor.Precinct.S01E02-OLD", Link: "x",
+		Verdict: "accept", Tier: "German 1080p"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(e.share, "library/tv/old/S01E02.mkv")
+	os.MkdirAll(filepath.Dir(old), 0o755)
+	os.WriteFile(old, []byte("old"), 0o644)
+	e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 102, Path: old, Size: 3, Tier: "German 1080p"}, earlier.ID, time.Now())
+
+	// The share is unmounted while the import runs.
+	library := filepath.Join(e.share, "library/tv")
+	if err := os.Rename(library, library+".away"); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Work(ctx)
+	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State != store.ImportFailed {
+		t.Fatalf("with the library away: %+v", got.Import)
+	}
+	if err := os.Rename(library+".away", library); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Retry(ctx, d.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Work(ctx)
+
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if got.Import.State != store.ImportDone {
+		t.Fatalf("after the retry: %+v", got.Import)
+	}
+	if f, _, _ := e.st.EpisodeFile(ctx, 102); f.Path != old {
+		t.Errorf("S01E02's file is %s; the library's own was as good and should stay", f.Path)
+	}
+	if _, err := os.Stat(job); !os.IsNotExist(err) {
+		t.Errorf("SABnzbd's folder is still there; notes %q", got.Import.Notes)
+	}
+}

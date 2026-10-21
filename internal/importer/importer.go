@@ -163,7 +163,7 @@ func (s *Service) Work(ctx context.Context) {
 		case store.ImportPending:
 			s.check(ctx, &d)
 		case store.ImportMoving:
-			s.move(ctx, &d, nil)
+			s.move(ctx, &d)
 		case store.ImportScanning:
 			s.verify(ctx, &d)
 		}
@@ -253,7 +253,7 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 		s.reject(ctx, d, files, "the download does not hold "+c.show.Label(d.EpisodeID))
 		return
 	}
-	files, dropped, notes := s.keepBetter(ctx, d, c, files)
+	files, notes := s.keepBetter(ctx, d, c, files)
 
 	var problems []string
 	for i := range files {
@@ -293,16 +293,14 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 		return
 	}
 	s.save(ctx, d, store.Import{State: store.ImportMoving, Detail: "the file check passed", Files: files, Notes: notes})
-	s.move(ctx, d, dropped)
+	s.move(ctx, d)
 }
 
 // move renames the files into the library. A rename moves the file on the
 // share without copying it; a rename that would cross filesystems fails
-// instead of copying.
-// dropped are a pack's files the library keeps its own version of; they
-// are deleted once the move succeeded, so SABnzbd's folder can be tidied.
-// After a restart they are no longer known and stay in the folder.
-func (s *Service) move(ctx context.Context, d *store.Download, dropped []string) {
+// instead of copying. Then it removes the pack's files whose episodes kept
+// the library's own file.
+func (s *Service) move(ctx context.Context, d *store.Download) {
 	files := d.Import.Files
 	// SABnzbd's folder is looked up only when a file is still in it: after a
 	// restart, it may be gone with every file moved already.
@@ -371,15 +369,7 @@ func (s *Service) move(ctx context.Context, d *store.Download, dropped []string)
 		s.log.Info("imported file", "download", d.ID, "target", f.Target)
 	}
 	s.recordFiles(ctx, d, files)
-	for _, f := range dropped {
-		c, err := claim(f)
-		if err == nil {
-			err = s.guard.Remove(c)
-		}
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			s.log.Warn("could not remove a file it does not import", "download", d.ID, "file", f, "err", err)
-		}
-	}
+	s.removeKept(ctx, d, job)
 	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
 	if notes == nil {
 		notes = []string{}
@@ -422,38 +412,84 @@ func refused(err error) bool {
 // keepBetter drops a pack's files for episodes, other than the one it was
 // chosen for, whose file came from a release of the same tier or a better
 // one: one version per episode, the better one. It returns the files to
-// import, the dropped ones' paths and a note naming the episodes that kept
-// their file.
-func (s *Service) keepBetter(ctx context.Context, d *store.Download, c showContext, files []store.ImportFile) (keep []store.ImportFile, dropped, notes []string) {
+// import and a note naming the episodes that kept their file; removeKept
+// deletes the dropped files after the move.
+func (s *Service) keepBetter(ctx context.Context, d *store.Download, c showContext, files []store.ImportFile) (keep []store.ImportFile, notes []string) {
 	if len(files) < 2 {
-		return files, nil, nil
+		return files, nil
 	}
 	have, err := s.store.SeriesFileTiers(ctx, c.data.Series.ID)
 	if err != nil {
 		s.log.Warn("could not compare with the files in the library; importing every file", "download", d.ID, "err", err)
-		return files, nil, nil
+		return files, nil
 	}
-	pack := selection.TierRank(c.profile, d.Tier)
 	var kept []int64
 	for _, f := range files {
-		ours := !slices.Contains(f.Episodes, d.EpisodeID)
-		for _, ep := range f.Episodes {
-			if tier, found := have[ep]; !found || selection.TierRank(c.profile, tier) > pack {
-				ours = false
-			}
-		}
-		if !ours {
+		if !libraryKeeps(c, d, have, f.Episodes) {
 			keep = append(keep, f)
 			continue
 		}
 		kept = append(kept, f.Episodes...)
-		dropped = append(dropped, f.Source)
 	}
 	if len(kept) == 0 {
-		return keep, nil, nil
+		return keep, nil
 	}
 	s.log.Info("kept the existing files", "download", d.ID, "episodes", c.show.Describe(kept))
-	return keep, dropped, []string{"kept the existing file of " + c.show.Describe(kept) + ": as good as the pack's or better"}
+	return keep, []string{"kept the existing file of " + c.show.Describe(kept) + ": as good as the pack's or better"}
+}
+
+// libraryKeeps reports whether the library keeps its own files of a
+// pack's episodes: none of them is the episode the download is for, and
+// each has a file from a release as good as the pack's or better.
+func libraryKeeps(c showContext, d *store.Download, have map[int64]string, episodes []int64) bool {
+	if len(episodes) == 0 || slices.Contains(episodes, d.EpisodeID) {
+		return false
+	}
+	pack := selection.TierRank(c.profile, d.Tier)
+	for _, ep := range episodes {
+		if tier, found := have[ep]; !found || selection.TierRank(c.profile, tier) > pack {
+			return false
+		}
+	}
+	return true
+}
+
+// removeKept deletes the videos left in SABnzbd's folder after a move
+// whose episodes the library keeps its own files of, as keepBetter decides.
+// It works them out from the folder instead of remembering check's list,
+// so a retry or a restart after a failed move removes them as well. Videos
+// it cannot assign stay for tidy to report.
+func (s *Service) removeKept(ctx context.Context, d *store.Download, job func() (guard.Job, error)) {
+	j, err := job()
+	if err != nil {
+		return // gone already, or not Garner's to change
+	}
+	videos, err := videoFiles(j.Dir())
+	if err != nil || len(videos) == 0 {
+		return
+	}
+	c, err := s.context(ctx, d.EpisodeID)
+	if err != nil {
+		return
+	}
+	have, err := s.store.SeriesFileTiers(ctx, c.data.Series.ID)
+	if err != nil {
+		return
+	}
+	for _, f := range videos {
+		name := strings.TrimSuffix(filepath.Base(f.Source), filepath.Ext(f.Source))
+		m := c.show.Match(release.Parse(name), time.Time{})
+		if m.Kind != match.Episodes || !libraryKeeps(c, d, have, m.Episodes) {
+			continue
+		}
+		claimed, err := s.guard.InJob(j, f.Source)
+		if err == nil {
+			err = s.guard.Remove(claimed)
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.log.Warn("could not remove a file it does not import", "download", d.ID, "file", f.Source, "err", err)
+		}
+	}
 }
 
 // recordFiles remembers each episode's file and removes the version Garner
