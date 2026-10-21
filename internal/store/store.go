@@ -52,8 +52,23 @@ type Store struct {
 // pending migrations. An existing database is backed up before migrating.
 // Turso locks the file, so a second process cannot open it.
 func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error) {
+	db, path, err := connect(ctx, dataDir, log)
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{db: db, q: query.New(db), path: path, log: log}
+	if err := s.migrate(ctx, dataDir); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// connect opens the database in dataDir, creating it if needed, without
+// migrating it.
+func connect(ctx context.Context, dataDir string, log *slog.Logger) (*sql.DB, string, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create data directory: %w", err)
+		return nil, "", fmt.Errorf("create data directory: %w", err)
 	}
 	// Turso unpacks its engine library on first use. It goes into the data
 	// directory, a folder per Turso version, and once the database is open
@@ -67,7 +82,7 @@ func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error)
 	path := filepath.Join(dataDir, FileName)
 	inner, err := turso.NewConnector(path)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	db := sql.OpenDB(pragmaConnector{inner})
 	db.SetMaxOpenConns(1)
@@ -77,19 +92,14 @@ func Open(ctx context.Context, dataDir string, log *slog.Logger) (*Store, error)
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		if strings.Contains(err.Error(), "locked by another process") {
-			return nil, fmt.Errorf("database %s is in use by another Garner process", path)
+			return nil, "", fmt.Errorf("database %s is in use by another Garner process", path)
 		}
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, "", fmt.Errorf("open database: %w", err)
 	}
 	if libs != "" && version != "" {
 		removeOtherLibraries(libs, version, log)
 	}
-	s := &Store{db: db, q: query.New(db), path: path, log: log}
-	if err := s.migrate(ctx, dataDir); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return s, nil
+	return db, path, nil
 }
 
 // tursoVersion is the version of the Turso library package this program
@@ -159,14 +169,23 @@ func (c pragmaConnector) Connect(ctx context.Context) (driver.Conn, error) {
 
 func (c pragmaConnector) Driver() driver.Driver { return c.inner.Driver() }
 
-func (s *Store) migrate(ctx context.Context, dataDir string) error {
+// migrator returns goose's view of Garner's migrations on db.
+func migrator(db *sql.DB) (*goose.Provider, error) {
 	sub, err := fs.Sub(migrations, "migrations")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	p, err := goose.NewProvider(goose.DialectSQLite3, s.db, sub, goose.WithDisableGlobalRegistry(true))
+	p, err := goose.NewProvider(goose.DialectSQLite3, db, sub, goose.WithDisableGlobalRegistry(true))
 	if err != nil {
-		return fmt.Errorf("load migrations: %w", err)
+		return nil, fmt.Errorf("load migrations: %w", err)
+	}
+	return p, nil
+}
+
+func (s *Store) migrate(ctx context.Context, dataDir string) error {
+	p, err := migrator(s.db)
+	if err != nil {
+		return err
 	}
 	pending, err := p.HasPending(ctx)
 	if err != nil || !pending {
