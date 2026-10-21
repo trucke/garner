@@ -132,8 +132,8 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64, sc *Sc
 }
 
 // explains reports whether an episode's latest download explains its
-// state; a cancelled one explains why the monitor leaves a missing episode
-// alone.
+// state; one that waits for the user, cancelled or with a failed import,
+// explains why the monitor leaves a missing episode alone.
 func explains(state string, d *Download) bool {
 	switch state {
 	case EpisodeDownloading, EpisodeProcessing, EpisodeImporting, EpisodeFailed, EpisodeAttention:

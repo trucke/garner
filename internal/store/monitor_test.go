@@ -219,3 +219,75 @@ func TestWanted(t *testing.T) {
 		}
 	}
 }
+
+// TestWantedLeavesFailedImportsToYou checks that the monitor leaves an
+// episode alone while its import failed on a path or permission problem:
+// another download fails the same way until the user fixes the setup and
+// retries (GRR-44). A release the file check rejected is replaced as usual,
+// and a newer download brings the episode back to the monitor.
+func TestWantedLeavesFailedImportsToYou(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(ctx, t.TempDir(), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.Local)
+	ep := func(id int64, number int) Episode {
+		return Episode{ID: id, Aired: "2026-01-01", Numbers: map[string]Position{"official": {Season: 1, Number: number}}}
+	}
+	if err := st.SaveSeries(ctx, SeriesData{
+		Series:   Series{ID: 1, Slug: "s", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv", Monitor: MonitorAll},
+		Episodes: []Episode{ep(101, 1), ep(102, 2)},
+	}, false, now.Add(-30*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	// completed downloads a release of episode and ends its import in state.
+	completed := func(episode int64, at time.Time, state string) {
+		t.Helper()
+		d, err := st.StartDownload(ctx, Download{EpisodeID: episode, Title: fmt.Sprintf("Harbor.Precinct.S01E%02d.German.DL.1080p.WEB-GRP", episode-100), Indexer: "One", Link: "x"}, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.State = Completed
+		if state == ImportRejected {
+			d.State = Failed // the file check rejected the release
+		}
+		if err := st.UpdateDownload(ctx, d, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpdateImport(ctx, d.ID, Import{State: state, Detail: "x", Recovery: "Fix it, then retry the import."}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wanted := func() []int64 {
+		t.Helper()
+		list, err := st.Wanted(ctx, now, Schedule{Recent: 14 * 24 * time.Hour, MissingRecent: 6 * time.Hour, MissingOlder: 24 * time.Hour})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []int64
+		for _, w := range list {
+			ids = append(ids, w.EpisodeID)
+		}
+		return ids
+	}
+
+	completed(101, now.Add(-3*24*time.Hour), ImportFailed)
+	completed(102, now.Add(-3*24*time.Hour), ImportRejected)
+	if got := wanted(); !slices.Equal(got, []int64{102}) {
+		t.Errorf("wanted %v; want only the rejected release's episode 102, not 101 whose import waits for the user", got)
+	}
+	// A newer download of episode 101 that failed brings it back.
+	d, err := st.StartDownload(ctx, Download{EpisodeID: 101, Title: "Harbor.Precinct.S01E01.German.DL.720p.WEB-OTHER", Indexer: "One", Link: "y"}, now.Add(-2*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.State = Failed
+	if err := st.UpdateDownload(ctx, d, now.Add(-2*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := wanted(); !slices.Equal(got, []int64{101, 102}) {
+		t.Errorf("wanted %v after a newer download of 101 failed; want 101 and 102", got)
+	}
+}

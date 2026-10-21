@@ -108,9 +108,14 @@ func (sc Schedule) upgradable(sr Series, tier string) bool {
 	return sc.Upgrades && tier != "" && sc.Best != nil && tier != sc.Best(sr.Profile)
 }
 
-// leftToYou reports whether the episode's latest download was cancelled:
-// the monitor then leaves the episode alone until someone downloads it.
-func leftToYou(d *Download) bool { return d != nil && d.State == Cancelled }
+// leftToYou reports whether the episode's latest download waits for the
+// user: it was cancelled, or its import failed on a path or permission
+// problem that another download would hit as well. The monitor then
+// leaves the episode alone until someone downloads it or retries the
+// import.
+func leftToYou(d *Download) bool {
+	return d != nil && (d.State == Cancelled || d.Import.State == ImportFailed)
+}
 
 // ended is when a download that brought no file ended: its own end, or its
 // import's.
@@ -128,7 +133,7 @@ func missingState(state string) bool {
 }
 
 // wants reports whether the monitor gets an episode in this state with this
-// latest download: missing, and not cancelled.
+// latest download: missing, and not left to the user.
 func wants(state string, d *Download) bool { return missingState(state) && !leftToYou(d) }
 
 // Wanted is an episode the monitor searches: a missing one, or one whose
