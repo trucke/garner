@@ -74,6 +74,8 @@ type Deps struct {
 	Transport http.RoundTripper
 	// Prober reads video files instead of ffprobe.
 	Prober importer.Prober
+	// Rename moves files into the library.
+	Rename func(oldpath, newpath string) error
 }
 
 // Run opens the database and serves until ctx is cancelled.

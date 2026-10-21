@@ -6,6 +6,7 @@
 package simulation
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/config"
+	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/server"
 	"github.com/trucke/garner/internal/store"
 )
@@ -31,18 +33,33 @@ import (
 var (
 	seedFlag  = flag.Uint64("seed", 0, "run only this seed")
 	seedsFlag = flag.Int("seeds", 0, "run this many fresh seeds instead of the fixed ones")
-	stepsFlag = flag.Int("steps", 300, "random steps per seed, before the calm period")
+	stepsFlag = flag.Int("steps", defaultSteps, "random steps per seed, before the calm period")
 )
 
-// fixedSeeds run with every go test. A seed that once failed joins them,
-// next to a focused test for its bug: after later changes, the seed may
-// take another path.
-var fixedSeeds = []uint64{1, 2, 3, 4, 1792577795629604037}
+const defaultSteps = 300
+
+// fixedSeeds run with every go test. Together, every event changes
+// something in them (a refused request does not count), they cover both
+// path setups and the three disk setups, and they catch the bugs built
+// into Garner on purpose to test the simulation: overwriting a file
+// Garner does not own, removing SABnzbd's whole folder, never giving up
+// on Jellyfin and downloading again while an import waits for the user.
+//
+// A change to the world sends every seed down another path, and
+// TestSimulation then fails when an event or a setup went missing. To
+// choose again, swap in other seeds until it passes; -seed N -v shows
+// what a seed does. Whether they still catch the bugs takes building them
+// in again by hand. A bug a seed found gets a focused test of its own.
+var fixedSeeds = []uint64{41, 69, 104}
 
 // TestSimulation runs each seed twice: the rules must hold in the first
-// run, and the second must tell the same story.
+// run, and the second must tell the same story. The fixed seeds, all run
+// with the default steps, must also cover every event and setup.
 func TestSimulation(t *testing.T) {
 	seeds := fixedSeeds
+	fixed := *seedFlag == 0 && *seedsFlag <= 0 && *stepsFlag == defaultSteps
+	covered, ran := map[string]bool{}, 0
+	var all []string
 	switch {
 	case *seedFlag != 0:
 		seeds = []uint64{*seedFlag}
@@ -57,6 +74,11 @@ func TestSimulation(t *testing.T) {
 	for _, seed := range seeds {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
 			first := run(t, seed, *stepsFlag)
+			ran++
+			all = first.all
+			for _, what := range first.covered {
+				covered[what] = true
+			}
 			if *seedFlag != 0 && testing.Verbose() {
 				t.Log("\n" + strings.Join(first.trace, "\n"))
 			}
@@ -72,11 +94,27 @@ func TestSimulation(t *testing.T) {
 			}
 		})
 	}
+	// Only a full run of the fixed seeds tells; -run may pick some of them.
+	if !fixed || ran != len(fixedSeeds) || t.Failed() {
+		return
+	}
+	var missing []string
+	for _, what := range all {
+		if !covered[what] {
+			missing = append(missing, what)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("in no fixed seed did these change anything: %s\nchoose the fixed seeds again as the comment on fixedSeeds says", strings.Join(missing, "; "))
+	}
 }
 
 type outcome struct {
 	trace   []string
 	failure string
+	// covered are the events that changed something and the setup, all
+	// the events and setups there are.
+	covered, all []string
 }
 
 // sim is one run: the world, Garner on top of it and the story so far.
@@ -98,11 +136,40 @@ type sim struct {
 	deleting int64
 	// retrying is the download the user retries in this step.
 	retrying int64
+	// removed is the episode the catalogue dropped in this step.
+	removed int64
+	// refused is whether Garner refused the step's last request.
+	refused  bool
+	covered  map[string]bool
 	failure  string
 	sentinel string
 	// last is the snapshot after the last step: nothing changes between
 	// steps, so it is the next step's before.
 	last *snapshot
+	// videos caches the videos read, by path; a file whose size and
+	// modification time stay is not read again.
+	videos map[string]cachedVideo
+}
+
+type cachedVideo struct {
+	size int64
+	mod  time.Time
+	v    video
+	ok   bool
+}
+
+// video reads the video at p, from the cache when the file did not change.
+func (s *sim) video(p string, d fs.DirEntry) (video, bool) {
+	info, err := d.Info()
+	if err != nil {
+		return video{}, false
+	}
+	if c, hit := s.videos[p]; hit && c.size == info.Size() && c.mod.Equal(info.ModTime()) {
+		return c.v, c.ok
+	}
+	v, ok := readVideo(p)
+	s.videos[p] = cachedVideo{size: info.Size(), mod: info.ModTime(), v: v, ok: ok}
+	return v, ok
 }
 
 func run(t *testing.T, seed uint64, steps int) outcome {
@@ -111,25 +178,39 @@ func run(t *testing.T, seed uint64, steps int) outcome {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The temporary folder can only go once every folder takes writes.
+	defer w.unlock()
 	s := &sim{ctx: context.Background(), seed: seed, steps: steps, w: w, cfg: w.config(),
-		pick: rand.New(rand.NewPCG(seed, 3)), user: rand.New(rand.NewPCG(seed, 4))}
+		pick: rand.New(rand.NewPCG(seed, 3)), user: rand.New(rand.NewPCG(seed, 4)), videos: map[string]cachedVideo{},
+		covered: map[string]bool{}}
 	s.sentinel = s.digest(filepath.Join(w.root, "elsewhere"))
 	if err := s.start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { s.st.Close() }()
-	if err := w.seedStore(s.ctx, s.st); err != nil {
-		t.Fatal(err)
+	for _, sh := range w.shows {
+		if sh.added {
+			if err := w.seedShow(s.ctx, s.st, sh, sh.monitor); err != nil {
+				t.Fatal(err)
+			}
+			sh.since = w.now
+		}
 	}
 	if s.token, err = s.st.CreateToken(s.ctx, "sim"); err != nil {
 		t.Fatal(err)
 	}
-	s.note("setup", fmt.Sprintf("paths mapped %v; faults: %s", w.mapped, w.faults))
+	s.note("setup", fmt.Sprintf("paths mapped %v, other disk %q; faults: %s", w.mapped, w.disks, w.faults))
 	for _, sh := range w.shows {
-		s.note("setup", fmt.Sprintf("show %d %q, monitor %s, %d episodes from %s", sh.id, sh.name, sh.monitor, len(sh.episodes), sh.episodes[0].aired.Format(time.DateOnly)))
+		s.note("setup", fmt.Sprintf("show %d %q, added %v, monitor %s, %d episodes from %s", sh.id, sh.name, sh.added, sh.monitor, len(sh.episodes), sh.episodes[0].aired.Format(time.DateOnly)))
 	}
 
-	events := s.events()
+	var events, all []event
+	for _, e := range s.events() {
+		all = append(all, e)
+		if e.on {
+			events = append(events, e)
+		}
+	}
 	total := 0
 	for _, e := range events {
 		total += e.weight
@@ -147,7 +228,26 @@ func run(t *testing.T, seed uint64, steps int) outcome {
 		s.calm()
 	}
 	s.dump()
-	return outcome{trace: s.trace, failure: s.failure}
+	o := outcome{trace: s.trace, failure: s.failure}
+	for _, e := range all {
+		o.all = append(o.all, e.actor+" "+e.name)
+	}
+	o.all = append(o.all, setups...)
+	o.covered = append(sortedKeys(s.covered), setup(w)...)
+	return o
+}
+
+// setups are the ways the share can be set up: whether SABnzbd and
+// Jellyfin see it under other paths, and which folder sits on another
+// disk.
+var setups = []string{"paths mapped", "paths as they are", "other disk none", "other disk usenet", "other disk media-old"}
+
+func setup(w *world) []string {
+	paths := "paths as they are"
+	if w.mapped {
+		paths = "paths mapped"
+	}
+	return []string{paths, "other disk " + cmp.Or(w.disks, "none")}
 }
 
 // start opens the database and sets Garner up on the world, as a restart
@@ -162,6 +262,7 @@ func (s *sim) start() error {
 		Sleep:     func(_ context.Context, d time.Duration) error { s.w.now = s.w.now.Add(d); return nil },
 		Transport: transport{s.w},
 		Prober:    prober{},
+		Rename:    s.w.rename,
 	}
 	srv, err := server.New(s.cfg, st, "sim", deps, slog.New(slog.DiscardHandler))
 	if err != nil {
@@ -175,68 +276,62 @@ func (s *sim) start() error {
 type event struct {
 	actor, name string
 	weight      int
-	run         func() string // what happened, for the trace
+	// run does it and says what happened, for the trace: nothing when
+	// nothing changed.
+	run func() string
+	on  bool // the event can happen: its fault is on, if it is one
 }
 
-// events are what can happen next, with their weights. Faults the seed
-// did not turn on never happen.
+// events are all that can happen next, with their weights. Faults the
+// seed did not turn on never happen.
 func (s *sim) events() []event {
 	w, f := s.w, s.w.faults
-	events := []event{
-		{"garner", "poll downloads", 16, func() string { s.srv.PollDownloads(s.ctx); return "" }},
-		{"garner", "import step", 16, func() string { s.srv.WorkImports(s.ctx); return "" }},
-		{"garner", "monitor step", 6, func() string { s.srv.StepMonitor(s.ctx); return "" }},
-		{"user", "search episode", 4, s.searchEpisode},
-		{"user", "download candidate", 6, s.downloadCandidate},
-		{"user", "download best", 2, s.downloadBest},
-		{"user", "search show", 2, s.searchShow},
-		{"user", "cancel", 2, s.cancel},
-		{"user", "retry import", 4, s.retry},
-		{"user", "delete show", 1, s.deleteShow},
-		{"user", "add show again", 2, s.addShow},
-		{"world", "sabnzbd progress", 24, s.sabProgress},
-		{"world", "jellyfin scans", 10, w.scan},
-		{"world", "clock", 16, s.clock},
-	}
 	// An outage lasts until the clock moves on.
-	outage := func(name string, down *bool) event {
-		return event{"world", name, 2, func() string { *down = true; return "" }}
+	outage := func(name string, down *bool, on bool) event {
+		return event{"world", name, 2, func() string { *down = true; return "until the clock moves on" }, on}
 	}
-	if f.prowlarrDown {
-		events = append(events, outage("prowlarr down", &w.prowlarrDown))
-	}
-	if f.indexerErrors {
-		events = append(events, event{"world", "indexer error", 1, func() string {
+	return []event{
+		{"garner", "poll downloads", 16, func() string { s.srv.PollDownloads(s.ctx); return "" }, true},
+		{"garner", "import step", 16, func() string { s.srv.WorkImports(s.ctx); return "" }, true},
+		{"garner", "monitor step", 6, func() string { s.srv.StepMonitor(s.ctx); return "" }, true},
+		{"user", "search episode", 4, s.searchEpisode, true},
+		{"user", "download candidate", 6, s.downloadCandidate, true},
+		{"user", "download best", 2, s.downloadBest, true},
+		{"user", "download pack", 3, s.downloadPack, true},
+		{"user", "search show", 2, s.searchShow, true},
+		{"user", "cancel", 2, s.cancel, true},
+		{"user", "retry import", 4, s.retry, true},
+		{"user", "delete show", 1, s.deleteShow, true},
+		{"user", "add show", 3, s.addShow, true},
+		{"user", "take over", 1, s.takeOver, true},
+		{"user", "rename", 2, s.rename, true},
+		{"user", "change profile", 1, s.changeProfile, true},
+		{"world", "sabnzbd progress", 24, s.sabProgress, true},
+		{"world", "jellyfin scans", 10, w.scan, true},
+		{"world", "clock", 16, s.clock, true},
+		outage("prowlarr down", &w.prowlarrDown, f.prowlarrDown),
+		{"world", "indexer error", 1, func() string {
 			n := 1 + w.rnd.IntN(2)
-			w.indexerError[n] = !w.indexerError[n]
-			return fmt.Sprintf("indexer %d: %v", n, w.indexerError[n])
-		}})
-	}
-	if f.sabDown {
-		events = append(events, outage("sabnzbd down", &w.sab.down))
-	}
-	if f.sabLoseAnswer {
-		events = append(events, event{"world", "sabnzbd loses answer", 1, func() string { w.sab.loseNext = true; return "next addurl" }})
-	}
-	if f.sabHide {
-		events = append(events, event{"world", "sabnzbd hides job", 1, func() string { w.sab.hideNext = true; return "next job" }})
-	}
-	if f.sabVanish {
-		events = append(events, event{"world", "sabnzbd job vanishes", 1, func() string {
+			w.indexerError[n] = true
+			return fmt.Sprint("indexer ", n)
+		}, f.indexerErrors},
+		outage("sabnzbd down", &w.sab.down, f.sabDown),
+		{"world", "sabnzbd loses answer", 1, func() string { w.sab.loseNext = true; return "next addurl" }, f.sabLoseAnswer},
+		{"world", "sabnzbd hides job", 1, func() string { w.sab.hideNext = true; return "next job" }, f.sabHide},
+		{"world", "sabnzbd job vanishes", 1, func() string {
 			if j := s.anyJob((*job).active); j != nil {
 				j.gone, j.vanished = true, true
 				return j.id
 			}
 			return ""
-		}})
+		}, f.sabVanish},
+		outage("jellyfin down", &w.jf.down, f.jfDown),
+		{"world", "unplug", 2, w.unplug, f.unplug},
+		{"world", "refuse writes", 2, w.lock, f.readOnly},
+		{"world", "catalogue changes", 2, s.catalogue, f.catalogue},
+		{"user", "puts a file in the way", 2, s.stray, f.strays},
+		{"process", "restart", 2, s.restart, f.restarts},
 	}
-	if f.jfDown {
-		events = append(events, outage("jellyfin down", &w.jf.down))
-	}
-	if f.restarts {
-		events = append(events, event{"process", "restart", 2, s.restart})
-	}
-	return events
 }
 
 // do runs one step and checks the rules about it.
@@ -244,7 +339,7 @@ func (s *sim) do(actor, name string, f func() string) {
 	if s.failure != "" {
 		return
 	}
-	s.deleting, s.retrying = 0, 0
+	s.deleting, s.retrying, s.removed = 0, 0, 0
 	if s.last == nil {
 		sn, err := s.snapshot()
 		if err != nil {
@@ -255,7 +350,14 @@ func (s *sim) do(actor, name string, f func() string) {
 	}
 	before := *s.last
 	s.step++
-	s.note(actor+" "+name, f())
+	s.refused = false
+	detail := f()
+	s.note(actor+" "+name, detail)
+	// Garner's own steps always run; the others changed something when
+	// they say what, unless Garner refused the request.
+	if actor == "garner" || detail != "" && !s.refused {
+		s.covered[actor+" "+name] = true
+	}
 	if s.failure != "" {
 		return
 	}
@@ -265,7 +367,7 @@ func (s *sim) do(actor, name string, f func() string) {
 		return
 	}
 	s.last = &after
-	for _, rule := range []func(snapshot, snapshot) (string, string){s.filesStay, s.recordsMatch, s.outsideStays, s.statesMove} {
+	for _, rule := range []func(snapshot, snapshot) (string, string){s.foreignStays, s.filesStay, s.recordsMatch, s.outsideStays, s.statesMove} {
 		if id, msg := rule(before, after); msg != "" {
 			s.fail(id, msg)
 			return
@@ -296,10 +398,12 @@ func (s *sim) restart() string {
 	if err := s.start(); err != nil {
 		s.fail("setup", "restart: "+err.Error())
 	}
-	return ""
+	return "Garner started again"
 }
 
-// clock moves time on: mostly minutes, sometimes hours, rarely days.
+// clock moves time on: mostly minutes, sometimes hours, rarely days. The
+// world heals meanwhile: outages end, unplugged folders come back and
+// folders take writes again.
 func (s *sim) clock() string {
 	var d time.Duration
 	switch n := s.w.rnd.IntN(20); {
@@ -310,10 +414,19 @@ func (s *sim) clock() string {
 	default:
 		d = time.Duration(1+s.w.rnd.IntN(3)) * 24 * time.Hour
 	}
-	s.w.now = s.w.now.Add(d)
-	s.w.prowlarrDown, s.w.sab.down, s.w.jf.down = false, false, false
-	clear(s.w.indexerError)
-	return fmt.Sprintf("+%s → %s", d, s.w.now.Format(time.DateTime))
+	return s.advance(d)
+}
+
+func (s *sim) advance(d time.Duration) string {
+	w := s.w
+	w.now = w.now.Add(d)
+	w.prowlarrDown, w.sab.down, w.jf.down = false, false, false
+	clear(w.indexerError)
+	w.unlock()
+	if err := w.plug(); err != nil {
+		s.fail("S5", err.Error())
+	}
+	return fmt.Sprintf("+%s → %s", d, w.now.Format(time.DateTime))
 }
 
 func (s *sim) anyJob(want func(*job) bool) *job {
@@ -341,12 +454,83 @@ func (s *sim) sabProgress() string {
 	return detail
 }
 
+// catalogue changes a show as TheTVDB does: a new episode is announced,
+// one is dropped, or two swap their numbers.
+func (s *sim) catalogue() string {
+	sh := s.someShow()
+	if sh == nil {
+		return ""
+	}
+	w := s.w
+	var what string
+	switch op := w.rnd.IntN(3); {
+	case op == 0 || len(sh.episodes) < 3:
+		// The next number in the last season: numbers never repeat.
+		season, number := 0, 0
+		for _, e := range sh.episodes {
+			if e.season > season || e.season == season && e.number > number {
+				season, number = e.season, e.number
+			}
+		}
+		e := w.newEpisode(sh, season, number+1, w.now.AddDate(0, 0, 1+w.rnd.IntN(10)))
+		what = fmt.Sprintf("episode %d announced", e.id)
+	case op == 1:
+		i := 1 + w.rnd.IntN(len(sh.episodes)-1)
+		s.removed = sh.episodes[i].id
+		sh.episodes = slices.Delete(sh.episodes, i, i+1)
+		what = fmt.Sprintf("episode %d dropped", s.removed)
+	default:
+		a := sh.episodes[w.rnd.IntN(len(sh.episodes))]
+		for _, b := range sh.episodes {
+			if b != a && b.season == a.season {
+				a.number, b.number = b.number, a.number
+				what = fmt.Sprintf("episodes %d and %d swap numbers", a.id, b.id)
+				break
+			}
+		}
+	}
+	if err := s.st.UpdateSeries(s.ctx, w.seriesData(sh), true, w.now); err != nil {
+		s.fail("setup", err.Error())
+	}
+	if what == "" {
+		return "" // no other episode in the season to swap with: no change
+	}
+	return fmt.Sprintf("show %d: %s", sh.id, what)
+}
+
+// stray puts a file of the user's own where a failed import will move one
+// when it is retried: Garner must not overwrite it.
+func (s *sim) stray() string {
+	d := s.someDownload(func(d store.Download) bool {
+		return d.Import.State == store.ImportFailed && len(d.Import.Files) > 0 && d.Import.Files[0].Target != ""
+	})
+	if d == nil {
+		return ""
+	}
+	target := s.w.present(d.Import.Files[0].Target)
+	if _, err := os.Lstat(target); err == nil {
+		return ""
+	}
+	rel, err := filepath.Rel(s.w.root, d.Import.Files[0].Target)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return ""
+	}
+	if s.w.unplugged != "" && strings.HasPrefix(rel, s.w.unplugged+"/") {
+		return "" // the user cannot reach it while it is unplugged
+	}
+	if !s.w.addForeign(rel, fmt.Sprintf(`{"id":"stray-%d"}`, d.ID)) {
+		return ""
+	}
+	return fmt.Sprintf("download %d: %s", d.ID, rel)
+}
+
 // call sends a request to Garner's API as the terminal interface does.
-func (s *sim) call(method, path string) (int, []byte) {
-	req := httptest.NewRequest(method, path, nil)
+func (s *sim) call(method, path, body string) (int, []byte) {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+s.token)
 	rec := httptest.NewRecorder()
 	s.api.ServeHTTP(rec, req)
+	s.refused = rec.Code >= http.StatusBadRequest
 	return rec.Code, rec.Body.Bytes()
 }
 
@@ -359,12 +543,12 @@ func answer(code int, body []byte) string {
 	return fmt.Sprintf("%d %s", code, e.Error)
 }
 
-// someEpisode is an aired episode of a show Garner still has.
+// someEpisode is an aired episode of a show Garner has.
 func (s *sim) someEpisode() *episode {
 	var aired []*episode
 	for _, sh := range s.w.shows {
 		for _, e := range sh.episodes {
-			if !sh.deleted && !e.aired.After(s.w.now) {
+			if sh.added && !e.aired.After(s.w.now) {
 				aired = append(aired, e)
 			}
 		}
@@ -383,21 +567,34 @@ type searchResult struct {
 	} `json:"candidates"`
 }
 
-// search searches an episode as the terminal interface does.
-func (s *sim) search(e *episode) (searchResult, string) {
-	var sr searchResult
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/episodes/%d/search", e.id))
-	if code != http.StatusOK {
-		return sr, fmt.Sprintf("episode %d: %s", e.id, answer(code, body))
-	}
-	json.Unmarshal(body, &sr)
+func (sr searchResult) String() string {
 	accepted := 0
 	for _, c := range sr.Candidates {
 		if c.Verdict == "accept" {
 			accepted++
 		}
 	}
-	return sr, fmt.Sprintf("episode %d: %s, %d candidates, %d accepted", e.id, sr.Outcome, len(sr.Candidates), accepted)
+	return fmt.Sprintf("%s, %d candidates, %d accepted", sr.Outcome, len(sr.Candidates), accepted)
+}
+
+// pickCandidate picks a result the way a user does: mostly the first.
+func (s *sim) pickCandidate(sr searchResult) (int64, string) {
+	c := sr.Candidates[0]
+	if s.user.IntN(3) == 0 {
+		c = sr.Candidates[s.user.IntN(len(sr.Candidates))]
+	}
+	return c.ID, c.Verdict
+}
+
+// search searches an episode as the terminal interface does.
+func (s *sim) search(e *episode) (searchResult, string) {
+	var sr searchResult
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/episodes/%d/search", e.id), "")
+	if code != http.StatusOK {
+		return sr, fmt.Sprintf("episode %d: %s", e.id, answer(code, body))
+	}
+	json.Unmarshal(body, &sr)
+	return sr, fmt.Sprintf("episode %d: %s", e.id, sr)
 }
 
 func (s *sim) searchEpisode() string {
@@ -418,12 +615,9 @@ func (s *sim) downloadCandidate() string {
 	if len(sr.Candidates) == 0 {
 		return detail
 	}
-	c := sr.Candidates[0]
-	if s.user.IntN(3) == 0 {
-		c = sr.Candidates[s.user.IntN(len(sr.Candidates))]
-	}
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/candidates/%d/download", c.ID))
-	return fmt.Sprintf("%s; candidate %d (%s): %s", detail, c.ID, c.Verdict, answer(code, body))
+	id, verdict := s.pickCandidate(sr)
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/candidates/%d/download", id), "")
+	return fmt.Sprintf("%s; candidate %d (%s): %s", detail, id, verdict, answer(code, body))
 }
 
 func (s *sim) downloadBest() string {
@@ -431,14 +625,31 @@ func (s *sim) downloadBest() string {
 	if e == nil {
 		return ""
 	}
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/episodes/%d/download", e.id))
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/episodes/%d/download", e.id), "")
 	return fmt.Sprintf("episode %d: %s", e.id, answer(code, body))
 }
 
+// downloadPack searches a season for packs and downloads one.
+func (s *sim) downloadPack() string {
+	e := s.someEpisode()
+	if e == nil {
+		return ""
+	}
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/series/%d/seasons/%d/search", e.show.id, e.season), "")
+	var sr searchResult
+	if code != http.StatusOK || json.Unmarshal(body, &sr) != nil || len(sr.Candidates) == 0 {
+		return fmt.Sprintf("show %d season %d: %s %s", e.show.id, e.season, answer(code, body), sr)
+	}
+	id, verdict := s.pickCandidate(sr)
+	code, body = s.call(http.MethodPost, fmt.Sprintf("/api/v1/season-candidates/%d/download", id), "")
+	return fmt.Sprintf("show %d season %d: %s; pack %d (%s): %s", e.show.id, e.season, sr, id, verdict, answer(code, body))
+}
+
+// someShow is a show Garner has.
 func (s *sim) someShow() *show {
 	var shows []*show
 	for _, sh := range s.w.shows {
-		if !sh.deleted {
+		if sh.added {
 			shows = append(shows, sh)
 		}
 	}
@@ -453,7 +664,7 @@ func (s *sim) searchShow() string {
 	if sh == nil {
 		return ""
 	}
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/series/%d/search", sh.id))
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/series/%d/search", sh.id), "")
 	return fmt.Sprintf("show %d: %s", sh.id, answer(code, body))
 }
 
@@ -475,7 +686,7 @@ func (s *sim) cancel() string {
 	if d == nil {
 		return ""
 	}
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/cancel", d.ID))
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/cancel", d.ID), "")
 	return fmt.Sprintf("download %d: %s", d.ID, answer(code, body))
 }
 
@@ -486,8 +697,12 @@ func (s *sim) retry() string {
 	if d == nil {
 		return ""
 	}
+	return s.retryDownload(*d)
+}
+
+func (s *sim) retryDownload(d store.Download) string {
 	s.retrying = d.ID
-	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/import", d.ID))
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/import", d.ID), "")
 	return fmt.Sprintf("download %d (%s): %s", d.ID, d.Import.State, answer(code, body))
 }
 
@@ -500,47 +715,126 @@ func (s *sim) deleteShow() string {
 	if files == "delete" {
 		s.deleting = sh.id
 	}
-	code, body := s.call(http.MethodDelete, fmt.Sprintf("/api/v1/series/%d?files=%s", sh.id, files))
+	code, body := s.call(http.MethodDelete, fmt.Sprintf("/api/v1/series/%d?files=%s", sh.id, files), "")
 	if code == http.StatusOK {
-		sh.deleted = true
+		sh.added = false
 	} else {
 		s.deleting = 0 // refused: nothing of the show may go
 	}
 	return fmt.Sprintf("show %d, files=%s: %s", sh.id, files, answer(code, body))
 }
 
-// addShow adds a deleted show back. The catalogue is not simulated yet, so
-// the show goes into the database the way adding it would put it there,
-// without a take-over.
+// addShow adds a show the way the terminal interface does: Garner records
+// it, takes over its files in the library and then turns its monitor on.
+// TheTVDB is not simulated, so the show goes into the database from the
+// world instead of from Garner's catalogue.
 func (s *sim) addShow() string {
-	var deleted []*show
+	var absent []*show
 	for _, sh := range s.w.shows {
-		if sh.deleted {
-			deleted = append(deleted, sh)
+		if !sh.added {
+			absent = append(absent, sh)
 		}
 	}
-	if len(deleted) == 0 {
+	if len(absent) == 0 {
 		return ""
 	}
-	sh := deleted[s.user.IntN(len(deleted))]
-	if err := s.w.seedShow(s.ctx, s.st, sh); err != nil {
+	sh := absent[s.user.IntN(len(absent))]
+	sh.profile = "tv" // a show added again starts over, whatever it had
+	if err := s.w.seedShow(s.ctx, s.st, sh, store.MonitorOff); err != nil {
 		s.fail("setup", err.Error())
 		return ""
 	}
-	sh.deleted = false
-	return fmt.Sprintf("show %d, monitor %s", sh.id, sh.monitor)
+	sh.added = true
+	detail := fmt.Sprintf("show %d: take-over %s", sh.id, s.takeOverShow(sh))
+	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id), fmt.Sprintf(`{"monitor":%q}`, sh.monitor))
+	if code == http.StatusOK {
+		sh.since = s.w.now
+	}
+	return fmt.Sprintf("%s; monitor %s: %s", detail, sh.monitor, answer(code, body))
+}
+
+func (s *sim) takeOverShow(sh *show) string {
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/series/%d/files/take-over", sh.id), "")
+	if code != http.StatusOK {
+		return answer(code, body)
+	}
+	var t struct {
+		Files, Episodes, Renamable int
+		Skipped                    []any
+	}
+	json.Unmarshal(body, &t)
+	// The user handed the files Garner took over to it: they are Garner's
+	// now, no longer foreign.
+	for _, p := range sortedKeys(s.w.foreign) {
+		if s.recorded(p) {
+			delete(s.w.foreign, p)
+		}
+	}
+	return fmt.Sprintf("%d files for %d episodes, %d skipped, %d to rename", t.Files, t.Episodes, len(t.Skipped), t.Renamable)
+}
+
+// recorded reports whether Garner records the file at p as an episode's.
+func (s *sim) recorded(p string) bool {
+	for _, sh := range s.w.shows {
+		for _, e := range sh.episodes {
+			if f, found, _ := s.st.EpisodeFile(s.ctx, e.id); found && f.Path == p {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *sim) takeOver() string {
+	sh := s.someShow()
+	if sh == nil {
+		return ""
+	}
+	return fmt.Sprintf("show %d: %s", sh.id, s.takeOverShow(sh))
+}
+
+func (s *sim) rename() string {
+	sh := s.someShow()
+	if sh == nil {
+		return ""
+	}
+	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/series/%d/files/rename", sh.id), "")
+	if code != http.StatusOK {
+		return fmt.Sprintf("show %d: %s", sh.id, answer(code, body))
+	}
+	var r struct {
+		Files int
+		Notes []string
+	}
+	json.Unmarshal(body, &r)
+	return fmt.Sprintf("show %d: %d files, notes %q", sh.id, r.Files, r.Notes)
+}
+
+func (s *sim) changeProfile() string {
+	sh := s.someShow()
+	if sh == nil {
+		return ""
+	}
+	profile := map[string]string{"tv": "anime", "anime": "tv"}[sh.profile]
+	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id), fmt.Sprintf(`{"profile":%q}`, profile))
+	if code == http.StatusOK {
+		sh.profile = profile
+	}
+	return fmt.Sprintf("show %d to %s: %s", sh.id, profile, answer(code, body))
 }
 
 // snapshot is what the rules compare before and after a step.
 type snapshot struct {
 	downloads map[int64]store.Download
 	records   map[int64]string  // the recorded file, by episode
-	library   map[string]string // the file of each video in the library, by video
+	library   map[string]string // where each video in the libraries is, by video
 	dupes     []string
-	sentinel  string
-	top       []string        // what the share holds at its top
 	jobs      map[string]bool // SABnzbd's job folders that exist, by job
 }
+
+// libraries are the folders whose videos the rules follow: Garner's and
+// Jellyfin's libraries, wherever they are plugged in.
+var libraries = []string{"library", "media-old", "unplugged"}
 
 func (s *sim) snapshot() (snapshot, error) {
 	sn := snapshot{downloads: map[int64]store.Download{}, records: map[int64]string{}, library: map[string]string{}, jobs: map[string]bool{}}
@@ -567,32 +861,33 @@ func (s *sim) snapshot() (snapshot, error) {
 			}
 		}
 	}
-	err = filepath.WalkDir(filepath.Join(s.w.root, "library"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if v, ok := readVideo(p); ok {
-			if other, dup := sn.library[v.ID]; dup {
-				sn.dupes = append(sn.dupes, fmt.Sprintf("%s at %s and %s", v.ID, other, p))
+	for _, top := range libraries {
+		err = filepath.WalkDir(filepath.Join(s.w.root, top), func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
 			}
-			sn.library[v.ID] = p
-		}
-		return nil
-	})
-	if err != nil {
-		return sn, err
-	}
-	sn.sentinel = s.digest(filepath.Join(s.w.root, "elsewhere"))
-	entries, err := os.ReadDir(s.w.root)
-	for _, e := range entries {
-		sn.top = append(sn.top, e.Name())
-	}
-	for _, root := range []string{"library/tv", "library/anime"} {
-		if st, err := os.Stat(filepath.Join(s.w.root, root)); err != nil || !st.IsDir() {
-			sn.top = append(sn.top, "missing "+root)
+			if v, ok := s.video(p, d); ok {
+				p = s.w.plugged(p)
+				if other, dup := sn.library[v.ID]; dup {
+					sn.dupes = append(sn.dupes, fmt.Sprintf("%s at %s and %s", v.ID, other, p))
+				}
+				sn.library[v.ID] = p
+			}
+			return nil
+		})
+		if err != nil {
+			return sn, err
 		}
 	}
-	return sn, err
+	return sn, nil
+}
+
+// plugged is where a file under the unplugged folder belongs.
+func (w *world) plugged(p string) string {
+	if rel, ok := strings.CutPrefix(w.rel(p), "unplugged/"); ok {
+		return filepath.Join(w.root, rel)
+	}
+	return p
 }
 
 // digest sums a folder's names and contents.
@@ -609,7 +904,24 @@ func (s *sim) digest(dir string) string {
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
-// filesStay is S2 and S3: a video leaves the library only when a newer
+// foreignStays is S1: Garner never moves, renames or deletes a file no one
+// gave it.
+func (s *sim) foreignStays(_, _ snapshot) (string, string) {
+	for _, p := range sortedKeys(s.w.foreign) {
+		f := s.w.foreign[p]
+		info, err := os.Stat(s.w.present(p))
+		if err == nil && info.Size() == f.size && info.ModTime().Equal(f.mod) {
+			continue
+		}
+		data, err := os.ReadFile(s.w.present(p))
+		if err != nil || string(data) != f.content {
+			return "S1", fmt.Sprintf("%s changed or went: %v", p, err)
+		}
+	}
+	return "", ""
+}
+
+// filesStay is S2 and S3: a video leaves the libraries only when a newer
 // file of its episodes replaced it, or when the user deleted its show with
 // its files; Garner copies nothing and overwrites nothing else.
 func (s *sim) filesStay(before, after snapshot) (string, string) {
@@ -630,12 +942,12 @@ func (s *sim) filesStay(before, after snapshot) (string, string) {
 		if len(episodes) == 0 {
 			return "S2", fmt.Sprintf("video %s at %s left the library, and no episode recorded it", id, path)
 		}
-		if s.deleting != 0 && s.w.episode(episodes[0]).show.id == s.deleting {
+		if s.deleting != 0 && s.w.episode(episodes[0]) != nil && s.w.episode(episodes[0]).show.id == s.deleting {
 			continue
 		}
 		for _, e := range episodes {
 			p, ok := after.records[e]
-			if v, read := readVideo(p); !ok || !read || v.ID == id {
+			if v, read := readVideo(s.w.present(p)); !ok || !read || v.ID == id {
 				return "S2", fmt.Sprintf("video %s of episode %d left the library from %s, and no other file replaced it", id, e, path)
 			}
 		}
@@ -646,26 +958,41 @@ func (s *sim) filesStay(before, after snapshot) (string, string) {
 // recordsMatch is S4: every recorded file exists.
 func (s *sim) recordsMatch(_, after snapshot) (string, string) {
 	for _, e := range sortedKeys64(after.records) {
-		if _, err := os.Stat(after.records[e]); err != nil {
+		if _, err := os.Stat(s.w.present(after.records[e])); err != nil {
 			return "S4", fmt.Sprintf("episode %d records %s, which is gone", e, after.records[e])
 		}
 	}
 	return "", ""
 }
 
-// outsideStays is S5: nothing outside the library, SABnzbd's folders and
-// Garner's data changes, and the library roots stay.
+// The share's top folders; nothing comes or goes there.
+var top = []string{"elsewhere", "garner", "library", "media-old", "unplugged", "usenet"}
+
+// outsideStays is S5: nothing outside the libraries, SABnzbd's folders and
+// Garner's data changes, the library roots stay, and an unplugged root
+// stays away until it is plugged in again.
 func (s *sim) outsideStays(before, after snapshot) (string, string) {
-	if after.sentinel != s.sentinel {
+	if s.digest(filepath.Join(s.w.root, "elsewhere")) != s.sentinel {
 		return "S5", "the folder elsewhere changed"
 	}
-	if !slices.Equal(before.top, after.top) {
-		return "S5", fmt.Sprintf("the share's top changed from %v to %v", before.top, after.top)
+	entries, _ := os.ReadDir(s.w.root)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, top) {
+		return "S5", fmt.Sprintf("the share's top holds %v", names)
+	}
+	for _, root := range roots {
+		_, err := os.Stat(filepath.Join(s.w.root, root))
+		if exists := err == nil; exists != (root != s.w.unplugged) {
+			return "S5", fmt.Sprintf("library root %s exists %v while unplugged is %q", root, exists, s.w.unplugged)
+		}
 	}
 	// A job folder goes when someone removes the job in SABnzbd by hand,
 	// when Garner is done with its download (imported or rejected), when
 	// Garner cancelled the download and SABnzbd deleted its files, or with
-	// its show.
+	// its show or episode.
 	done := []string{store.ImportScanning, store.ImportDone, store.ImportUnverified, store.ImportRejected}
 	for _, j := range s.w.sab.jobs {
 		if !before.jobs[j.id] || after.jobs[j.id] {
@@ -675,7 +1002,7 @@ func (s *sim) outsideStays(before, after snapshot) (string, string) {
 		d, ok := downloadOfJob(after, j.id)
 		switch {
 		case j.vanished:
-		case !ok && j.posting.episode.show.deleted:
+		case !ok && (!j.posting.show.added || s.removed != 0):
 		case ok && j.gone && d.State == store.Cancelled:
 		case ok && !j.gone && slices.Contains(done, d.Import.State):
 		default:
@@ -704,14 +1031,10 @@ var (
 		store.Completed:   {store.Failed}, // the file check rejected the release
 	}
 	importNext = map[string][]string{
-		"":                     {store.ImportPending},
-		store.ImportPending:    {store.ImportMoving, store.ImportRejected, store.ImportFailed},
-		store.ImportMoving:     {store.ImportScanning, store.ImportDone, store.ImportUnverified, store.ImportFailed},
-		store.ImportScanning:   {store.ImportDone, store.ImportUnverified},
-		store.ImportFailed:     nil,
-		store.ImportRejected:   nil,
-		store.ImportDone:       nil,
-		store.ImportUnverified: nil,
+		"":                   {store.ImportPending},
+		store.ImportPending:  {store.ImportMoving, store.ImportRejected, store.ImportFailed},
+		store.ImportMoving:   {store.ImportScanning, store.ImportDone, store.ImportUnverified, store.ImportFailed},
+		store.ImportScanning: {store.ImportDone, store.ImportUnverified},
 	}
 	// retryNext are the transitions only Retry makes.
 	retryNext = map[string][]string{
@@ -722,13 +1045,15 @@ var (
 )
 
 // statesMove is S6: downloads and imports change state only along the
-// allowed transitions, and only a deleted show's downloads disappear.
+// allowed transitions, and only the downloads of a deleted show or a
+// dropped episode disappear.
 func (s *sim) statesMove(before, after snapshot) (string, string) {
 	for _, id := range sortedKeys64(before.downloads) {
 		b := before.downloads[id]
 		a, ok := after.downloads[id]
 		if !ok {
-			if !s.showDeleted(b.EpisodeID) {
+			e := s.w.episode(b.EpisodeID)
+			if b.EpisodeID != s.removed && e != nil && e.show.added {
 				return "S6", fmt.Sprintf("download %d disappeared, and its show is still there", id)
 			}
 			continue
@@ -750,11 +1075,6 @@ func (s *sim) statesMove(before, after snapshot) (string, string) {
 		}
 	}
 	return "", ""
-}
-
-func (s *sim) showDeleted(episodeID int64) bool {
-	e := s.w.episode(episodeID)
-	return e != nil && e.show.deleted
 }
 
 func reachable(graph map[string][]string, from, to string) bool {
@@ -784,13 +1104,42 @@ func merge(a, b map[string][]string) map[string][]string {
 	return out
 }
 
-// calm makes the world healthy and lets the clock run until nothing is
-// left to do, then checks L1 and L2: every download and every import ended.
+// calm makes the world healthy: it heals the faults, puts a good release
+// of every wanted episode on the indexers and retries the imports that wait
+// for the user. Then the clock runs, by the minute while something runs
+// and by six hours while nothing does, until nothing is left to do. The
+// final rules follow: L1 and L2, every download and import ended; L3, the
+// monitor got every wanted episode; L4, Garner cleaned up after its
+// imports.
 func (s *sim) calm() {
 	w := s.w
-	w.prowlarrDown, w.sab.down, w.jf.down, w.sab.loseNext, w.sab.hideNext = false, false, false, false, false
-	clear(w.indexerError)
-	s.note("calm", "the world turns healthy")
+	w.sab.loseNext, w.sab.hideNext = false, false
+	s.do("world", "calm", func() string { return "the world turns healthy: " + s.advance(time.Minute) })
+	s.do("world", "good releases", func() string {
+		var posted []string
+		for _, e := range s.monitored() {
+			if _, found, _ := s.st.EpisodeFile(s.ctx, e.id); found {
+				continue
+			}
+			// An episode still to come gets its release an hour after it airs.
+			p := &posting{title: fmt.Sprintf("%s.S%02dE%02d.%s-CALM", e.show.dotted(), e.season, e.number, kinds[0].tags),
+				show: e.show, season: e.season, episodes: []*episode{e}, posted: w.now.Add(-time.Hour)}
+			if e.aired.After(w.now) {
+				p.posted = e.aired.Add(time.Hour)
+			}
+			w.addPosting(p, kinds[0], true)
+			p.audio, p.longer, p.corrupt, p.indexers = kinds[0].audio, 1, false, []int{1, 2}
+			posted = append(posted, fmt.Sprint(e.id))
+		}
+		return strings.Join(posted, " ")
+	})
+	all, _ := s.st.Downloads(s.ctx, 100000)
+	slices.SortFunc(all, func(a, b store.Download) int { return int(a.ID - b.ID) })
+	for _, d := range all {
+		if d.Import.State == store.ImportFailed || d.Import.State == store.ImportUnverified {
+			s.do("user", "retry import", func() string { return s.retryDownload(d) })
+		}
+	}
 	quiet := 0
 	for round := 0; round < 400 && quiet < 3 && s.failure == ""; round++ {
 		s.do("world", "sabnzbd finishes", func() string {
@@ -809,8 +1158,14 @@ func (s *sim) calm() {
 		s.do("garner", "poll downloads", func() string { s.srv.PollDownloads(s.ctx); return "" })
 		s.do("garner", "import step", func() string { s.srv.WorkImports(s.ctx); return "" })
 		s.do("world", "jellyfin scans", w.scan)
-		s.do("world", "clock", func() string { w.now = w.now.Add(time.Minute); return "+1m" })
-		if s.settled() {
+		s.do("garner", "monitor step", func() string { s.srv.StepMonitor(s.ctx); return "" })
+		busy := !s.settled()
+		step := 6 * time.Hour
+		if busy {
+			step = time.Minute
+		}
+		s.do("world", "clock", func() string { return s.advance(step) })
+		if !busy && len(s.missing()) == 0 {
 			quiet++
 		} else {
 			quiet = 0
@@ -834,7 +1189,93 @@ func (s *sim) calm() {
 		case d.Import.State == store.ImportFailed && d.Import.Recovery == "":
 			s.fail("L2", fmt.Sprintf("the import of download %d failed without a recovery step: %s", d.ID, d.Import.Detail))
 		}
-		if s.failure != "" {
+	}
+	if missing := s.missing(); len(missing) > 0 {
+		s.fail("L3", fmt.Sprintf("the monitor did not get these wanted episodes: %v", missing))
+	}
+	s.cleanedUp(all)
+}
+
+// wanted are the aired episodes the monitor gets.
+func (s *sim) wanted() []*episode {
+	return slices.DeleteFunc(s.monitored(), func(e *episode) bool { return e.aired.After(s.w.now) })
+}
+
+// monitored are the episodes the monitor gets once they aired: all of a
+// show's, or those airing since its monitor was set to new.
+func (s *sim) monitored() []*episode {
+	var out []*episode
+	for _, sh := range s.w.shows {
+		if !sh.added || sh.monitor == store.MonitorOff {
+			continue
+		}
+		for _, e := range sh.episodes {
+			if sh.monitor == store.MonitorAll || e.aired.Format(time.DateOnly) >= sh.since.Format(time.DateOnly) {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
+// missing are the wanted episodes without a file whose latest download
+// does not wait for the user. An import that failed or that Jellyfin did
+// not confirm waits for the user to act on its recovery step; a download
+// the user cancelled is the user's choice, which the monitor respects.
+func (s *sim) missing() []int64 {
+	all, _ := s.st.Downloads(s.ctx, 100000)
+	var out []int64
+	for _, e := range s.wanted() {
+		if _, found, _ := s.st.EpisodeFile(s.ctx, e.id); found {
+			continue
+		}
+		var latest *store.Download
+		for i := range all {
+			if all[i].EpisodeID == e.id && (latest == nil || all[i].ID > latest.ID) {
+				latest = &all[i]
+			}
+		}
+		if latest != nil && (latest.State == store.Cancelled || latest.Import.Recovery != "" &&
+			(latest.Import.State == store.ImportFailed || latest.Import.State == store.ImportUnverified)) {
+			continue
+		}
+		out = append(out, e.id)
+	}
+	return out
+}
+
+// cleanedUp is L4: SABnzbd's folder of every download Garner imported is
+// gone, unless it holds a file Garner could not assign to an episode, such
+// as an extra or a file of an episode the catalogue dropped, or a subtitle
+// it could not move.
+func (s *sim) cleanedUp(all []store.Download) {
+	for _, d := range all {
+		if d.Import.State != store.ImportDone && d.Import.State != store.ImportUnverified {
+			continue
+		}
+		var dir string
+		for _, j := range s.w.sab.jobs {
+			if j.id == d.JobID && !j.lost {
+				dir = j.dir
+			}
+		}
+		if _, err := os.Stat(dir); dir == "" || err != nil {
+			continue
+		}
+		var left []string
+		explained := false
+		filepath.WalkDir(dir, func(p string, e fs.DirEntry, err error) error {
+			if err != nil || e.IsDir() {
+				return err
+			}
+			if v, ok := readVideo(p); ok && (v.Extra || slices.ContainsFunc(v.Episodes, func(id int64) bool { return s.w.episode(id) == nil })) || guard.IsSubtitle(p) {
+				explained = true
+			}
+			left = append(left, filepath.Base(p))
+			return nil
+		})
+		if !explained {
+			s.fail("L4", fmt.Sprintf("SABnzbd's folder of download %d stayed after its import, holding only %v; notes %q", d.ID, left, d.Import.Notes))
 			return
 		}
 	}

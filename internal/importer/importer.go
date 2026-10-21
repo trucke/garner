@@ -72,6 +72,8 @@ type Options struct {
 	// Profiles are the profiles shows choose from; the zero value holds
 	// the built-in ones.
 	Profiles selection.Profiles
+	// Rename moves files for the guard; nil means os.Rename.
+	Rename func(oldpath, newpath string) error
 }
 
 // Service imports completed downloads.
@@ -101,7 +103,7 @@ func New(st *store.Store, probe Prober, jf *jellyfin.Client, opts Options, log *
 	}
 	g := guard.New(guard.Options{
 		Library: opts.Library, SABnzbdPaths: opts.SABnzbdPaths,
-		Recorded: st.FileInUse, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths),
+		Recorded: st.FileInUse, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths), Rename: opts.Rename,
 	})
 	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, guard: g, log: log, Now: time.Now, wake: make(chan struct{}, 1)}
 }

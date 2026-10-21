@@ -44,13 +44,21 @@ type Options struct {
 	// LibraryFolders lists Jellyfin's library folders as Garner reaches
 	// them; nil without Jellyfin.
 	LibraryFolders func(ctx context.Context) ([]string, error)
+	// Rename moves a file once the guard allowed it: os.Rename, or the
+	// simulation's, which knows which folders lie on different disks.
+	Rename func(oldpath, newpath string) error
 }
 
 // Guard checks every change to files and folders against what Garner owns.
 type Guard struct{ opts Options }
 
 // New returns a guard for what opts says Garner owns.
-func New(opts Options) *Guard { return &Guard{opts: opts} }
+func New(opts Options) *Guard {
+	if opts.Rename == nil {
+		opts.Rename = os.Rename
+	}
+	return &Guard{opts: opts}
+}
 
 // Refusal is why the guard would not change a file or folder.
 type Refusal struct{ Reason string }
@@ -216,7 +224,7 @@ func (g *Guard) Move(ctx context.Context, f File, target string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return os.Rename(f.path, target)
+	return g.opts.Rename(f.path, target)
 }
 
 // Remove deletes the file f, never a folder.
