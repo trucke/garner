@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Checks the working copy in place: formatting, vet, the generated database
-# code and known vulnerabilities; the tests on macOS, and again on Linux in
-# the Go image the container is built with; and builds for Linux x86. With jj, every file that is not ignored belongs to the
-# working-copy commit, so the folder is what gets committed. Run it before
-# every push.
+# code and known vulnerabilities; the tests on macOS with the race
+# detector, and again on Linux in the Go image the container is built
+# with; and builds for Linux x86. With jj, every file that is not ignored
+# belongs to the working-copy commit, so the folder is what gets
+# committed. Run it before every push.
 #
 # Usage: mise run check
 set -euo pipefail
@@ -52,8 +53,9 @@ step "Known vulnerabilities, on macOS and in the server as the container image b
 govulncheck ./... || fail "known vulnerabilities reach Garner's code on macOS; see above"
 GOOS=linux GOARCH=amd64 govulncheck -tags "$tags" ./... || fail "known vulnerabilities reach Garner's code on Linux; see above"
 
-step "Tests on macOS"
-go test ./... 2>&1 | quiet || fail "tests failed on macOS"
+# The race detector needs cgo, which the Linux run below builds without.
+step "Tests on macOS, with the race detector"
+go test -race ./... 2>&1 | quiet || fail "tests failed on macOS"
 
 step "Tests on Linux ($(podman info --format '{{.Host.Arch}}'), tags $tags, as the container image builds)"
 # The container is thrown away; it needs no SELinux separation, and

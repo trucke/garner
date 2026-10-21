@@ -45,7 +45,7 @@ The stack listens on `127.0.0.1` only. Downloads, the library, the settings and 
 `mise run check` checks the working copy:
 
 - formatting, `go vet`, the generated database code and known vulnerabilities
-- the tests on macOS, and again on Linux in the Go image the container is built with
+- the tests on macOS with the race detector, and again on Linux in the Go image the container is built with
 - a build for Linux on x86
 
 Other tasks:
@@ -53,6 +53,19 @@ Other tasks:
 - `mise run build` builds both programs without starting the server.
 - `mise run generate` regenerates the database code after changes to `internal/store/*.sql` or the migrations.
 - `mise run image` builds the container image `localhost/garner:dev` with Podman.
+
+### Writing tests
+
+A test guards behaviour someone relies on: the user's files, the database, who may use the API and what Garner decides about a release. There is no coverage target.
+
+- Use the real parts: a real store in `t.TempDir()`, real files in temporary folders and `httptest` servers that answer as SABnzbd, Prowlarr, Jellyfin or TheTVDB do. Garner uses no mocking or assertion libraries, only `testing`, with failure messages that say what went wrong.
+- Use made-up show and release names, as the ground rules say.
+- When you fix a bug, write its test first and watch it fail.
+- In `internal/importer`, only the guard (`internal/importer/guard`) may move, write or remove files. `TestOnlyTheGuardChangesFiles` fails when other code there calls `os.Rename`, `os.Remove` and the like.
+- `internal/release`, `internal/match` and `internal/selection` check their own results. In tests, a broken check panics, so every test that reaches them checks them too. Their fuzz tests look for names that break them, for example `go test ./internal/match -fuzz FuzzMatch -fuzztime 1m`.
+- The race detector needs cgo, so `mise run check` uses it for the macOS tests only. GitHub runs the tests with it on Linux.
+
+The maintainer also runs tests against real release names, which stay private. When `GARNER_MATCH_CASES`, `GARNER_SELECT_CASES` and `GARNER_RELEASE_CASES` point at such case files, `go test ./...` includes them; without them, those tests are skipped. The pull request template reminds maintainers to run them before merging a change to `internal/release`, `internal/match` or `internal/selection`.
 
 ### The simulation
 
@@ -77,8 +90,6 @@ With `-v`, the replay prints every step. To explore, run `-seeds 1000` for a tho
 A failure is a bug in Garner or in the simulation. When you fix a bug it found, also add a focused test for it: after later changes, the same seed may take another path.
 
 The fixed seeds were chosen so that, together, every event changes something and they catch bugs built into Garner on purpose. A change to the simulated world sends every seed down another path; the test then fails when an event no longer changes anything in any fixed seed. The comment on `fixedSeeds` says how to choose them again and lists the bugs to check by hand.
-
-The maintainer also runs tests against real release names, which stay private. When `GARNER_MATCH_CASES`, `GARNER_SELECT_CASES` and `GARNER_RELEASE_CASES` point at such case files, `go test ./...` includes them; without them, those tests are skipped.
 
 ## How the code is organised
 

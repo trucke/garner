@@ -1,8 +1,8 @@
 # Checks every pull request and every push to main as `mise run check` does
 # locally: formatting, vet, the generated database code, known
-# vulnerabilities, the tests on Linux as the container image builds Garner,
-# and builds for every release platform. The private real-case tests are
-# not part of it.
+# vulnerabilities, the tests on Linux as the container image builds Garner
+# and again with the race detector, and builds for every release platform.
+# The private real-case tests are not part of it.
 name: Check
 
 on:
@@ -73,6 +73,13 @@ jobs:
             -e CGO_ENABLED=0 -e GOFLAGS="-tags=$TAGS" -e GOTOOLCHAIN=local \
             -w /src "$IMAGE" \
             sh -c 'set -e; apk add --no-cache -q libgcc; go vet ./...; go test ./...'
+
+      # The race detector needs cgo, which the container run builds without;
+      # the runner has a C compiler.
+      - name: Tests with the race detector
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
       - name: Builds for the release platforms
         env:
