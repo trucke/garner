@@ -13,6 +13,11 @@ import (
 // XEMBaseURL is TheXEM's mapping API.
 const XEMBaseURL = "https://thexem.info"
 
+// xemMaxResponse bounds each TheXEM response body. The biggest mappings,
+// for shows with many thousands of episodes, stay well under a MiB, so
+// 16 MiB leaves generous headroom.
+const xemMaxResponse = 16 << 20
+
 // XEM reads TheXEM's community-maintained scene numbering and titles.
 type XEM struct {
 	base string
@@ -68,6 +73,13 @@ func (c *XEM) get(ctx context.Context, path string, q url.Values, out any) error
 		return fmt.Errorf("TheXEM %s: %w", path, err)
 	}
 	defer resp.Body.Close()
+	body, tooLarge, err := readBounded(resp.Body, xemMaxResponse)
+	if err != nil {
+		return fmt.Errorf("TheXEM %s: %w", path, err)
+	}
+	if tooLarge {
+		return fmt.Errorf("TheXEM %s: response over %d MiB", path, xemMaxResponse>>20)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("TheXEM %s: %s", path, resp.Status)
 	}
@@ -76,8 +88,8 @@ func (c *XEM) get(ctx context.Context, path string, q url.Values, out any) error
 		Message string          `json:"message"`
 		Data    json.RawMessage `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
-		return fmt.Errorf("TheXEM %s: %w", path, err)
+	if err := json.Unmarshal(body, &env); err != nil {
+		return fmt.Errorf("TheXEM %s: unreadable response: %w", path, err)
 	}
 	if env.Result != "success" {
 		// TheXEM answers "failure" for shows it has no data for.

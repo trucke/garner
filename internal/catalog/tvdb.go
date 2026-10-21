@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -21,6 +22,25 @@ var errNotFound = errors.New("not found on TVDB")
 
 // tokenMaxAge renews the login token well before TVDB's one-month expiry.
 const tokenMaxAge = 24 * time.Hour
+
+// tvdbMaxResponse bounds each TVDB response body. The largest answers
+// Garner reads are extended series records with aliases, season types
+// and genres, and pages of 100 episodes from very long-running shows;
+// real ones stay a few hundred KiB, so 16 MiB leaves generous headroom
+// without cutting off a valid show.
+const tvdbMaxResponse = 16 << 20
+
+// readBounded reads at most limit bytes plus one and reports whether the
+// body exceeded the limit, so a broken or hostile response fails with a
+// clear error instead of exhausting memory or an unexpected EOF deep in
+// the decoder.
+func readBounded(r io.Reader, limit int64) ([]byte, bool, error) {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return b, int64(len(b)) > limit, nil
+}
 
 // TVDB is a client for TheTVDB's v4 API.
 type TVDB struct {
@@ -70,8 +90,15 @@ func (c *TVDB) login(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("TVDB login: %w", err)
 	}
 	defer resp.Body.Close()
+	respBody, tooLarge, err := readBounded(resp.Body, tvdbMaxResponse)
+	if err != nil {
+		return "", fmt.Errorf("TVDB login: %w", err)
+	}
+	if tooLarge {
+		return "", fmt.Errorf("TVDB login: response over %d MiB", tvdbMaxResponse>>20)
+	}
 	var env envelope
-	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil || resp.StatusCode != http.StatusOK {
+	if err := json.Unmarshal(respBody, &env); err != nil || resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("TVDB login failed (%s): %s", resp.Status, env.Message)
 	}
 	var data struct {
@@ -108,19 +135,25 @@ func (c *TVDB) get(ctx context.Context, path string, out any) (*envelope, error)
 		if err != nil {
 			return nil, fmt.Errorf("TVDB %s: %w", path, err)
 		}
-		var env envelope
-		decodeErr := json.NewDecoder(resp.Body).Decode(&env)
+		body, tooLarge, err := readBounded(resp.Body, tvdbMaxResponse)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("TVDB %s: %w", path, err)
+		}
+		var env envelope
+		decodeErr := json.Unmarshal(body, &env)
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized && attempt == 0:
 			c.forgetToken()
 			continue
+		case tooLarge:
+			return nil, fmt.Errorf("TVDB %s: response over %d MiB", path, tvdbMaxResponse>>20)
 		case resp.StatusCode == http.StatusNotFound:
 			return nil, errNotFound
 		case resp.StatusCode != http.StatusOK:
 			return nil, fmt.Errorf("TVDB %s: %s %s", path, resp.Status, env.Message)
 		case decodeErr != nil:
-			return nil, fmt.Errorf("TVDB %s: %w", path, decodeErr)
+			return nil, fmt.Errorf("TVDB %s: unreadable response: %w", path, decodeErr)
 		}
 		if out != nil {
 			if err := json.Unmarshal(env.Data, out); err != nil {
