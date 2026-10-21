@@ -44,12 +44,12 @@ func (s *Server) setupSearch() error {
 	return nil
 }
 
-func (s *Server) searchRoutes(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleSearchEpisode)))
-	mux.Handle("GET /api/v1/episodes/{id}/search", s.auth(http.HandlerFunc(s.handleGetSearch)))
-	mux.Handle("POST /api/v1/series/{id}/seasons/{season}/search", s.auth(http.HandlerFunc(s.handleSearchSeason)))
-	mux.Handle("POST /api/v1/series/{id}/search", s.auth(http.HandlerFunc(s.handleSearchShow)))
-	mux.Handle("PATCH /api/v1/series/{id}", s.auth(http.HandlerFunc(s.handleUpdateSeries)))
+func (s *Server) searchRoutes(mux router) {
+	mux.Handle("POST /api/v1/episodes/{id}/search", http.HandlerFunc(s.handleSearchEpisode))
+	mux.Handle("GET /api/v1/episodes/{id}/search", http.HandlerFunc(s.handleGetSearch))
+	mux.Handle("POST /api/v1/series/{id}/seasons/{season}/search", http.HandlerFunc(s.handleSearchSeason))
+	mux.Handle("POST /api/v1/series/{id}/search", http.HandlerFunc(s.handleSearchShow))
+	mux.Handle("PATCH /api/v1/series/{id}", http.HandlerFunc(s.handleUpdateSeries))
 }
 
 func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {

@@ -14,17 +14,29 @@ import (
 
 type tokenKey struct{}
 
-// Routes is the client API. Every route requires a token.
+// Routes is the client API. The token check stands in front of all of it,
+// so no route answers without a valid token, however it was added.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/status", s.auth(http.HandlerFunc(s.handleStatus)))
-	mux.Handle("GET /api/v1/status/services", s.auth(http.HandlerFunc(s.handleServices)))
-	mux.Handle("GET /api/v1/events", s.auth(http.HandlerFunc(s.handleEvents)))
+	s.register(mux)
+	return s.auth(mux)
+}
+
+// router takes the client API's routes: a ServeMux, or a list of them in
+// tests.
+type router interface {
+	Handle(pattern string, handler http.Handler)
+}
+
+// register adds every route of the client API.
+func (s *Server) register(mux router) {
+	mux.Handle("GET /api/v1/status", http.HandlerFunc(s.handleStatus))
+	mux.Handle("GET /api/v1/status/services", http.HandlerFunc(s.handleServices))
+	mux.Handle("GET /api/v1/events", http.HandlerFunc(s.handleEvents))
 	s.catalogRoutes(mux)
 	s.searchRoutes(mux)
 	s.downloadRoutes(mux)
 	s.importRoutes(mux)
-	return mux
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {

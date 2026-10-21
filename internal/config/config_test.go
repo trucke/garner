@@ -1,11 +1,46 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestSecretsStayHidden formats a configuration that holds secrets the
+// ways logs and error reports do, which users paste into issues: no secret
+// shows.
+func TestSecretsStayHidden(t *testing.T) {
+	secrets := []string{"tvdb-key-1", "tvdb-pin-2", "prowlarr-key-3", "sabnzbd-key-4", "jellyfin-key-5"}
+	cfg := &Config{
+		TVDB:     TVDB{APIKey: Secret(secrets[0]), PIN: Secret(secrets[1])},
+		Prowlarr: Service{URL: "http://prowlarr:9696", APIKey: Secret(secrets[2])},
+		SABnzbd:  SABnzbd{Service: Service{URL: "http://sabnzbd:8080", APIKey: Secret(secrets[3])}},
+		Jellyfin: Service{URL: "http://jellyfin:8096", APIKey: Secret(secrets[4])},
+	}
+	var out bytes.Buffer
+	fmt.Fprintf(&out, "%v %+v %#v %v %s", cfg, *cfg, *cfg, cfg.TVDB.APIKey, cfg.SABnzbd.APIKey)
+	fmt.Fprint(&out, fmt.Errorf("wrapped: %v", cfg.Jellyfin))
+	for _, h := range []slog.Handler{slog.NewTextHandler(&out, nil), slog.NewJSONHandler(&out, nil)} {
+		slog.New(h).Info("config", "config", cfg, "key", cfg.Prowlarr.APIKey, "tvdb", cfg.TVDB)
+	}
+	if err := json.NewEncoder(&out).Encode(cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range secrets {
+		if strings.Contains(out.String(), s) {
+			t.Errorf("%s shows in:\n%s", s, out.String())
+		}
+	}
+	if cfg.TVDB.APIKey.Value() != secrets[0] {
+		t.Error("Value does not return the secret itself")
+	}
+}
 
 func TestPathMap(t *testing.T) {
 	m := PathMap{"/data/usenet": "/Volumes/media/usenet", "/data": "/Volumes/media"}

@@ -59,10 +59,10 @@ func (s *Server) setupImports() error {
 	return nil
 }
 
-func (s *Server) importRoutes(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/downloads/{id}/import", s.auth(http.HandlerFunc(s.handleRetryImport)))
-	mux.Handle("POST /api/v1/series/{id}/files/take-over", s.auth(http.HandlerFunc(s.handleTakeOver)))
-	mux.Handle("POST /api/v1/series/{id}/files/rename", s.auth(http.HandlerFunc(s.handleRename)))
+func (s *Server) importRoutes(mux router) {
+	mux.Handle("POST /api/v1/downloads/{id}/import", http.HandlerFunc(s.handleRetryImport))
+	mux.Handle("POST /api/v1/series/{id}/files/take-over", http.HandlerFunc(s.handleTakeOver))
+	mux.Handle("POST /api/v1/series/{id}/files/rename", http.HandlerFunc(s.handleRename))
 }
 
 // handleTakeOver looks for a show's files in the library and takes over

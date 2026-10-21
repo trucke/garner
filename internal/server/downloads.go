@@ -30,15 +30,15 @@ func (s *Server) setupDownloads() error {
 	return nil
 }
 
-func (s *Server) downloadRoutes(mux *http.ServeMux) {
-	mux.Handle("POST /api/v1/candidates/{id}/download", s.auth(s.needDownloads(s.handleDownloadCandidate)))
-	mux.Handle("POST /api/v1/episodes/{id}/download", s.auth(s.needDownloads(s.handleDownloadBest)))
-	mux.Handle("GET /api/v1/downloads", s.auth(http.HandlerFunc(s.handleListDownloads)))
-	mux.Handle("GET /api/v1/downloads/{id}", s.auth(http.HandlerFunc(s.handleGetDownload)))
-	mux.Handle("GET /api/v1/activity", s.auth(http.HandlerFunc(s.handleActivity)))
-	mux.Handle("POST /api/v1/season-candidates/{id}/download", s.auth(s.needDownloads(s.handleDownloadSeasonCandidate)))
-	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.auth(s.needDownloads(s.handleCancelDownload)))
-	mux.Handle("GET /api/v1/episodes/{id}", s.auth(http.HandlerFunc(s.handleGetEpisode)))
+func (s *Server) downloadRoutes(mux router) {
+	mux.Handle("POST /api/v1/candidates/{id}/download", s.needDownloads(s.handleDownloadCandidate))
+	mux.Handle("POST /api/v1/episodes/{id}/download", s.needDownloads(s.handleDownloadBest))
+	mux.Handle("GET /api/v1/downloads", http.HandlerFunc(s.handleListDownloads))
+	mux.Handle("GET /api/v1/downloads/{id}", http.HandlerFunc(s.handleGetDownload))
+	mux.Handle("GET /api/v1/activity", http.HandlerFunc(s.handleActivity))
+	mux.Handle("POST /api/v1/season-candidates/{id}/download", s.needDownloads(s.handleDownloadSeasonCandidate))
+	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.needDownloads(s.handleCancelDownload))
+	mux.Handle("GET /api/v1/episodes/{id}", http.HandlerFunc(s.handleGetEpisode))
 }
 
 func (s *Server) handleGetEpisode(w http.ResponseWriter, r *http.Request) {

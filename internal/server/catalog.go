@@ -20,14 +20,14 @@ import (
 	"github.com/trucke/garner/internal/store"
 )
 
-func (s *Server) catalogRoutes(mux *http.ServeMux) {
-	mux.Handle("GET /api/v1/search", s.auth(s.needCatalog(s.handleSearch)))
-	mux.Handle("GET /api/v1/search/{tvdb_id}", s.auth(s.needCatalog(s.handlePreview)))
-	mux.Handle("GET /api/v1/series", s.auth(s.needCatalog(s.handleListSeries)))
-	mux.Handle("POST /api/v1/series", s.auth(s.needCatalog(s.handleAddSeries)))
-	mux.Handle("GET /api/v1/series/{id}", s.auth(s.needCatalog(s.handleGetSeries)))
-	mux.Handle("POST /api/v1/series/{id}/refresh", s.auth(s.needCatalog(s.handleRefreshSeries)))
-	mux.Handle("DELETE /api/v1/series/{id}", s.auth(http.HandlerFunc(s.handleDeleteSeries)))
+func (s *Server) catalogRoutes(mux router) {
+	mux.Handle("GET /api/v1/search", s.needCatalog(s.handleSearch))
+	mux.Handle("GET /api/v1/search/{tvdb_id}", s.needCatalog(s.handlePreview))
+	mux.Handle("GET /api/v1/series", s.needCatalog(s.handleListSeries))
+	mux.Handle("POST /api/v1/series", s.needCatalog(s.handleAddSeries))
+	mux.Handle("GET /api/v1/series/{id}", s.needCatalog(s.handleGetSeries))
+	mux.Handle("POST /api/v1/series/{id}/refresh", s.needCatalog(s.handleRefreshSeries))
+	mux.Handle("DELETE /api/v1/series/{id}", http.HandlerFunc(s.handleDeleteSeries))
 }
 
 func (s *Server) needCatalog(h http.HandlerFunc) http.Handler {
