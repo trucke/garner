@@ -49,6 +49,9 @@ const (
 // ErrNotRetryable means the import has no failed step to repeat.
 var ErrNotRetryable = errors.New("only failed or unconfirmed imports can be retried")
 
+// ErrBusy refuses a change to the library's files while another one runs.
+var ErrBusy = errors.New("Garner is changing files in the library; try again in a moment")
+
 var videoExtensions = map[string]bool{
 	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".ts": true, ".m2ts": true, ".webm": true, ".wmv": true,
 }
@@ -88,7 +91,11 @@ type Service struct {
 	// Now tells the time: time.Now, or the simulation's clock.
 	Now  func() time.Time
 	wake chan struct{}
-	// files lets one take-over or rename run at a time.
+	// files lets one change to the library's files and their records run at
+	// a time: a take-over, a rename, an import's move or deleting a show's
+	// files. Each would otherwise act on records another one is changing.
+	// Nothing waits for it: a user's request is refused with ErrBusy, and
+	// the import loop leaves its move for the next round.
 	files sync.Mutex
 	// OnChange is called whenever an import changes.
 	OnChange func(store.Download)
@@ -128,6 +135,23 @@ func jellyfinFolders(jf *jellyfin.Client, paths config.PathMap) func(context.Con
 		}
 		return local, nil
 	}
+}
+
+// LockFiles reserves the library's files for one change, such as deleting
+// a show's files; it fails with ErrBusy while another change runs.
+// UnlockFiles ends the change.
+func (s *Service) LockFiles() error {
+	if !s.files.TryLock() {
+		return ErrBusy
+	}
+	return nil
+}
+
+// UnlockFiles ends a change LockFiles began and wakes the import loop for
+// a move it left meanwhile.
+func (s *Service) UnlockFiles() {
+	s.files.Unlock()
+	s.Wake()
 }
 
 // Wake makes Run look for work now, such as after a download completed.
@@ -298,85 +322,12 @@ func (s *Service) check(ctx context.Context, d *store.Download) {
 	s.move(ctx, d)
 }
 
-// move renames the files into the library. A rename moves the file on the
-// share without copying it; a rename that would cross filesystems fails
-// instead of copying. Then it removes the pack's files whose episodes kept
-// the library's own file.
+// move moves the files into the library, then asks Jellyfin to scan them.
 func (s *Service) move(ctx context.Context, d *store.Download) {
-	files := d.Import.Files
-	// SABnzbd's folder is looked up only when a file is still in it: after a
-	// restart, it may be gone with every file moved already.
-	job := sync.OnceValues(func() (guard.Job, error) { return s.guard.Job(d.Storage, d.Title) })
-	claim := func(path string) (guard.File, error) {
-		j, err := job()
-		if err != nil {
-			return guard.File{}, err
-		}
-		return s.guard.InJob(j, path)
+	files, notes, ok := s.moveFiles(ctx, d)
+	if !ok {
+		return
 	}
-	for _, f := range files {
-		root := s.rootOf(f.Target)
-		if root == "" {
-			s.fail(ctx, d, files, f.Target+" is outside the library folders", "Check library.tv and library.anime in garner.toml, then retry the import.")
-			return
-		}
-		if st, err := os.Stat(root); err != nil || !st.IsDir() {
-			s.fail(ctx, d, files, fmt.Sprintf("the library folder %s is missing", root),
-				"Mount the media share and check library.tv and library.anime in garner.toml, then retry the import. Garner never creates the library folders themselves.")
-			return
-		}
-		if _, err := os.Stat(f.Source); errors.Is(err, fs.ErrNotExist) {
-			// Moved already, before a restart.
-			if st, err := os.Stat(f.Target); err == nil && st.Size() == f.Size {
-				continue
-			}
-			s.fail(ctx, d, files, f.Source+" is gone and not in the library", "Check SABnzbd's completed folder; download the episode again if the file was deleted.")
-			return
-		}
-		if _, err := os.Lstat(f.Target); err == nil {
-			ours, err := s.store.FileInUse(ctx, f.Target)
-			if err != nil || !ours {
-				s.fail(ctx, d, files, f.Target+" already exists and was not imported by Garner",
-					"Move or delete that file, then retry the import. Garner never overwrites files it did not import.")
-				return
-			}
-		}
-		source, err := claim(f.Source)
-		if err != nil {
-			s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
-			return
-		}
-		if err := s.guard.Mkdir(filepath.Dir(f.Target)); err != nil {
-			fix := permissionFix
-			if refused(err) {
-				fix = guardFix
-			}
-			s.fail(ctx, d, files, fmt.Sprintf("cannot create %s: %v", filepath.Dir(f.Target), unwrapPath(err)), fix)
-			return
-		}
-		if err := s.guard.Move(ctx, source, f.Target); err != nil {
-			switch {
-			case refused(err):
-				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
-			case errors.Is(err, syscall.EXDEV):
-				s.fail(ctx, d, files, "the download and the library are on different filesystems, so the file would have to be copied",
-					"Keep SABnzbd's completed folder and the library on the same share and dataset, then retry the import. Garner moves files; it does not copy them.")
-			case errors.Is(err, fs.ErrPermission):
-				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s", filepath.Base(f.Source)), permissionFix)
-			default:
-				s.fail(ctx, d, files, fmt.Sprintf("moving %s failed: %v", filepath.Base(f.Source), unwrapPath(err)), "Check both folders, then retry the import.")
-			}
-			return
-		}
-		s.log.Info("imported file", "download", d.ID, "target", f.Target)
-	}
-	s.recordFiles(ctx, d, files)
-	s.removeKept(ctx, d, job)
-	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
-	if notes == nil {
-		notes = []string{}
-	}
-
 	if s.jellyfin == nil {
 		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: files, Notes: notes})
 		return
@@ -397,6 +348,93 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 	}
 	s.save(ctx, d, store.Import{State: store.ImportScanning, Detail: detailWaiting, Files: files, Notes: notes})
 	s.verify(ctx, d)
+}
+
+// moveFiles renames the files into the library and records them. A rename
+// moves the file on the share without copying it; a rename that would
+// cross filesystems fails instead of copying. Then it removes the pack's
+// files whose episodes kept the library's own file. It reports false when
+// the move failed, or when another change to the library's files runs:
+// then the move stays due, and UnlockFiles wakes the loop for it.
+func (s *Service) moveFiles(ctx context.Context, d *store.Download) ([]store.ImportFile, []string, bool) {
+	if !s.files.TryLock() {
+		return nil, nil, false
+	}
+	defer s.files.Unlock()
+	files := d.Import.Files
+	// SABnzbd's folder is looked up only when a file is still in it: after a
+	// restart, it may be gone with every file moved already.
+	job := sync.OnceValues(func() (guard.Job, error) { return s.guard.Job(d.Storage, d.Title) })
+	claim := func(path string) (guard.File, error) {
+		j, err := job()
+		if err != nil {
+			return guard.File{}, err
+		}
+		return s.guard.InJob(j, path)
+	}
+	for _, f := range files {
+		root := s.rootOf(f.Target)
+		if root == "" {
+			s.fail(ctx, d, files, f.Target+" is outside the library folders", "Check library.tv and library.anime in garner.toml, then retry the import.")
+			return nil, nil, false
+		}
+		if st, err := os.Stat(root); err != nil || !st.IsDir() {
+			s.fail(ctx, d, files, fmt.Sprintf("the library folder %s is missing", root),
+				"Mount the media share and check library.tv and library.anime in garner.toml, then retry the import. Garner never creates the library folders themselves.")
+			return nil, nil, false
+		}
+		if _, err := os.Stat(f.Source); errors.Is(err, fs.ErrNotExist) {
+			// Moved already, before a restart.
+			if st, err := os.Stat(f.Target); err == nil && st.Size() == f.Size {
+				continue
+			}
+			s.fail(ctx, d, files, f.Source+" is gone and not in the library", "Check SABnzbd's completed folder; download the episode again if the file was deleted.")
+			return nil, nil, false
+		}
+		if _, err := os.Lstat(f.Target); err == nil {
+			ours, err := s.store.FileInUse(ctx, f.Target)
+			if err != nil || !ours {
+				s.fail(ctx, d, files, f.Target+" already exists and was not imported by Garner",
+					"Move or delete that file, then retry the import. Garner never overwrites files it did not import.")
+				return nil, nil, false
+			}
+		}
+		source, err := claim(f.Source)
+		if err != nil {
+			s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
+			return nil, nil, false
+		}
+		if err := s.guard.Mkdir(filepath.Dir(f.Target)); err != nil {
+			fix := permissionFix
+			if refused(err) {
+				fix = guardFix
+			}
+			s.fail(ctx, d, files, fmt.Sprintf("cannot create %s: %v", filepath.Dir(f.Target), unwrapPath(err)), fix)
+			return nil, nil, false
+		}
+		if err := s.guard.Move(ctx, source, f.Target); err != nil {
+			switch {
+			case refused(err):
+				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s: %v", filepath.Base(f.Source), err), guardFix)
+			case errors.Is(err, syscall.EXDEV):
+				s.fail(ctx, d, files, "the download and the library are on different filesystems, so the file would have to be copied",
+					"Keep SABnzbd's completed folder and the library on the same share and dataset, then retry the import. Garner moves files; it does not copy them.")
+			case errors.Is(err, fs.ErrPermission):
+				s.fail(ctx, d, files, fmt.Sprintf("Garner may not move %s", filepath.Base(f.Source)), permissionFix)
+			default:
+				s.fail(ctx, d, files, fmt.Sprintf("moving %s failed: %v", filepath.Base(f.Source), unwrapPath(err)), "Check both folders, then retry the import.")
+			}
+			return nil, nil, false
+		}
+		s.log.Info("imported file", "download", d.ID, "target", f.Target)
+	}
+	s.recordFiles(ctx, d, files)
+	s.removeKept(ctx, d, job)
+	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
+	if notes == nil {
+		notes = []string{}
+	}
+	return files, notes, true
 }
 
 const permissionFix = "On the NAS, give the account Garner uses write access to SABnzbd's completed folder and the library (UID 1000 in this setup), then retry the import."

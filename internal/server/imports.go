@@ -75,6 +75,10 @@ func (s *Server) importRoutes(mux router) {
 func (s *Server) handleTakeOver(w http.ResponseWriter, r *http.Request) {
 	if id, ok := s.filesRequest(w, r); ok {
 		t, err := s.imports.TakeOver(r.Context(), id)
+		if errors.Is(err, importer.ErrBusy) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if err != nil {
 			s.internalError(w, "take over files", err)
 			return
@@ -90,6 +94,10 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		// Files may have moved already: finish even when the client stops
 		// waiting.
 		res, err := s.imports.Rename(context.WithoutCancel(r.Context()), id)
+		if errors.Is(err, importer.ErrBusy) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if err != nil {
 			s.internalError(w, "rename files", err)
 			return

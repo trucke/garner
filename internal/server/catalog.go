@@ -236,6 +236,15 @@ func (s *Server) handleDeleteSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// From reading the show's files until they are gone, no take-over,
+	// rename or import may change them.
+	if !keep && s.imports != nil {
+		if err := s.imports.LockFiles(); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		defer s.imports.UnlockFiles()
+	}
 	busy, err := s.store.BusyDownloads(ctx, id)
 	if err != nil {
 		s.internalError(w, "delete series", err)

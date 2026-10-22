@@ -32,9 +32,11 @@ import (
 // show in, checks each file with FFprobe for its tier, so upgrades work for
 // it, and leaves the files where they are. Episodes with a file keep it.
 func (s *Service) TakeOver(ctx context.Context, seriesID int64) (api.TakeOver, error) {
-	s.files.Lock()
-	defer s.files.Unlock()
 	out := api.TakeOver{Folders: []string{}, Skipped: []api.SkippedFile{}, Notes: []string{}}
+	if err := s.LockFiles(); err != nil {
+		return out, err
+	}
+	defer s.UnlockFiles()
 	c, err := s.seriesContext(ctx, seriesID)
 	if err != nil {
 		return out, err
@@ -303,9 +305,11 @@ func (s *Service) renamable(ctx context.Context, c showContext) (int, error) {
 // about the moves and removes the folders the moves left empty. What stays
 // behind is in the notes.
 func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, error) {
-	s.files.Lock()
-	defer s.files.Unlock()
 	out := api.Renamed{Notes: []string{}}
+	if err := s.LockFiles(); err != nil {
+		return out, err
+	}
+	defer s.UnlockFiles()
 	c, err := s.seriesContext(ctx, seriesID)
 	if err != nil {
 		return out, err

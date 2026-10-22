@@ -2,11 +2,14 @@ package importer
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/trucke/garner/internal/store"
 )
 
 // TestTakeOver takes over a show's files from an older library folder that
@@ -108,6 +111,61 @@ func TestTakeOverOwnNames(t *testing.T) {
 			if f, found, _ := e.st.EpisodeFile(ctx, id); !found || filepath.Base(f.Path) != name {
 				t.Errorf("%s: episode %d has %+v", name, id, f)
 			}
+		}
+	}
+}
+
+// TestImportDuringRename runs an import of an episode while a rename moves
+// the episode's taken-over file, as the import loop may while the user
+// renames: right after the rename moved the file and before it recorded
+// the move. Every video in Garner's folder must end up recorded, with the
+// import's file as the episode's (GRR-37).
+func TestImportDuringRename(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	season := filepath.Join(e.share, "library/tv/Harbor Precinct Night Shift (2013)/Season 1")
+	os.MkdirAll(season, 0o755)
+	taken := filepath.Join(season, "Harbor Precinct Night Shift - S01E01 - Pilot.mkv")
+	os.WriteFile(taken, make([]byte, 900), 0o644)
+	e.jf.created = []string{"/data/library/tv/Harbor Precinct Night Shift (2013)/Season 1/x.mkv"}
+
+	// The same importer, with renames that run the import loop once, right
+	// after the rename moved the taken-over file.
+	var svc *Service
+	interleaved := false
+	opts := e.svc.opts
+	opts.Rename = func(from, to string) error {
+		err := os.Rename(from, to)
+		if from == taken && !interleaved {
+			interleaved = true
+			svc.Work(ctx)
+		}
+		return err
+	}
+	svc = New(e.st, e.svc.probe, e.svc.jellyfin, opts, slog.New(slog.DiscardHandler))
+
+	if got, err := svc.TakeOver(ctx, 42); err != nil || got.Files != 1 {
+		t.Fatalf("take-over = %+v, %v", got, err)
+	}
+	if _, err := svc.Rename(ctx, 42); err != nil {
+		t.Fatal(err)
+	}
+	svc.Work(ctx) // what the import loop left for later
+	if !interleaved {
+		t.Fatal("the rename did not move the taken-over file")
+	}
+
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	f, _, _ := e.st.EpisodeFile(ctx, 101)
+	if got.Import.State != store.ImportDone || f.Path != filepath.Join(e.share, target) {
+		t.Errorf("import %s, S01E01's file is %s", got.Import.State, f.Path)
+	}
+	own := filepath.Join(e.share, "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01")
+	entries, _ := os.ReadDir(own)
+	for _, entry := range entries {
+		p := filepath.Join(own, entry.Name())
+		if used, _ := e.st.FileInUse(ctx, p); !used {
+			t.Errorf("%s is in Garner's folder, but no episode records it", entry.Name())
 		}
 	}
 }
