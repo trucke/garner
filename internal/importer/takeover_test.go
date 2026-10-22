@@ -169,3 +169,45 @@ func TestImportDuringRename(t *testing.T) {
 		}
 	}
 }
+
+// TestRenameCrash ends Garner right after a rename moved a taken-over file,
+// before it recorded the move. After a restart, the episode's record must
+// point at a file that exists (GRR-37).
+func TestRenameCrash(t *testing.T) {
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	season := filepath.Join(e.share, "library/tv/Harbor Precinct Night Shift (2013)/Season 1")
+	os.MkdirAll(season, 0o755)
+	taken := filepath.Join(season, "Harbor Precinct Night Shift - S01E02.mkv")
+	os.WriteFile(taken, make([]byte, 900), 0o644)
+	e.jf.created = []string{"/data/library/tv/Harbor Precinct Night Shift (2013)/Season 1/x.mkv"}
+	if got, err := e.svc.TakeOver(ctx, 42); err != nil || got.Files != 1 {
+		t.Fatalf("take-over = %+v, %v", got, err)
+	}
+
+	type crash struct{}
+	opts := e.svc.opts
+	opts.Rename = func(from, to string) error {
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+		panic(crash{})
+	}
+	crashing := New(e.st, e.svc.probe, e.svc.jellyfin, opts, slog.New(slog.DiscardHandler))
+	func() {
+		defer func() {
+			if _, ok := recover().(crash); !ok {
+				t.Fatal("the rename did not move the file")
+			}
+		}()
+		crashing.Rename(ctx, 42)
+	}()
+
+	// Garner starts again from its database.
+	restarted := New(e.st, e.svc.probe, e.svc.jellyfin, e.svc.opts, slog.New(slog.DiscardHandler))
+	restarted.Work(ctx)
+	f, found, _ := e.st.EpisodeFile(ctx, 102)
+	if _, err := os.Stat(f.Path); !found || err != nil {
+		t.Errorf("S01E02 records %s: %v", f.Path, err)
+	}
+}

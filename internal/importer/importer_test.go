@@ -595,3 +595,98 @@ func TestImportPackRetryRemovesKeptFiles(t *testing.T) {
 		t.Errorf("SABnzbd's folder is still there; notes %q", got.Import.Notes)
 	}
 }
+
+// TestUpgradeCrash ends Garner after an upgrade recorded its file and
+// before it removed the version it replaces. After a restart, the import
+// must still remove that version (GRR-37).
+func TestUpgradeCrash(t *testing.T) {
+	ctx := context.Background()
+	e, d := setup(t, german)
+	earlier, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: "Harbor.Precinct.S01E01-OLD", Link: "x",
+		Verdict: "accept", Tier: "German 720p"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(e.share, "library/tv/old/S01E01.mkv")
+	os.MkdirAll(filepath.Dir(old), 0o755)
+	os.WriteFile(old, []byte("old"), 0o644)
+	e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: old, Size: 3, Tier: "German 720p"}, earlier.ID, time.Now())
+
+	type crash struct{}
+	opts := e.svc.opts
+	opts.Before = func(op, path string) {
+		if op == "remove" && path == old {
+			panic(crash{})
+		}
+	}
+	crashing := New(e.st, e.svc.probe, e.svc.jellyfin, opts, slog.New(slog.DiscardHandler))
+	func() {
+		defer func() {
+			if _, ok := recover().(crash); !ok {
+				t.Fatal("the import did not reach the old version")
+			}
+		}()
+		crashing.Work(ctx)
+	}()
+
+	// Garner starts again from its database.
+	restarted := New(e.st, e.svc.probe, e.svc.jellyfin, e.svc.opts, slog.New(slog.DiscardHandler))
+	restarted.Work(ctx)
+	if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State == store.ImportMoving || got.Import.State == store.ImportFailed {
+		t.Fatalf("after the restart: %+v", got.Import)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Errorf("the version the upgrade replaced is still there")
+	}
+}
+
+// TestUpgradeRemovesLater replaces a version whose folder refuses writes,
+// or is away as when its share is not mounted: the version stays planned
+// for removal and goes once the folder is back to normal (GRR-37).
+func TestUpgradeRemovesLater(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		block, free func(dir string) error
+	}{
+		{"refuses writes", func(dir string) error { return os.Chmod(dir, 0o555) }, func(dir string) error { return os.Chmod(dir, 0o755) }},
+		{"away", func(dir string) error { return os.Rename(dir, dir+".away") }, func(dir string) error { return os.Rename(dir+".away", dir) }},
+	} {
+		ctx := context.Background()
+		e, d := setup(t, german)
+		earlier, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: "Harbor.Precinct.S01E01-OLD", Link: "x",
+			Verdict: "accept", Tier: "German 720p"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(e.share, "library/tv/old")
+		old := filepath.Join(dir, "S01E01.mkv")
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(old, []byte("old"), 0o644)
+		e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: old, Size: 3, Tier: "German 720p"}, earlier.ID, time.Now())
+
+		if err := tc.block(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o755) })
+		e.svc.Work(ctx)
+		if got, _ := e.st.GetDownload(ctx, d.ID); got.Import.State == store.ImportMoving || got.Import.State == store.ImportFailed {
+			t.Fatalf("%s: %+v", tc.name, got.Import)
+		}
+		if tc.name == "away" {
+			if _, err := os.Stat(filepath.Join(dir+".away", "S01E01.mkv")); err != nil {
+				t.Errorf("%s: the old version went while its folder was away: %v", tc.name, err)
+			}
+			e.svc.Work(ctx) // still away: it waits
+		}
+		if err := tc.free(dir); err != nil {
+			t.Fatal(err)
+		}
+		e.svc.Work(ctx)
+		if _, err := os.Stat(old); err == nil {
+			t.Errorf("%s: the version the upgrade replaced is still there", tc.name)
+		}
+		if changes, _ := e.st.FileChanges(ctx); len(changes) != 0 {
+			t.Errorf("%s: plans left: %+v", tc.name, changes)
+		}
+	}
+}

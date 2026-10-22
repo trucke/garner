@@ -87,9 +87,87 @@ func (s *Store) TakeOverFile(ctx context.Context, f EpisodeFile, now time.Time) 
 	return n > 0, err
 }
 
-// MoveEpisodeFile records that a file moved within the library.
-func (s *Store) MoveEpisodeFile(ctx context.Context, oldPath, newPath string) error {
-	return s.q.MoveEpisodeFile(ctx, query.MoveEpisodeFileParams{OldPath: oldPath, NewPath: newPath})
+// RecordFiles records the files of an import's episodes, replacing their
+// previous records, and plans to remove the replaced files that no record
+// uses any more, in one step: a crash after it leaves the plan, so the
+// removal still happens. It returns the files planned for removal; the
+// caller removes each and then drops its plan.
+func (s *Store) RecordFiles(ctx context.Context, files []EpisodeFile, downloadID int64, now time.Time, replaced []string) ([]string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	q := s.q.WithTx(tx)
+	for _, f := range files {
+		if err := q.UpsertEpisodeFile(ctx, query.UpsertEpisodeFileParams{
+			EpisodeID: f.EpisodeID, Path: f.Path, Size: f.Size, Tier: f.Tier,
+			DownloadID: sql.NullInt64{Int64: downloadID, Valid: downloadID > 0}, ImportedAt: now.Unix(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	var planned []string
+	for _, p := range replaced {
+		n, err := q.CountEpisodeFilesAt(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			continue // another episode's file still
+		}
+		if err := q.InsertFileChange(ctx, query.InsertFileChangeParams{Path: p}); err != nil {
+			return nil, err
+		}
+		planned = append(planned, p)
+	}
+	return planned, tx.Commit()
+}
+
+// FileChange is a change to a file that Garner planned: a move to NewPath,
+// or a removal when NewPath is empty.
+type FileChange = query.FileChange
+
+// PlanMove notes that Garner is about to move a recorded file within the
+// library; FinishMove ends the plan.
+func (s *Store) PlanMove(ctx context.Context, oldPath, newPath string) error {
+	return s.q.InsertFileChange(ctx, query.InsertFileChangeParams{Path: oldPath, NewPath: newPath})
+}
+
+// FinishMove records that a file moved, for every episode it holds, and
+// drops the plan to move it, in one step.
+func (s *Store) FinishMove(ctx context.Context, oldPath, newPath string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	q := s.q.WithTx(tx)
+	if err := q.MoveEpisodeFile(ctx, query.MoveEpisodeFileParams{OldPath: oldPath, NewPath: newPath}); err != nil {
+		return err
+	}
+	if err := q.DeleteFileChange(ctx, oldPath); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DropFileChange drops the plan to change the file at path, once it is
+// carried out or did not happen.
+func (s *Store) DropFileChange(ctx context.Context, path string) error {
+	return s.q.DeleteFileChange(ctx, path)
+}
+
+// FileChanges lists the planned changes to files, by path.
+func (s *Store) FileChanges(ctx context.Context) ([]FileChange, error) {
+	return s.q.ListFileChanges(ctx)
+}
+
+// PlannedRemoval reports whether Garner planned to remove the file at
+// path.
+func (s *Store) PlannedRemoval(ctx context.Context, path string) (bool, error) {
+	n, err := s.q.CountPlannedRemovals(ctx, path)
+	return n > 0, err
 }
 
 // TakenFiles lists the files of a show Garner took over from the library,

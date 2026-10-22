@@ -106,6 +106,11 @@ type EpisodeNumber struct {
 	Number    int64
 }
 
+type FileChange struct {
+	Path    string
+	NewPath string
+}
+
 type MonitorSearch struct {
 	EpisodeID  int64
 	SearchedAt int64

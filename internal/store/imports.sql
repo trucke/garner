@@ -36,3 +36,16 @@ ORDER BY f.path, f.episode_id;
 
 -- name: CountEpisodeFilesAt :one
 SELECT count(*) FROM episode_files WHERE path = ?;
+
+-- name: InsertFileChange :exec
+INSERT INTO file_changes (path, new_path) VALUES (?, ?)
+ON CONFLICT (path) DO UPDATE SET new_path = excluded.new_path;
+
+-- name: DeleteFileChange :exec
+DELETE FROM file_changes WHERE path = ?;
+
+-- name: ListFileChanges :many
+SELECT * FROM file_changes ORDER BY path;
+
+-- name: CountPlannedRemovals :one
+SELECT count(*) FROM file_changes WHERE path = ? AND new_path = '';

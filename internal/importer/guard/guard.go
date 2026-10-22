@@ -5,8 +5,9 @@
 //  1. It writes only inside library.tv and library.anime, and never
 //     creates those folders themselves.
 //  2. It moves or deletes a file only when the database records it as
-//     Garner's, or when it lies where SABnzbd put the download being
-//     imported. Subtitle files count with the video they belong to.
+//     Garner's, or lists it as one Garner is about to remove, or when it
+//     lies where SABnzbd put the download being imported. Subtitle files
+//     count with the video they belong to.
 //  3. It deletes a whole folder only when it is a download's job folder
 //     and holds no file the database records.
 //  4. It removes a folder only when it is empty after Garner moved or
@@ -41,12 +42,20 @@ type Options struct {
 	// Recorded reports whether the database records the file at path as an
 	// episode's file.
 	Recorded func(ctx context.Context, path string) (bool, error)
+	// Planned reports whether the database lists the file at path as one
+	// Garner is about to remove.
+	Planned func(ctx context.Context, path string) (bool, error)
 	// LibraryFolders lists Jellyfin's library folders as Garner reaches
 	// them; nil without Jellyfin.
 	LibraryFolders func(ctx context.Context) ([]string, error)
 	// Rename moves a file once the guard allowed it: os.Rename, or the
 	// simulation's, which knows which folders lie on different disks.
 	Rename func(oldpath, newpath string) error
+	// Before, if set, runs right before each change to a file or folder the
+	// guard allowed, with the change ("mkdir", "rename", "remove" or
+	// "remove all") and its path. The simulation crashes there, or runs
+	// another step first.
+	Before func(op, path string)
 }
 
 // Guard checks every change to files and folders against what Garner owns.
@@ -56,6 +65,12 @@ type Guard struct{ opts Options }
 func New(opts Options) *Guard {
 	if opts.Rename == nil {
 		opts.Rename = os.Rename
+	}
+	if opts.Before == nil {
+		opts.Before = func(string, string) {}
+	}
+	if opts.Planned == nil {
+		opts.Planned = func(context.Context, string) (bool, error) { return false, nil }
 	}
 	return &Guard{opts: opts}
 }
@@ -184,6 +199,20 @@ func (g *Guard) Recorded(ctx context.Context, path string) (File, error) {
 	return File{path: filepath.Clean(path)}, nil
 }
 
+// Planned claims a file the database lists as one Garner is about to
+// remove, such as the version an upgrade replaced when a crash came after
+// the new record and before the removal.
+func (g *Guard) Planned(ctx context.Context, path string) (File, error) {
+	ok, err := g.opts.Planned(ctx, path)
+	if err != nil {
+		return File{}, err
+	}
+	if !ok {
+		return File{}, refuse("Garner did not plan to remove %s", path)
+	}
+	return File{path: filepath.Clean(path)}, nil
+}
+
 // Subtitle claims a subtitle file of a claimed video: one in the video's
 // folder or below it.
 func (g *Guard) Subtitle(video File, path string) (File, error) {
@@ -203,6 +232,7 @@ func (g *Guard) Mkdir(dir string) error {
 	if err := g.inLibrary(dir); err != nil {
 		return err
 	}
+	g.opts.Before("mkdir", dir)
 	return os.MkdirAll(dir, 0o775)
 }
 
@@ -224,6 +254,7 @@ func (g *Guard) Move(ctx context.Context, f File, target string) error {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	g.opts.Before("rename", f.path)
 	return g.opts.Rename(f.path, target)
 }
 
@@ -236,6 +267,7 @@ func (g *Guard) Remove(f File) error {
 	if st.IsDir() {
 		return refuse("%s is a folder, not a file", f.path)
 	}
+	g.opts.Before("remove", f.path)
 	return os.Remove(f.path)
 }
 
@@ -250,7 +282,9 @@ func (g *Guard) RemoveSubtitles(video File) {
 	}
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasPrefix(e.Name(), base) && IsSubtitle(e.Name()) {
-			os.Remove(filepath.Join(filepath.Dir(video.path), e.Name()))
+			p := filepath.Join(filepath.Dir(video.path), e.Name())
+			g.opts.Before("remove", p)
+			os.Remove(p)
 		}
 	}
 }
@@ -286,6 +320,7 @@ func (g *Guard) RemoveJob(ctx context.Context, j Job) error {
 	if recorded != "" {
 		return refuse("it holds %s, which Garner records as an episode's file", recorded)
 	}
+	g.opts.Before("remove all", j.real)
 	return os.RemoveAll(j.real)
 }
 
@@ -317,6 +352,7 @@ func (f *Folders) RemoveEmpty(emptied File, stop string) error {
 		if err := f.protected(dir); err != nil {
 			return err
 		}
+		f.guard.opts.Before("remove", dir)
 		if os.Remove(dir) != nil {
 			return nil // not empty, or gone already
 		}

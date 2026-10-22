@@ -21,6 +21,26 @@ func (q *Queries) CountEpisodeFilesAt(ctx context.Context, path string) (int64, 
 	return count, err
 }
 
+const countPlannedRemovals = `-- name: CountPlannedRemovals :one
+SELECT count(*) FROM file_changes WHERE path = ? AND new_path = ''
+`
+
+func (q *Queries) CountPlannedRemovals(ctx context.Context, path string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPlannedRemovals, path)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteFileChange = `-- name: DeleteFileChange :exec
+DELETE FROM file_changes WHERE path = ?
+`
+
+func (q *Queries) DeleteFileChange(ctx context.Context, path string) error {
+	_, err := q.db.ExecContext(ctx, deleteFileChange, path)
+	return err
+}
+
 const getEpisodeFile = `-- name: GetEpisodeFile :one
 SELECT episode_id, path, size, download_id, imported_at, tier FROM episode_files WHERE episode_id = ?
 `
@@ -37,6 +57,21 @@ func (q *Queries) GetEpisodeFile(ctx context.Context, episodeID int64) (EpisodeF
 		&i.Tier,
 	)
 	return i, err
+}
+
+const insertFileChange = `-- name: InsertFileChange :exec
+INSERT INTO file_changes (path, new_path) VALUES (?, ?)
+ON CONFLICT (path) DO UPDATE SET new_path = excluded.new_path
+`
+
+type InsertFileChangeParams struct {
+	Path    string
+	NewPath string
+}
+
+func (q *Queries) InsertFileChange(ctx context.Context, arg InsertFileChangeParams) error {
+	_, err := q.db.ExecContext(ctx, insertFileChange, arg.Path, arg.NewPath)
+	return err
 }
 
 const insertTakenFile = `-- name: InsertTakenFile :execrows
@@ -111,6 +146,33 @@ func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
 			&i.Decisive,
 			&i.Replaces,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFileChanges = `-- name: ListFileChanges :many
+SELECT path, new_path FROM file_changes ORDER BY path
+`
+
+func (q *Queries) ListFileChanges(ctx context.Context) ([]FileChange, error) {
+	rows, err := q.db.QueryContext(ctx, listFileChanges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FileChange
+	for rows.Next() {
+		var i FileChange
+		if err := rows.Scan(&i.Path, &i.NewPath); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

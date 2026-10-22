@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,6 +78,9 @@ type Options struct {
 	Profiles selection.Profiles
 	// Rename moves files for the guard; nil means os.Rename.
 	Rename func(oldpath, newpath string) error
+	// Before runs before each change to a file or folder; see
+	// guard.Options.Before.
+	Before func(op, path string)
 }
 
 // Service imports completed downloads.
@@ -110,7 +114,8 @@ func New(st *store.Store, probe Prober, jf *jellyfin.Client, opts Options, log *
 	}
 	g := guard.New(guard.Options{
 		Library: opts.Library, SABnzbdPaths: opts.SABnzbdPaths,
-		Recorded: st.FileInUse, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths), Rename: opts.Rename,
+		Recorded: st.FileInUse, Planned: st.PlannedRemoval, LibraryFolders: jellyfinFolders(jf, opts.JellyfinPaths),
+		Rename: opts.Rename, Before: opts.Before,
 	})
 	return &Service{store: st, probe: probe, jellyfin: jf, opts: opts, guard: g, log: log, Now: time.Now, wake: make(chan struct{}, 1)}
 }
@@ -176,6 +181,7 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) Work(ctx context.Context) {
+	s.finishChanges(ctx)
 	due, err := s.store.DueImports(ctx)
 	if err != nil {
 		s.log.Error("list due imports", "err", err)
@@ -428,7 +434,10 @@ func (s *Service) moveFiles(ctx context.Context, d *store.Download) ([]store.Imp
 		}
 		s.log.Info("imported file", "download", d.ID, "target", f.Target)
 	}
-	s.recordFiles(ctx, d, files)
+	if err := s.recordFiles(ctx, d, files); err != nil {
+		s.fail(ctx, d, files, "the files are in the library, but recording them failed: "+err.Error(), "Retry the import.")
+		return nil, nil, false
+	}
 	s.removeKept(ctx, d, job)
 	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
 	if notes == nil {
@@ -532,12 +541,15 @@ func (s *Service) removeKept(ctx context.Context, d *store.Download, job func() 
 	}
 }
 
-// recordFiles remembers each episode's file and removes the version Garner
-// imported before: one version per episode.
-func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) {
+// recordFiles records each episode's file and removes the version Garner
+// imported or took over before: one version per episode. A record and the
+// plan to remove the version it replaces change in one step, so a crash
+// before the removal leaves the plan for finishChanges.
+func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) error {
 	// The previous versions are claimed while their records still point at
 	// them.
-	var old []guard.File
+	claims := map[string]guard.File{}
+	var records []store.EpisodeFile
 	for _, f := range files {
 		for _, ep := range f.Episodes {
 			prev, found, err := s.store.EpisodeFile(ctx, ep)
@@ -545,25 +557,106 @@ func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []st
 				if c, err := s.guard.Recorded(ctx, prev.Path); err != nil {
 					s.log.Warn("left the previous version in place", "path", prev.Path, "err", err)
 				} else {
-					old = append(old, c)
+					claims[c.Path()] = c
 				}
 			}
-			if err := s.store.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier}, d.ID, s.Now()); err != nil {
-				s.log.Error("record imported file", "episode", ep, "err", err)
-			}
+			records = append(records, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier})
 		}
 	}
-	for _, c := range old {
-		if used, err := s.store.FileInUse(ctx, c.Path()); err != nil || used {
-			continue
+	planned, err := s.store.RecordFiles(ctx, records, d.ID, s.Now(), slices.Sorted(maps.Keys(claims)))
+	if err != nil {
+		return err
+	}
+	for _, p := range planned {
+		if err := s.removeVersion(ctx, claims[p]); err != nil {
+			s.log.Warn("could not remove the previous version yet; Garner tries again later", "path", p, "err", err)
 		}
-		if err := s.guard.Remove(c); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			s.log.Warn("could not remove the previous version", "path", c.Path(), "err", err)
-			continue
-		}
+	}
+	return nil
+}
+
+// removeVersion removes a version of an episode's file that no record uses
+// any more, with its subtitle files, and drops the plan to remove it. When
+// the removal fails, as in a folder that refuses writes or one that is
+// away because the share is not mounted, the plan stays, and
+// finishChanges tries again in later rounds without saying so.
+func (s *Service) removeVersion(ctx context.Context, c guard.File) error {
+	switch err := s.guard.Remove(c); {
+	case err == nil:
 		s.guard.RemoveSubtitles(c)
 		s.log.Info("removed the previous version", "path", c.Path())
+	case !errors.Is(err, fs.ErrNotExist):
+		return err
+	case !dirExists(filepath.Dir(c.Path())):
+		return err // not gone: its folder is away
 	}
+	if err := s.store.DropFileChange(ctx, c.Path()); err != nil {
+		s.log.Warn("could not drop the plan to remove a file", "path", c.Path(), "err", err)
+	}
+	return nil
+}
+
+// finishChanges finishes the changes to files that a crash or a failed
+// removal left, as their plans in the database tell: a file that moved
+// gets its record moved too, one that did not keeps its record, and a
+// version an upgrade replaced goes. A change waits while the folder it
+// happens in is missing, as when the share is not mounted. It runs only
+// while no other change to the library's files runs, so every plan it
+// finds is one left that way.
+func (s *Service) finishChanges(ctx context.Context) {
+	changes, err := s.store.FileChanges(ctx)
+	if err != nil {
+		s.log.Error("list planned changes to files", "err", err)
+		return
+	}
+	if len(changes) == 0 || !s.files.TryLock() {
+		return
+	}
+	defer s.files.Unlock()
+	for _, c := range changes {
+		if c.NewPath != "" {
+			if !dirExists(filepath.Dir(c.NewPath)) {
+				continue
+			}
+			if _, err := os.Lstat(c.NewPath); err != nil {
+				// It did not move, so its record is right.
+				if err := s.store.DropFileChange(ctx, c.Path); err != nil {
+					s.log.Warn("could not drop the plan to move a file", "path", c.Path, "err", err)
+				}
+			} else if err := s.store.FinishMove(ctx, c.Path, c.NewPath); err != nil {
+				s.log.Warn("could not record an earlier move", "from", c.Path, "to", c.NewPath, "err", err)
+			} else {
+				s.log.Info("recorded an earlier move", "from", c.Path, "to", c.NewPath)
+			}
+			continue
+		}
+		if !dirExists(filepath.Dir(c.Path)) {
+			continue
+		}
+		used, err := s.store.FileInUse(ctx, c.Path)
+		if err != nil {
+			s.log.Warn("could not check a file planned for removal", "path", c.Path, "err", err)
+			continue
+		}
+		if used {
+			// Recorded again meanwhile: it stays.
+			if err := s.store.DropFileChange(ctx, c.Path); err != nil {
+				s.log.Warn("could not drop the plan to remove a file", "path", c.Path, "err", err)
+			}
+			continue
+		}
+		claim, err := s.guard.Planned(ctx, c.Path)
+		if err != nil {
+			s.log.Warn("could not claim a file planned for removal", "path", c.Path, "err", err)
+			continue
+		}
+		s.removeVersion(ctx, claim) // a failure was told the first time
+	}
+}
+
+func dirExists(dir string) bool {
+	st, err := os.Stat(dir)
+	return err == nil && st.IsDir()
 }
 
 // verify checks that Jellyfin lists each file as the intended episode.

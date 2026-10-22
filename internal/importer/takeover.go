@@ -368,16 +368,25 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 			note("%s stayed: cannot create %s: %v", f.Source, filepath.Dir(f.Target), unwrapPath(err))
 			continue
 		}
+		// The plan comes first: if Garner ends after the move, finishChanges
+		// moves the record when it starts again.
+		if err := s.store.PlanMove(ctx, f.Source, f.Target); err != nil {
+			return out, fmt.Errorf("plan the move of %s: %w", f.Source, err)
+		}
 		if err := s.guard.Move(ctx, source, f.Target); err != nil {
 			if errors.Is(err, syscall.EXDEV) {
 				note("%s stayed: it is on another filesystem than the library, and Garner moves files without copying", f.Source)
 			} else {
 				note("%s stayed: %v", f.Source, unwrapPath(err))
 			}
+			if err := s.store.DropFileChange(ctx, f.Source); err != nil {
+				return out, fmt.Errorf("drop the plan to move %s: %w", f.Source, err)
+			}
 			continue
 		}
-		if err := s.store.MoveEpisodeFile(ctx, f.Source, f.Target); err != nil {
-			// The file moved; the record must follow, or Garner loses it.
+		if err := s.store.FinishMove(ctx, f.Source, f.Target); err != nil {
+			// The file moved; its plan stays, so finishChanges moves the
+			// record later.
 			return out, fmt.Errorf("record the move of %s to %s: %w", f.Source, f.Target, err)
 		}
 		s.log.Info("renamed a taken-over file", "series", seriesID, "from", f.Source, "to", f.Target)
