@@ -232,8 +232,40 @@ func (g *Guard) Mkdir(dir string) error {
 	if err := g.inLibrary(dir); err != nil {
 		return err
 	}
+	dir = filepath.Clean(dir)
+	var root string
+	for _, r := range g.roots() {
+		if contains(r, dir) {
+			root = r
+		}
+	}
 	g.opts.Before("mkdir", dir)
-	return os.MkdirAll(dir, 0o775)
+	// One folder at a time below the root: os.Mkdir fails when the folder
+	// above is missing, so a root that went since the check, as when its
+	// share was unmounted, is not created again for files to go into.
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return err
+	}
+	path := root
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		path = filepath.Join(path, part)
+		err := os.Mkdir(path, 0o775)
+		if errors.Is(err, fs.ErrExist) {
+			st, serr := os.Stat(path)
+			if serr != nil {
+				return serr
+			}
+			if !st.IsDir() {
+				return fmt.Errorf("%s is not a folder", path)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Move renames f to target inside a library root. It overwrites only a

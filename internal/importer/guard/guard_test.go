@@ -326,3 +326,26 @@ func TestRemoveEmpty(t *testing.T) {
 		t.Errorf("RemoveEmpty with a stop that does not hold the file: %v", err)
 	}
 }
+
+// TestMkdirRootGoes unmounts the library right after the guard checked it,
+// before it creates the folders: the library folder must not come back as
+// an empty folder that files then go into (GRR-37).
+func TestMkdirRootGoes(t *testing.T) {
+	s := newShare(t)
+	root := s.dir("library/tv")
+	g := New(Options{
+		Library:  config.Library{TV: root},
+		Recorded: func(context.Context, string) (bool, error) { return false, nil },
+		Before: func(op, _ string) {
+			if op == "mkdir" {
+				os.Rename(root, root+".away")
+			}
+		},
+	})
+	if err := g.Mkdir(filepath.Join(root, "Show", "Season.01")); err == nil {
+		t.Error("Mkdir succeeded without the library folder")
+	}
+	if s.exists(root) {
+		t.Error("the library folder came back")
+	}
+}
