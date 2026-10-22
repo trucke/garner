@@ -76,6 +76,9 @@ type Deps struct {
 	Prober importer.Prober
 	// Rename moves files into the library.
 	Rename func(oldpath, newpath string) error
+	// Before runs before each change to a file or folder; see
+	// guard.Options.Before.
+	Before func(op, path string)
 }
 
 // Run opens the database and serves until ctx is cancelled.

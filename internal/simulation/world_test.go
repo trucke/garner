@@ -95,6 +95,9 @@ type faults struct {
 	mislabeled, wrongRuntime, corrupt          bool
 	unplug, readOnly, catalogue, strays        bool
 	restarts                                   bool
+	// crashes ends Garner at a change to a file now and then; between
+	// lets another step run first, as another goroutine or request may.
+	crashes, between bool
 }
 
 func randomFaults(r *rand.Rand) faults {
@@ -106,6 +109,7 @@ func randomFaults(r *rand.Rand) faults {
 		mislabeled: on(), wrongRuntime: on(), corrupt: on(),
 		unplug: on(), readOnly: on(), catalogue: on(), strays: on(),
 		restarts: on(),
+		crashes:  on(), between: on(),
 	}
 }
 
@@ -117,6 +121,7 @@ func (f faults) String() string {
 		"jf-down": f.jfDown, "jf-ignore-hints": f.jfIgnoreHints, "jf-late": f.jfLate, "jf-never": f.jfNever, "jf-wrong": f.jfWrong,
 		"mislabeled": f.mislabeled, "wrong-runtime": f.wrongRuntime, "corrupt": f.corrupt,
 		"unplug": f.unplug, "read-only": f.readOnly, "catalogue": f.catalogue, "strays": f.strays, "restarts": f.restarts,
+		"crashes": f.crashes, "between": f.between,
 	} {
 		if set {
 			on = append(on, name)

@@ -69,7 +69,7 @@ The maintainer also runs tests against real release names, which stay private. W
 
 ### The simulation
 
-`internal/simulation` runs Garner's server against a simulated SABnzbd, Prowlarr, Jellyfin and FFprobe, on a temporary share and a simulated clock. The share holds a library with files from before Garner, the user's own files and an older Jellyfin library; the downloads or the older library may sit on another disk. A seed drives every event: what the user does, how the services answer and fail, when a folder is unplugged or refuses writes, how the catalogue changes, when time jumps and when Garner restarts. The monitor runs too, with upgrades on. After every step, the test checks Garner's promises about files:
+`internal/simulation` runs Garner's server against a simulated SABnzbd, Prowlarr, Jellyfin and FFprobe, on a temporary share and a simulated clock. The share holds a library with files from before Garner, the user's own files and an older Jellyfin library; the downloads or the older library may sit on another disk. A seed drives every event: what the user does, how the services answer and fail, when a folder is unplugged or refuses writes, how the catalogue changes, when time jumps and when Garner restarts. The monitor runs too, with upgrades on. Inside a step, right before Garner changes a file, the seed may end Garner as a power cut would, and start it again from its database, or run another step first, as another request or one of Garner's other loops may. After every step, the test checks Garner's promises about files:
 
 - Files no one gave Garner, such as the user's own files and Jellyfin's metadata, stay as they are.
 - A video leaves the library only when a better file for its episodes replaced it, or when the user deleted its show with its files.
@@ -77,7 +77,7 @@ The maintainer also runs tests against real release names, which stay private. W
 - Every file Garner records exists.
 - Downloads and imports change state only along the allowed transitions.
 
-After a calm period at the end, every download and every import must have ended, every wanted episode that aired must have a file unless it waits for the user, and Garner must have removed SABnzbd's folders of the downloads it imported.
+After a calm period at the end, every download and every import must have ended, every wanted episode that aired must have a file unless it waits for the user, Garner must have removed SABnzbd's folders of the downloads it imported, and a video that was an episode's file must be gone once no episode records it, as after an upgrade.
 
 `go test ./...` runs a fixed list of seeds, each twice: the second run must tell the same story. A failure names the seed, the step, the broken rule and the last steps, and ends with a command that replays it:
 
@@ -89,7 +89,7 @@ With `-v`, the replay prints every step. To explore, run `-seeds 1000` for a tho
 
 A failure is a bug in Garner or in the simulation. When you fix a bug it found, also add a focused test for it: after later changes, the same seed may take another path.
 
-The fixed seeds were chosen so that, together, every event changes something and they catch bugs built into Garner on purpose. A change to the simulated world sends every seed down another path; the test then fails when an event no longer changes anything in any fixed seed. The comment on `fixedSeeds` says how to choose them again and lists the bugs to check by hand.
+The fixed seeds were chosen so that, together, every event changes something, a crash and another step meet every step that changes files, and they catch bugs built into Garner on purpose. A change to the simulated world sends every seed down another path; the test then fails when an event or a crash point no longer shows up in any fixed seed. The comment on `fixedSeeds` says how to choose them again and lists the bugs to check by hand.
 
 ## How the code is organised
 

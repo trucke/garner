@@ -52,7 +52,7 @@ func (s *Server) setupImports() error {
 	imp := importer.New(s.store, prober, jf, importer.Options{
 		Profiles:     s.profiles,
 		SABnzbdPaths: s.cfg.SABnzbd.Paths, JellyfinPaths: s.cfg.Jellyfin.Paths, Library: lib, Rules: rules,
-		Rename: s.deps.Rename,
+		Rename: s.deps.Rename, Before: s.deps.Before,
 	}, s.log)
 	imp.Now = s.now
 	imp.OnChange = func(d store.Download) { s.events.publish(Event{Type: "download.updated", Data: d}) }

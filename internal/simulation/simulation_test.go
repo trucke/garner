@@ -38,19 +38,29 @@ var (
 
 const defaultSteps = 300
 
+// Garner tells some dates in local time, such as the day a show's monitor
+// started. One zone everywhere keeps a seed's story the same on every
+// machine.
+func init() { time.Local = time.UTC }
+
 // fixedSeeds run with every go test. Together, every event changes
-// something in them (a refused request does not count), they cover both
-// path setups and the three disk setups, and they catch the bugs built
-// into Garner on purpose to test the simulation: overwriting a file
-// Garner does not own, removing SABnzbd's whole folder, never giving up
-// on Jellyfin and downloading again while an import waits for the user.
+// something in them (a refused request does not count), a crash and
+// another step meet each step that changes files, they cover both path
+// setups and the three disk setups, and they catch the bugs built into
+// Garner on purpose to test the simulation: overwriting a file Garner does
+// not own, removing SABnzbd's whole folder, never giving up on Jellyfin,
+// downloading again while an import waits for the user, not finishing the
+// changes a crash left and creating a library folder that went. No seed of
+// 240 caught an import's move without the lock on the library's files;
+// TestImportDuringRename does.
 //
 // A change to the world sends every seed down another path, and
-// TestSimulation then fails when an event or a setup went missing. To
-// choose again, swap in other seeds until it passes; -seed N -v shows
-// what a seed does. Whether they still catch the bugs takes building them
-// in again by hand. A bug a seed found gets a focused test of its own.
-var fixedSeeds = []uint64{41, 69, 104}
+// TestSimulation then fails when an event, a crash point or a setup went
+// missing. To choose again, swap in other seeds until it passes; a seed
+// replayed with -v shows what it does and what it covered. Whether they
+// still catch the bugs takes building them in again by hand. A bug a seed
+// found gets a focused test of its own.
+var fixedSeeds = []uint64{7, 26, 35, 64, 87}
 
 // TestSimulation runs each seed twice: the rules must hold in the first
 // run, and the second must tell the same story. The fixed seeds, all run
@@ -81,6 +91,7 @@ func TestSimulation(t *testing.T) {
 			}
 			if *seedFlag != 0 && testing.Verbose() {
 				t.Log("\n" + strings.Join(first.trace, "\n"))
+				t.Log("covered: " + strings.Join(first.covered, "; "))
 			}
 			if first.failure != "" {
 				t.Fatal(first.failure)
@@ -130,8 +141,16 @@ type sim struct {
 	token string
 	pick  *rand.Rand // the next event
 	user  *rand.Rand // the user's choices
-	trace []string
-	step  int
+	// inside decides what happens at a change to a file: a crash, another
+	// step first or nothing.
+	inside *rand.Rand
+	// events are the steps that can happen; current is the one running,
+	// and nested whether a step runs inside it.
+	events  []event
+	current string
+	nested  bool
+	trace   []string
+	step    int
 	// deleting is the show the user deleted with its files in this step.
 	deleting int64
 	// retrying is the download the user retries in this step.
@@ -149,6 +168,9 @@ type sim struct {
 	// videos caches the videos read, by path; a file whose size and
 	// modification time stay is not read again.
 	videos map[string]cachedVideo
+	// held are the videos an episode's record held, with the episodes,
+	// until the show is deleted or the catalogue drops one of them.
+	held map[string][]int64
 }
 
 type cachedVideo struct {
@@ -181,8 +203,8 @@ func run(t *testing.T, seed uint64, steps int) outcome {
 	// The temporary folder can only go once every folder takes writes.
 	defer w.unlock()
 	s := &sim{ctx: context.Background(), seed: seed, steps: steps, w: w, cfg: w.config(),
-		pick: rand.New(rand.NewPCG(seed, 3)), user: rand.New(rand.NewPCG(seed, 4)), videos: map[string]cachedVideo{},
-		covered: map[string]bool{}}
+		pick: rand.New(rand.NewPCG(seed, 3)), user: rand.New(rand.NewPCG(seed, 4)), inside: rand.New(rand.NewPCG(seed, 5)),
+		videos: map[string]cachedVideo{}, held: map[string][]int64{}, covered: map[string]bool{}}
 	s.sentinel = s.digest(filepath.Join(w.root, "elsewhere"))
 	if err := s.start(); err != nil {
 		t.Fatal(err)
@@ -205,12 +227,13 @@ func run(t *testing.T, seed uint64, steps int) outcome {
 	}
 
 	var events, all []event
-	for _, e := range s.events() {
+	for _, e := range s.allEvents() {
 		all = append(all, e)
 		if e.on {
 			events = append(events, e)
 		}
 	}
+	s.events = events
 	total := 0
 	for _, e := range events {
 		total += e.weight
@@ -231,6 +254,9 @@ func run(t *testing.T, seed uint64, steps int) outcome {
 	o := outcome{trace: s.trace, failure: s.failure}
 	for _, e := range all {
 		o.all = append(o.all, e.actor+" "+e.name)
+	}
+	for _, p := range changing {
+		o.all = append(o.all, "crash during "+p, "step inside "+p)
 	}
 	o.all = append(o.all, setups...)
 	o.covered = append(sortedKeys(s.covered), setup(w)...)
@@ -262,7 +288,8 @@ func (s *sim) start() error {
 		Sleep:     func(_ context.Context, d time.Duration) error { s.w.now = s.w.now.Add(d); return nil },
 		Transport: transport{s.w},
 		Prober:    prober{},
-		Rename:    s.w.rename,
+		Rename:    s.moveFile,
+		Before:    s.beforeChange,
 	}
 	srv, err := server.New(s.cfg, st, "sim", deps, slog.New(slog.DiscardHandler))
 	if err != nil {
@@ -282,9 +309,9 @@ type event struct {
 	on  bool // the event can happen: its fault is on, if it is one
 }
 
-// events are all that can happen next, with their weights. Faults the
+// allEvents are all that can happen next, with their weights. Faults the
 // seed did not turn on never happen.
-func (s *sim) events() []event {
+func (s *sim) allEvents() []event {
 	w, f := s.w, s.w.faults
 	// An outage lasts until the clock moves on.
 	outage := func(name string, down *bool, on bool) event {
@@ -351,7 +378,9 @@ func (s *sim) do(actor, name string, f func() string) {
 	before := *s.last
 	s.step++
 	s.refused = false
-	detail := f()
+	s.current = actor + " " + name
+	detail := s.runStep(f)
+	s.current = ""
 	s.note(actor+" "+name, detail)
 	// Garner's own steps always run; the others changed something when
 	// they say what, unless Garner refused the request.
@@ -367,6 +396,7 @@ func (s *sim) do(actor, name string, f func() string) {
 		return
 	}
 	s.last = &after
+	s.hold(after)
 	for _, rule := range []func(snapshot, snapshot) (string, string){s.foreignStays, s.filesStay, s.recordsMatch, s.outsideStays, s.statesMove} {
 		if id, msg := rule(before, after); msg != "" {
 			s.fail(id, msg)
@@ -395,10 +425,129 @@ func (s *sim) restart() string {
 	if err := s.st.Close(); err != nil {
 		return "close: " + err.Error()
 	}
-	if err := s.start(); err != nil {
+	if err := s.boot(); err != nil {
 		s.fail("setup", "restart: "+err.Error())
 	}
 	return "Garner started again"
+}
+
+// boot starts Garner again, as after a restart or a crash: its import
+// loop runs a round at once, which finishes the changes to files a crash
+// interrupted.
+func (s *sim) boot() error {
+	if err := s.start(); err != nil {
+		return err
+	}
+	nested := s.nested
+	s.nested = true // nothing crashes or runs in between while starting
+	s.srv.WorkImports(s.ctx)
+	s.nested = nested
+	return nil
+}
+
+// changing are the steps that change files: those a crash or another step
+// must meet in the middle.
+var changing = []string{"garner import step", "user rename", "user delete show"}
+
+// crash ends Garner in the middle of a step: before a change to a file,
+// or right after a move.
+type crash struct{ when, path string }
+
+// beforeChange runs before each change to a file the guard allows. With
+// the faults on, Garner crashes there now and then, or another step runs
+// first, as another goroutine or request may.
+func (s *sim) beforeChange(op, path string) {
+	if s.nested || s.current == "" {
+		return
+	}
+	f := s.w.faults
+	switch n := s.inside.IntN(100); {
+	case f.crashes && n < 4:
+		panic(crash{"before " + op, path})
+	case f.between && n >= 4 && n < 14:
+		s.between(op, path)
+	}
+}
+
+// moveFile moves a file for Garner as the world does; with crashes on,
+// Garner now and then ends right after the move, before it recorded it.
+func (s *sim) moveFile(oldpath, newpath string) error {
+	err := s.w.rename(oldpath, newpath)
+	if err == nil && s.w.faults.crashes && !s.nested && s.current != "" && s.inside.IntN(100) < 5 {
+		panic(crash{"after rename to", newpath})
+	}
+	return err
+}
+
+// between runs another step before a change to a file. Garner's loops each
+// run in one goroutine, so a loop's step never runs inside its own; a
+// restart is a crash, which beforeChange makes.
+func (s *sim) between(op, path string) {
+	var steps []event
+	total := 0
+	for _, e := range s.events {
+		if e.actor == "garner" && e.actor+" "+e.name == s.current || e.actor == "process" {
+			continue
+		}
+		steps = append(steps, e)
+		total += e.weight
+	}
+	n := s.inside.IntN(total)
+	for _, e := range steps {
+		if n -= e.weight; n >= 0 {
+			continue
+		}
+		s.nested = true
+		outer := s.refused
+		s.refused = false
+		detail := e.run()
+		refused := s.refused
+		s.refused, s.nested = outer, false
+		s.note("  "+e.actor+" "+e.name, fmt.Sprintf("inside %s, before %s %s: %s", s.current, op, s.w.rel(path), detail))
+		if (e.actor == "garner" || detail != "" && !refused) && slices.Contains(changing, s.current) {
+			s.covered["step inside "+s.current] = true
+		}
+		return
+	}
+}
+
+// runStep runs a step. A crash in it ends Garner, which starts again from
+// its database, as after a power cut.
+func (s *sim) runStep(f func() string) (detail string) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		c, ok := r.(crash)
+		if !ok {
+			panic(r)
+		}
+		if slices.Contains(changing, s.current) {
+			s.covered["crash during "+s.current] = true
+		}
+		s.nested = false
+		detail = fmt.Sprintf("crashed %s %s", c.when, s.w.rel(c.path))
+		if err := s.st.Close(); err != nil {
+			s.fail("setup", "close after the crash: "+err.Error())
+			return
+		}
+		if err := s.boot(); err != nil {
+			s.fail("setup", "start after the crash: "+err.Error())
+			return
+		}
+		// The step's answer went with the crash; the database tells what
+		// it did, such as whether a deleted show is gone.
+		for _, sh := range s.w.shows {
+			added, err := s.st.HasSeries(s.ctx, sh.id)
+			if err != nil {
+				s.fail("setup", err.Error())
+				return
+			}
+			sh.added = added
+		}
+	}()
+	return f()
 }
 
 // clock moves time on: mostly minutes, sometimes hours, rarely days. The
@@ -829,7 +978,10 @@ type snapshot struct {
 	records   map[int64]string  // the recorded file, by episode
 	library   map[string]string // where each video in the libraries is, by video
 	dupes     []string
-	jobs      map[string]bool // SABnzbd's job folders that exist, by job
+	// planned are the files Garner planned to remove, as the rest of an
+	// upgrade that replaced them.
+	planned map[string]bool
+	jobs    map[string]bool // SABnzbd's job folders that exist, by job
 }
 
 // libraries are the folders whose videos the rules follow: Garner's and
@@ -837,7 +989,17 @@ type snapshot struct {
 var libraries = []string{"library", "media-old", "unplugged"}
 
 func (s *sim) snapshot() (snapshot, error) {
-	sn := snapshot{downloads: map[int64]store.Download{}, records: map[int64]string{}, library: map[string]string{}, jobs: map[string]bool{}}
+	sn := snapshot{downloads: map[int64]store.Download{}, records: map[int64]string{}, library: map[string]string{}, jobs: map[string]bool{},
+		planned: map[string]bool{}}
+	changes, err := s.st.FileChanges(s.ctx)
+	if err != nil {
+		return sn, err
+	}
+	for _, c := range changes {
+		if c.NewPath == "" {
+			sn.planned[c.Path] = true
+		}
+	}
 	for _, j := range s.w.sab.jobs {
 		if _, err := os.Stat(j.dir); j.dir != "" && !j.lost && err == nil {
 			sn.jobs[j.id] = true
@@ -938,6 +1100,9 @@ func (s *sim) filesStay(before, after snapshot) (string, string) {
 			if before.records[e] == path {
 				episodes = append(episodes, e)
 			}
+		}
+		if len(episodes) == 0 && before.planned[path] {
+			continue // the rest of an upgrade that replaced it
 		}
 		if len(episodes) == 0 {
 			return "S2", fmt.Sprintf("video %s at %s left the library, and no episode recorded it", id, path)
@@ -1114,6 +1279,7 @@ func merge(a, b map[string][]string) map[string][]string {
 func (s *sim) calm() {
 	w := s.w
 	w.sab.loseNext, w.sab.hideNext = false, false
+	w.faults.crashes, w.faults.between = false, false
 	s.do("world", "calm", func() string { return "the world turns healthy: " + s.advance(time.Minute) })
 	s.do("world", "good releases", func() string {
 		var posted []string
@@ -1194,6 +1360,44 @@ func (s *sim) calm() {
 		s.fail("L3", fmt.Sprintf("the monitor did not get these wanted episodes: %v", missing))
 	}
 	s.cleanedUp(all)
+	if s.failure == "" {
+		s.replacedGone(*s.last)
+	}
+}
+
+// hold notes the videos episodes' records hold. It lets go of those of a
+// deleted show, whose staying is the user's choice, and of an episode the
+// catalogue dropped, whose record went with it.
+func (s *sim) hold(sn snapshot) {
+	byPath := make(map[string]string, len(sn.library))
+	for id, p := range sn.library {
+		byPath[p] = id
+	}
+	for _, e := range sortedKeys64(sn.records) {
+		if id, ok := byPath[sn.records[e]]; ok && !slices.Contains(s.held[id], e) {
+			s.held[id] = append(s.held[id], e)
+		}
+	}
+	for _, id := range sortedKeys(s.held) {
+		if slices.ContainsFunc(s.held[id], func(e int64) bool { ep := s.w.episode(e); return ep == nil || !ep.show.added }) {
+			delete(s.held, id)
+		}
+	}
+}
+
+// replacedGone is L5: a video that was an episode's file and is no longer
+// any episode's is gone from the library, as when an upgrade replaced it.
+func (s *sim) replacedGone(sn snapshot) {
+	recorded := map[string]bool{}
+	for _, p := range sn.records {
+		recorded[p] = true
+	}
+	for _, id := range sortedKeys(sn.library) {
+		if p := sn.library[id]; s.held[id] != nil && !recorded[p] {
+			s.fail("L5", fmt.Sprintf("%s was an episode's file and stayed in the library after no episode recorded it any more", p))
+			return
+		}
+	}
 }
 
 // wanted are the aired episodes the monitor gets.
@@ -1301,7 +1505,7 @@ func (s *sim) dump() {
 	all, _ := s.st.Downloads(s.ctx, 100000)
 	slices.SortFunc(all, func(a, b store.Download) int { return int(a.ID - b.ID) })
 	for _, d := range all {
-		s.note("end download", fmt.Sprintf("%d %s %s %s/%s %s", d.ID, d.JobID, d.Title, d.State, d.Import.State, d.Import.Detail))
+		s.note("end download", fmt.Sprintf("%d episode %d %s %s %s/%s %s", d.ID, d.EpisodeID, d.JobID, d.Title, d.State, d.Import.State, d.Import.Detail))
 	}
 	for _, j := range s.w.sab.jobs {
 		s.note("end job", fmt.Sprintf("%s %s %s gone=%v hidden=%v %s", j.id, j.name, j.status, j.gone, j.hidden, s.w.rel(j.dir)))
