@@ -72,7 +72,7 @@ The maintainer also runs tests against real release names, which stay private. W
 `internal/simulation` runs Garner's server against a simulated SABnzbd, Prowlarr, Jellyfin and FFprobe, on a temporary share and a simulated clock. The share holds a library with files from before Garner, the user's own files and an older Jellyfin library; the downloads or the older library may sit on another disk. A seed drives every event: what the user does, how the services answer and fail, when a folder is unplugged or refuses writes, how the catalogue changes, when time jumps and when Garner restarts. The monitor runs too, with upgrades on. Inside a step, right before Garner changes a file, the seed may end Garner as a power cut would, and start it again from its database, or run another step first, as another request or one of Garner's other loops may. After every step, the test checks Garner's promises about files:
 
 - Files no one gave Garner, such as the user's own files and Jellyfin's metadata, stay as they are.
-- A video leaves the library only when a better file for its episodes replaced it, or when the user deleted its show with its files.
+- A video leaves the library only when a file as good or better replaced it, or a worse one the user chose over it, or when the user deleted its show with its files.
 - Garner changes nothing outside the library and SABnzbd's folders, and removes a download's folder only when it is done with the download.
 - Every file Garner records exists.
 - Downloads and imports change state only along the allowed transitions.
@@ -84,6 +84,8 @@ After a calm period at the end, every download and every import must have ended,
 ```bash
 go test ./internal/simulation -run TestSimulation -seed 1842 -steps 317 -v
 ```
+
+A failure also says whose mistake it is: Garner broke a rule, or the simulation is out of step with Garner, when its own notes of what it told Garner, such as which shows the user added, differ from Garner's database. The simulation checks those notes before every rule.
 
 With `-v`, the replay prints every step. To explore, run `-seeds 1000` for a thousand fresh seeds instead of the fixed ones.
 

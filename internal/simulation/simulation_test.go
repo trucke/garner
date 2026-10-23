@@ -26,6 +26,7 @@ import (
 
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/importer/guard"
+	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/server"
 	"github.com/trucke/garner/internal/store"
 )
@@ -50,9 +51,13 @@ func init() { time.Local = time.UTC }
 // Garner on purpose to test the simulation: overwriting a file Garner does
 // not own, removing SABnzbd's whole folder, never giving up on Jellyfin,
 // downloading again while an import waits for the user, not finishing the
-// changes a crash left and creating a library folder that went. No seed of
-// 240 caught an import's move without the lock on the library's files;
-// TestImportDuringRename does.
+// changes a crash left and creating a library folder that went. Rarer bugs
+// have focused tests instead: an import's move without the lock on the
+// library's files, which no seed of 240 caught (TestImportDuringRename),
+// and two the burn-in of 20,000 seeds found once or twice: adopting
+// another download's SABnzbd job (TestConfirmLeavesOtherJobs) and
+// recording over a better file the library gained
+// (TestImportKeepsBetterGainedMeanwhile).
 //
 // A change to the world sends every seed down another path, and
 // TestSimulation then fails when an event, a crash point or a setup went
@@ -151,12 +156,15 @@ type sim struct {
 	nested  bool
 	trace   []string
 	step    int
-	// deleting is the show the user deleted with its files in this step.
-	deleting int64
-	// retrying is the download the user retries in this step.
-	retrying int64
-	// removed is the episode the catalogue dropped in this step.
-	removed int64
+	// deleting are the shows the user deletes with their files in this
+	// step, retrying the downloads the user retries and removed the
+	// episodes the catalogue drops. Sets: a step may run inside another.
+	deleting, retrying, removed map[int64]bool
+	// deleted are the shows deleted in this step, whatever happened to
+	// them after inside it, as being added again.
+	deleted map[int64]bool
+	// strays counts the user's files put in the way, for their contents.
+	strays int
 	// refused is whether Garner refused the step's last request.
 	refused  bool
 	covered  map[string]bool
@@ -366,11 +374,11 @@ func (s *sim) do(actor, name string, f func() string) {
 	if s.failure != "" {
 		return
 	}
-	s.deleting, s.retrying, s.removed = 0, 0, 0
+	s.deleting, s.retrying, s.removed, s.deleted = map[int64]bool{}, map[int64]bool{}, map[int64]bool{}, map[int64]bool{}
 	if s.last == nil {
 		sn, err := s.snapshot()
 		if err != nil {
-			s.fail("setup", err.Error())
+			s.fail(simStopped, err.Error())
 			return
 		}
 		s.last = &sn
@@ -392,17 +400,91 @@ func (s *sim) do(actor, name string, f func() string) {
 	}
 	after, err := s.snapshot()
 	if err != nil {
-		s.fail("setup", err.Error())
+		s.fail(simStopped, err.Error())
 		return
 	}
 	s.last = &after
 	s.hold(after)
+	// The rules judge Garner by the simulation's notes, so those are checked
+	// first. What the user sets changes only before the calm period, which
+	// checks it once at its end, with the episodes, which only the
+	// simulation's own catalogue changes write.
+	if s.step <= s.steps {
+		if msg := s.outOfStep(false); msg != "" {
+			s.fail(simOutOfStep, msg)
+			return
+		}
+	}
 	for _, rule := range []func(snapshot, snapshot) (string, string){s.foreignStays, s.filesStay, s.recordsMatch, s.outsideStays, s.statesMove} {
 		if id, msg := rule(before, after); msg != "" {
 			s.fail(id, msg)
 			return
 		}
 	}
+}
+
+// Failures that are the simulation's, not Garner's.
+const (
+	simOutOfStep = "out of step" // the simulation's notes differ from what it told Garner
+	simStopped   = "setup"       // the simulation could not go on
+)
+
+// outOfStep compares what the simulation told Garner with Garner's
+// database: which shows it has, with what monitor mode, start and profile,
+// and with episodes, their episodes as the catalogue has them. A
+// difference is the simulation's own mistake, so the rules would judge
+// Garner by notes that are wrong.
+func (s *sim) outOfStep(episodes bool) string {
+	list, err := s.st.ListSeries(s.ctx)
+	if err != nil {
+		return err.Error()
+	}
+	garner := map[int64]store.Series{}
+	for _, sr := range list {
+		garner[sr.ID] = sr
+	}
+	for _, sh := range s.w.shows {
+		sr, added := garner[sh.id]
+		if added != sh.added {
+			return fmt.Sprintf("show %d: the simulation notes added %v, Garner has it %v", sh.id, sh.added, added)
+		}
+		if !added {
+			continue
+		}
+		delete(garner, sh.id)
+		if sr.Monitor != sh.monitor || sr.Profile != sh.profile {
+			return fmt.Sprintf("show %d: the simulation notes monitor %s and profile %s, Garner has %s and %s", sh.id, sh.monitor, sh.profile, sr.Monitor, sr.Profile)
+		}
+		if sr.Monitor == store.MonitorNew && sr.MonitorSince.Unix() != sh.since.Unix() {
+			return fmt.Sprintf("show %d: the simulation notes new episodes from %s, Garner from %s", sh.id, sh.since, sr.MonitorSince)
+		}
+		if !episodes {
+			continue
+		}
+		d, err := s.st.LoadSeries(s.ctx, sh.id)
+		if err != nil {
+			return err.Error()
+		}
+		noted := map[int64]string{}
+		for _, e := range sh.episodes {
+			noted[e.id] = fmt.Sprintf("S%02dE%02d aired %s", e.season, e.number, e.aired.Format(time.DateOnly))
+		}
+		for _, e := range d.Episodes {
+			n := e.Numbers["official"]
+			got := fmt.Sprintf("S%02dE%02d aired %s", n.Season, n.Number, e.Aired)
+			if noted[e.ID] != got {
+				return fmt.Sprintf("show %d: episode %d is %q in the simulation's notes, %q in Garner", sh.id, e.ID, noted[e.ID], got)
+			}
+			delete(noted, e.ID)
+		}
+		for _, id := range sortedKeys64(noted) {
+			return fmt.Sprintf("show %d: episode %d is %q in the simulation's notes and not in Garner", sh.id, id, noted[id])
+		}
+	}
+	for _, id := range sortedKeys64(garner) {
+		return fmt.Sprintf("Garner has show %d, which the simulation does not know", id)
+	}
+	return ""
 }
 
 func (s *sim) note(what, detail string) {
@@ -416,8 +498,15 @@ func (s *sim) fail(rule, msg string) {
 		return
 	}
 	last := s.trace[max(0, len(s.trace)-15):]
-	s.failure = fmt.Sprintf("seed %d, step %d: %s broken\n  %s\nlast steps:\n  %s\nreplay: go test ./internal/simulation -run TestSimulation -seed %d -steps %d -v",
-		s.seed, s.step, rule, strings.ReplaceAll(msg, s.w.root, "<share>"), strings.Join(last, "\n  "), s.seed, s.steps)
+	what := "Garner broke " + rule
+	switch rule {
+	case simOutOfStep:
+		what = "the simulation is out of step with Garner, its own mistake"
+	case simStopped:
+		what = "the simulation could not go on"
+	}
+	s.failure = fmt.Sprintf("seed %d, step %d: %s\n  %s\nlast steps:\n  %s\nreplay: go test ./internal/simulation -run TestSimulation -seed %d -steps %d -v",
+		s.seed, s.step, what, strings.ReplaceAll(msg, s.w.root, "<share>"), strings.Join(last, "\n  "), s.seed, s.steps)
 }
 
 // restart throws Garner away and sets it up again from the database.
@@ -426,7 +515,7 @@ func (s *sim) restart() string {
 		return "close: " + err.Error()
 	}
 	if err := s.boot(); err != nil {
-		s.fail("setup", "restart: "+err.Error())
+		s.fail(simStopped, "restart: "+err.Error())
 	}
 	return "Garner started again"
 }
@@ -529,11 +618,11 @@ func (s *sim) runStep(f func() string) (detail string) {
 		s.nested = false
 		detail = fmt.Sprintf("crashed %s %s", c.when, s.w.rel(c.path))
 		if err := s.st.Close(); err != nil {
-			s.fail("setup", "close after the crash: "+err.Error())
+			s.fail(simStopped, "close after the crash: "+err.Error())
 			return
 		}
 		if err := s.boot(); err != nil {
-			s.fail("setup", "start after the crash: "+err.Error())
+			s.fail(simStopped, "start after the crash: "+err.Error())
 			return
 		}
 		// The step's answer went with the crash; the database tells what
@@ -541,7 +630,7 @@ func (s *sim) runStep(f func() string) (detail string) {
 		for _, sh := range s.w.shows {
 			added, err := s.st.HasSeries(s.ctx, sh.id)
 			if err != nil {
-				s.fail("setup", err.Error())
+				s.fail(simStopped, err.Error())
 				return
 			}
 			sh.added = added
@@ -598,7 +687,7 @@ func (s *sim) sabProgress() string {
 	}
 	detail, err := s.w.progress(j)
 	if err != nil {
-		s.fail("setup", err.Error())
+		s.fail(simStopped, err.Error())
 	}
 	return detail
 }
@@ -608,6 +697,13 @@ func (s *sim) sabProgress() string {
 func (s *sim) catalogue() string {
 	sh := s.someShow()
 	if sh == nil {
+		return ""
+	}
+	// A step this one runs inside may have deleted the show already.
+	if added, err := s.st.HasSeries(s.ctx, sh.id); err != nil || !added {
+		if err != nil {
+			s.fail(simStopped, err.Error())
+		}
 		return ""
 	}
 	w := s.w
@@ -625,9 +721,10 @@ func (s *sim) catalogue() string {
 		what = fmt.Sprintf("episode %d announced", e.id)
 	case op == 1:
 		i := 1 + w.rnd.IntN(len(sh.episodes)-1)
-		s.removed = sh.episodes[i].id
+		dropped := sh.episodes[i].id
+		s.removed[dropped] = true
 		sh.episodes = slices.Delete(sh.episodes, i, i+1)
-		what = fmt.Sprintf("episode %d dropped", s.removed)
+		what = fmt.Sprintf("episode %d dropped", dropped)
 	default:
 		a := sh.episodes[w.rnd.IntN(len(sh.episodes))]
 		for _, b := range sh.episodes {
@@ -639,7 +736,7 @@ func (s *sim) catalogue() string {
 		}
 	}
 	if err := s.st.UpdateSeries(s.ctx, w.seriesData(sh), true, w.now); err != nil {
-		s.fail("setup", err.Error())
+		s.fail(simStopped, err.Error())
 	}
 	if what == "" {
 		return "" // no other episode in the season to swap with: no change
@@ -667,7 +764,8 @@ func (s *sim) stray() string {
 	if s.w.unplugged != "" && strings.HasPrefix(rel, s.w.unplugged+"/") {
 		return "" // the user cannot reach it while it is unplugged
 	}
-	if !s.w.addForeign(rel, fmt.Sprintf(`{"id":"stray-%d"}`, d.ID)) {
+	s.strays++
+	if !s.w.addForeign(rel, fmt.Sprintf(`{"id":"stray-%d"}`, s.strays)) {
 		return ""
 	}
 	return fmt.Sprintf("download %d: %s", d.ID, rel)
@@ -850,7 +948,7 @@ func (s *sim) retry() string {
 }
 
 func (s *sim) retryDownload(d store.Download) string {
-	s.retrying = d.ID
+	s.retrying[d.ID] = true
 	code, body := s.call(http.MethodPost, fmt.Sprintf("/api/v1/downloads/%d/import", d.ID), "")
 	return fmt.Sprintf("download %d (%s): %s", d.ID, d.Import.State, answer(code, body))
 }
@@ -861,14 +959,15 @@ func (s *sim) deleteShow() string {
 		return ""
 	}
 	files := []string{"keep", "delete"}[s.user.IntN(2)]
+	outer := s.deleting[sh.id] // a step this one runs inside deletes it
 	if files == "delete" {
-		s.deleting = sh.id
+		s.deleting[sh.id] = true
 	}
 	code, body := s.call(http.MethodDelete, fmt.Sprintf("/api/v1/series/%d?files=%s", sh.id, files), "")
 	if code == http.StatusOK {
-		sh.added = false
-	} else {
-		s.deleting = 0 // refused: nothing of the show may go
+		sh.added, s.deleted[sh.id] = false, true
+	} else if !outer {
+		delete(s.deleting, sh.id) // refused: nothing of the show may go
 	}
 	return fmt.Sprintf("show %d, files=%s: %s", sh.id, files, answer(code, body))
 }
@@ -890,16 +989,19 @@ func (s *sim) addShow() string {
 	sh := absent[s.user.IntN(len(absent))]
 	sh.profile = "tv" // a show added again starts over, whatever it had
 	if err := s.w.seedShow(s.ctx, s.st, sh, store.MonitorOff); err != nil {
-		s.fail("setup", err.Error())
+		s.fail(simStopped, err.Error())
 		return ""
 	}
-	sh.added = true
+	// Seeded with the monitor off; the notes take the mode the user wants
+	// once Garner took it.
+	want := sh.monitor
+	sh.added, sh.monitor = true, store.MonitorOff
 	detail := fmt.Sprintf("show %d: take-over %s", sh.id, s.takeOverShow(sh))
-	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id), fmt.Sprintf(`{"monitor":%q}`, sh.monitor))
+	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id), fmt.Sprintf(`{"monitor":%q}`, want))
 	if code == http.StatusOK {
-		sh.since = s.w.now
+		sh.monitor, sh.since = want, s.w.now
 	}
-	return fmt.Sprintf("%s; monitor %s: %s", detail, sh.monitor, answer(code, body))
+	return fmt.Sprintf("%s; monitor %s: %s", detail, want, answer(code, body))
 }
 
 func (s *sim) takeOverShow(sh *show) string {
@@ -976,6 +1078,7 @@ func (s *sim) changeProfile() string {
 type snapshot struct {
 	downloads map[int64]store.Download
 	records   map[int64]string  // the recorded file, by episode
+	tiers     map[int64]string  // the recorded file's tier, by episode
 	library   map[string]string // where each video in the libraries is, by video
 	dupes     []string
 	// planned are the files Garner planned to remove, as the rest of an
@@ -989,7 +1092,7 @@ type snapshot struct {
 var libraries = []string{"library", "media-old", "unplugged"}
 
 func (s *sim) snapshot() (snapshot, error) {
-	sn := snapshot{downloads: map[int64]store.Download{}, records: map[int64]string{}, library: map[string]string{}, jobs: map[string]bool{},
+	sn := snapshot{downloads: map[int64]store.Download{}, records: map[int64]string{}, tiers: map[int64]string{}, library: map[string]string{}, jobs: map[string]bool{},
 		planned: map[string]bool{}}
 	changes, err := s.st.FileChanges(s.ctx)
 	if err != nil {
@@ -1019,7 +1122,7 @@ func (s *sim) snapshot() (snapshot, error) {
 				return sn, err
 			}
 			if found {
-				sn.records[e.id] = f.Path
+				sn.records[e.id], sn.tiers[e.id] = f.Path, f.Tier
 			}
 		}
 	}
@@ -1101,13 +1204,13 @@ func (s *sim) filesStay(before, after snapshot) (string, string) {
 				episodes = append(episodes, e)
 			}
 		}
-		if len(episodes) == 0 && before.planned[path] {
-			continue // the rest of an upgrade that replaced it
+		if len(episodes) == 0 && (before.planned[path] || inFlight(before, path)) {
+			continue // the rest of an upgrade that replaced it, or an import's own file
 		}
 		if len(episodes) == 0 {
 			return "S2", fmt.Sprintf("video %s at %s left the library, and no episode recorded it", id, path)
 		}
-		if s.deleting != 0 && s.w.episode(episodes[0]) != nil && s.w.episode(episodes[0]).show.id == s.deleting {
+		if ep := s.w.episode(episodes[0]); ep != nil && s.deleting[ep.show.id] {
 			continue
 		}
 		for _, e := range episodes {
@@ -1115,9 +1218,63 @@ func (s *sim) filesStay(before, after snapshot) (string, string) {
 			if v, read := readVideo(s.w.present(p)); !ok || !read || v.ID == id {
 				return "S2", fmt.Sprintf("video %s of episode %d left the library from %s, and no other file replaced it", id, e, path)
 			}
+			if msg := s.worse(before, after, e); msg != "" {
+				return "S2", msg
+			}
 		}
 	}
 	return "", ""
+}
+
+// inFlight reports whether path is where an import that has not ended
+// moves a file: until it records the file, it is the import's to keep or
+// remove.
+func inFlight(sn snapshot, path string) bool {
+	for _, id := range sortedKeys64(sn.downloads) {
+		d := sn.downloads[id]
+		if d.Import.State != store.ImportMoving && d.Import.State != store.ImportFailed {
+			continue
+		}
+		if slices.ContainsFunc(d.Import.Files, func(f store.ImportFile) bool { return f.Target == path }) {
+			return true
+		}
+	}
+	return false
+}
+
+// worse says how episode e's file was replaced by one of a worse tier,
+// unless the user chose a release over that file, knowing it, and its
+// import moved its file in this step: a download of the episode alone
+// that started while the file, or one as good, was there. Other imports
+// in the step may have replaced that release's file again, with a better
+// one. A season pack is for the season's missing episodes, never chosen
+// over a file.
+func (s *sim) worse(before, after snapshot, e int64) string {
+	ep := s.w.episode(e)
+	if ep == nil {
+		return ""
+	}
+	profile := selection.TV
+	if ep.show.profile == selection.AnimeName {
+		profile = selection.Anime
+	}
+	rank := func(tier string) int { return selection.TierRank(profile, tier) }
+	old, now := before.tiers[e], after.tiers[e]
+	if rank(now) <= rank(old) {
+		return ""
+	}
+	moved := []string{store.ImportScanning, store.ImportDone, store.ImportUnverified}
+	for _, id := range sortedKeys64(after.downloads) {
+		d := after.downloads[id]
+		if d.EpisodeID != e || d.SearchSeason > 0 || d.Replaces == "" || rank(old) < rank(d.Replaces) {
+			continue
+		}
+		b, ok := before.downloads[id]
+		if slices.Contains(moved, d.Import.State) && !(ok && sameDownload(b, d) && slices.Contains(moved, b.Import.State)) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("episode %d's file %s (%s) was replaced by a worse one, %s (%s)", e, before.records[e], cmp.Or(old, "tier unknown"), after.records[e], cmp.Or(now, "tier unknown"))
 }
 
 // recordsMatch is S4: every recorded file exists.
@@ -1167,7 +1324,7 @@ func (s *sim) outsideStays(before, after snapshot) (string, string) {
 		d, ok := downloadOfJob(after, j.id)
 		switch {
 		case j.vanished:
-		case !ok && (!j.posting.show.added || s.removed != 0):
+		case !ok && (!j.posting.show.added || s.deleted[j.posting.show.id] || len(s.removed) > 0):
 		case ok && j.gone && d.State == store.Cancelled:
 		case ok && !j.gone && slices.Contains(done, d.Import.State):
 		default:
@@ -1206,7 +1363,6 @@ var (
 		store.ImportFailed:     {store.ImportPending, store.ImportMoving},
 		store.ImportUnverified: {store.ImportScanning},
 	}
-	firstStates = []string{store.Submitting, store.Queued, store.Failed}
 )
 
 // statesMove is S6: downloads and imports change state only along the
@@ -1216,9 +1372,10 @@ func (s *sim) statesMove(before, after snapshot) (string, string) {
 	for _, id := range sortedKeys64(before.downloads) {
 		b := before.downloads[id]
 		a, ok := after.downloads[id]
+		ok = ok && sameDownload(a, b)
 		if !ok {
 			e := s.w.episode(b.EpisodeID)
-			if b.EpisodeID != s.removed && e != nil && e.show.added {
+			if !s.removed[b.EpisodeID] && e != nil && e.show.added && !s.deleted[e.show.id] {
 				return "S6", fmt.Sprintf("download %d disappeared, and its show is still there", id)
 			}
 			continue
@@ -1227,19 +1384,28 @@ func (s *sim) statesMove(before, after snapshot) (string, string) {
 			return "S6", fmt.Sprintf("download %d went from %s to %s", id, b.State, a.State)
 		}
 		graph := importNext
-		if id == s.retrying {
+		if s.retrying[id] {
 			graph = merge(importNext, retryNext)
 		}
 		if !reachable(graph, b.Import.State, a.Import.State) {
 			return "S6", fmt.Sprintf("the import of download %d went from %q to %q", id, b.Import.State, a.Import.State)
 		}
 	}
+	// Every download starts as submitting; steps inside this one may have
+	// moved it on already.
 	for _, id := range sortedKeys64(after.downloads) {
-		if _, ok := before.downloads[id]; !ok && !slices.Contains(firstStates, after.downloads[id].State) {
-			return "S6", fmt.Sprintf("download %d started as %s", id, after.downloads[id].State)
+		a := after.downloads[id]
+		if b, ok := before.downloads[id]; (!ok || !sameDownload(a, b)) && !reachable(downloadNext, store.Submitting, a.State) {
+			return "S6", fmt.Sprintf("download %d started as %s", id, a.State)
 		}
 	}
 	return "", ""
+}
+
+// sameDownload tells a download from a later one that got its number: the
+// database reuses the highest number after a show's downloads went.
+func sameDownload(a, b store.Download) bool {
+	return a.Created.Equal(b.Created) && a.EpisodeID == b.EpisodeID && a.Title == b.Title
 }
 
 func reachable(graph map[string][]string, from, to string) bool {
@@ -1314,7 +1480,7 @@ func (s *sim) calm() {
 				if j.active() {
 					j.status, j.percent = "Downloading", 100
 					if err := w.complete(j); err != nil {
-						s.fail("setup", err.Error())
+						s.fail(simStopped, err.Error())
 					}
 					done = append(done, j.id)
 				}
@@ -1340,9 +1506,13 @@ func (s *sim) calm() {
 	if s.failure != "" {
 		return
 	}
+	if msg := s.outOfStep(true); msg != "" {
+		s.fail(simOutOfStep, msg)
+		return
+	}
 	all, err := s.st.Downloads(s.ctx, 100000)
 	if err != nil {
-		s.fail("setup", err.Error())
+		s.fail(simStopped, err.Error())
 		return
 	}
 	slices.SortFunc(all, func(a, b store.Download) int { return int(a.ID - b.ID) })
@@ -1379,7 +1549,7 @@ func (s *sim) hold(sn snapshot) {
 		}
 	}
 	for _, id := range sortedKeys(s.held) {
-		if slices.ContainsFunc(s.held[id], func(e int64) bool { ep := s.w.episode(e); return ep == nil || !ep.show.added }) {
+		if slices.ContainsFunc(s.held[id], func(e int64) bool { ep := s.w.episode(e); return ep == nil || !ep.show.added || s.deleted[ep.show.id] }) {
 			delete(s.held, id)
 		}
 	}
