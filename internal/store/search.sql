@@ -53,5 +53,11 @@ SELECT id, rank, indexer, title, size, published, verdict, tier, audio, reasons,
 FROM season_candidates WHERE search_id = ? ORDER BY rank;
 
 -- name: GetSeasonCandidateLink :one
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, reasons, decisive
-FROM season_candidates WHERE id = ?;
+SELECT c.id, c.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive, s.season
+FROM season_candidates c JOIN season_searches s ON s.id = c.search_id WHERE c.id = ?;
+
+-- Only packs assigned to this episode can replace its failed download,
+-- not packs from the same season that serve other missing episodes.
+-- name: ListSeasonCandidateLinks :many
+SELECT id, title, indexer, link, size, verdict, tier, reasons, decisive
+FROM season_candidates WHERE search_id = ? AND episode_id = ? ORDER BY rank;

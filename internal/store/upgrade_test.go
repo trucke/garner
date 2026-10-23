@@ -143,7 +143,7 @@ func TestUpgradeFromThePreviousMigration(t *testing.T) {
 	if d, err := st.LoadSeries(ctx, 42); err != nil || d.Series.Name != "Harbor Precinct" || len(d.Episodes) != 1 {
 		t.Errorf("show = %+v, %v", d.Series, err)
 	}
-	if d, err := st.GetDownload(ctx, 7); err != nil || d.Title != "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP" || d.State != Completed {
+	if d, err := st.GetDownload(ctx, 7); err != nil || d.Title != "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP" || d.State != Completed || d.SearchSeason != 0 {
 		t.Errorf("download = %+v, %v", d, err)
 	}
 	if f, found, err := st.EpisodeFile(ctx, 101); err != nil || !found || f.Path != showFile {

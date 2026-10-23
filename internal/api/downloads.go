@@ -18,10 +18,14 @@ const (
 
 // Download is a release handed to SABnzbd.
 type Download struct {
-	ID        int64  `json:"id"`
-	EpisodeID int64  `json:"episode_id"`
-	Title     string `json:"title"`
-	Indexer   string `json:"indexer"`
+	ID        int64 `json:"id"`
+	EpisodeID int64 `json:"episode_id"`
+	// SearchSeason is the source regular season (>0), or zero for an
+	// episode search: specials have no season-pack searches. It stays
+	// with replacements and is internal, like Link.
+	SearchSeason int    `json:"-"`
+	Title        string `json:"title"`
+	Indexer      string `json:"indexer"`
 	// Link holds Prowlarr's API key; it is never sent to clients.
 	Link    string `json:"-"`
 	Size    int64  `json:"size"`

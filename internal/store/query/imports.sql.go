@@ -103,7 +103,7 @@ func (q *Queries) InsertTakenFile(ctx context.Context, arg InsertTakenFileParams
 }
 
 const listDueImports = `-- name: ListDueImports :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive, replaces, acknowledged_at FROM downloads WHERE import_state IN ('pending', 'moving', 'scanning') ORDER BY id
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive, replaces, acknowledged_at, search_season FROM downloads WHERE import_state IN ('pending', 'moving', 'scanning') ORDER BY id
 `
 
 func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
@@ -146,6 +146,7 @@ func (q *Queries) ListDueImports(ctx context.Context) ([]Download, error) {
 			&i.Decisive,
 			&i.Replaces,
 			&i.AcknowledgedAt,
+			&i.SearchSeason,
 		); err != nil {
 			return nil, err
 		}

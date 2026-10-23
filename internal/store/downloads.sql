@@ -3,9 +3,9 @@ SELECT count(*) FROM downloads
 WHERE episode_id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing');
 
 -- name: InsertDownload :one
-INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, replaces, state, detail,
+INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, replaces, search_season, state, detail,
     progress, time_left, storage, failure, retryable, stages, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
 RETURNING id;
 
 -- name: GetEpisodeFileTier :one

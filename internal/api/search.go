@@ -26,10 +26,14 @@ type SearchIndexer struct {
 
 // Candidate is a release a search found, with the verdict on it.
 type Candidate struct {
-	ID      int64  `json:"id"`
-	Rank    int    `json:"rank"`
-	Indexer string `json:"indexer"`
-	Title   string `json:"title"`
+	ID   int64 `json:"id"`
+	Rank int   `json:"rank"`
+	// SearchSeason identifies the parent regular-season search when its
+	// download link is loaded; zero means an episode search. Specials
+	// have no season-pack searches. Never sent to clients.
+	SearchSeason int    `json:"-"`
+	Indexer      string `json:"indexer"`
+	Title        string `json:"title"`
 	// Link downloads the release through Prowlarr and holds its API key. It
 	// is stored but never loaded for or sent to clients.
 	Link      string     `json:"-"`

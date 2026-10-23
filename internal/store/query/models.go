@@ -74,6 +74,7 @@ type Download struct {
 	Decisive        int64
 	Replaces        string
 	AcknowledgedAt  sql.NullInt64
+	SearchSeason    int64
 }
 
 type Episode struct {

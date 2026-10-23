@@ -29,8 +29,9 @@ const (
 	// queue and history before Garner treats it as removed.
 	lostAfter = 3
 	// maxReplacements bounds how often Garner replaces a failed release on
-	// its own. Every failure since the episode's last search counts, manual
-	// choices included: many failures in a row suggest a shared problem.
+	// its own. Every failure for the episode since the source search counts,
+	// across both search scopes and manual choices: many failures in a row
+	// suggest a shared problem.
 	maxReplacements = 3
 	submitTimeout   = time.Minute
 )
@@ -109,6 +110,10 @@ func (s *Service) pick(ctx context.Context, episodeID int64, verdicts ...string)
 	if err != nil {
 		return store.Candidate{}, err
 	}
+	return s.pickFrom(ctx, episodeID, candidates, verdicts...)
+}
+
+func (s *Service) pickFrom(ctx context.Context, episodeID int64, candidates []store.Candidate, verdicts ...string) (store.Candidate, error) {
 	failed, err := s.store.FailedTitles(ctx, episodeID)
 	if err != nil {
 		return store.Candidate{}, err
@@ -128,7 +133,7 @@ func (s *Service) pick(ctx context.Context, episodeID int64, verdicts ...string)
 // up by name instead of submitting it again.
 func (s *Service) submit(ctx context.Context, episodeID int64, c store.Candidate, manual bool) (store.Download, error) {
 	d, err := s.store.StartDownload(ctx, store.Download{
-		EpisodeID: episodeID, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Size: c.Size,
+		EpisodeID: episodeID, SearchSeason: c.SearchSeason, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Size: c.Size,
 		Verdict: c.Verdict, Tier: c.Tier, Reasons: c.Reasons, Decisive: c.Decisive, Manual: manual,
 	}, s.Now())
 	if err != nil {
@@ -332,7 +337,7 @@ func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) (
 // monitor's, is replaced by accepted ones only; last resorts follow only a
 // release that was not accepted.
 func (s *Service) replace(ctx context.Context, failed store.Download) {
-	sr, err := s.store.LoadSearch(ctx, failed.EpisodeID)
+	sr, err := s.store.DownloadSearch(ctx, failed)
 	if err != nil {
 		s.log.Warn("no search to pick another release from", "episode", failed.EpisodeID, "err", err)
 		return
@@ -346,7 +351,7 @@ func (s *Service) replace(ctx context.Context, failed store.Download) {
 	if failed.Verdict == "accept" {
 		verdicts = verdicts[:1]
 	}
-	c, err := s.pick(ctx, failed.EpisodeID, verdicts...)
+	c, err := s.pickFrom(ctx, failed.EpisodeID, sr.Candidates, verdicts...)
 	if err != nil {
 		s.log.Info("no other release to try", "episode", failed.EpisodeID, "err", err)
 		return

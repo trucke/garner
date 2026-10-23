@@ -129,7 +129,7 @@ func (q *Queries) ListEpisodeFiles(ctx context.Context) ([]ListEpisodeFilesRow, 
 }
 
 const listLatestDownloads = `-- name: ListLatestDownloads :many
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive, replaces, acknowledged_at FROM downloads WHERE id IN (SELECT max(id) FROM downloads GROUP BY episode_id)
+SELECT id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, job_id, progress, time_left, storage, failure, retryable, stages, created_at, updated_at, import_state, import_detail, import_recovery, import_files, import_updated_at, import_notes, reasons, decisive, replaces, acknowledged_at, search_season FROM downloads WHERE id IN (SELECT max(id) FROM downloads GROUP BY episode_id)
 `
 
 // The latest download of every episode.
@@ -173,6 +173,7 @@ func (q *Queries) ListLatestDownloads(ctx context.Context) ([]Download, error) {
 			&i.Decisive,
 			&i.Replaces,
 			&i.AcknowledgedAt,
+			&i.SearchSeason,
 		); err != nil {
 			return nil, err
 		}
@@ -302,7 +303,7 @@ func (q *Queries) ListSearchOutcomes(ctx context.Context) ([]ListSearchOutcomesR
 }
 
 const listSeriesBusyDownloads = `-- name: ListSeriesBusyDownloads :many
-SELECT d.id, d.episode_id, d.title, d.indexer, d.link, d.size, d.verdict, d.tier, d.manual, d.state, d.detail, d.job_id, d.progress, d.time_left, d.storage, d.failure, d.retryable, d.stages, d.created_at, d.updated_at, d.import_state, d.import_detail, d.import_recovery, d.import_files, d.import_updated_at, d.import_notes, d.reasons, d.decisive, d.replaces, d.acknowledged_at FROM downloads d JOIN episodes e ON e.id = d.episode_id
+SELECT d.id, d.episode_id, d.title, d.indexer, d.link, d.size, d.verdict, d.tier, d.manual, d.state, d.detail, d.job_id, d.progress, d.time_left, d.storage, d.failure, d.retryable, d.stages, d.created_at, d.updated_at, d.import_state, d.import_detail, d.import_recovery, d.import_files, d.import_updated_at, d.import_notes, d.reasons, d.decisive, d.replaces, d.acknowledged_at, d.search_season FROM downloads d JOIN episodes e ON e.id = d.episode_id
 WHERE e.series_id = ?
     AND (d.state IN ('submitting', 'queued', 'downloading', 'processing') OR d.import_state IN ('pending', 'moving'))
 `
@@ -348,6 +349,7 @@ func (q *Queries) ListSeriesBusyDownloads(ctx context.Context, seriesID int64) (
 			&i.Decisive,
 			&i.Replaces,
 			&i.AcknowledgedAt,
+			&i.SearchSeason,
 		); err != nil {
 			return nil, err
 		}

@@ -61,8 +61,8 @@ func (q *Queries) GetSearch(ctx context.Context, episodeID int64) (Search, error
 }
 
 const getSeasonCandidateLink = `-- name: GetSeasonCandidateLink :one
-SELECT id, episode_id, title, indexer, link, size, verdict, tier, reasons, decisive
-FROM season_candidates WHERE id = ?
+SELECT c.id, c.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive, s.season
+FROM season_candidates c JOIN season_searches s ON s.id = c.search_id WHERE c.id = ?
 `
 
 type GetSeasonCandidateLinkRow struct {
@@ -76,6 +76,7 @@ type GetSeasonCandidateLinkRow struct {
 	Tier      string
 	Reasons   string
 	Decisive  int64
+	Season    int64
 }
 
 func (q *Queries) GetSeasonCandidateLink(ctx context.Context, id int64) (GetSeasonCandidateLinkRow, error) {
@@ -92,6 +93,7 @@ func (q *Queries) GetSeasonCandidateLink(ctx context.Context, id int64) (GetSeas
 		&i.Tier,
 		&i.Reasons,
 		&i.Decisive,
+		&i.Season,
 	)
 	return i, err
 }
@@ -359,6 +361,63 @@ func (q *Queries) ListSearchIndexers(ctx context.Context, searchID int64) ([]Lis
 	for rows.Next() {
 		var i ListSearchIndexersRow
 		if err := rows.Scan(&i.Indexer, &i.Results, &i.Error); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSeasonCandidateLinks = `-- name: ListSeasonCandidateLinks :many
+SELECT id, title, indexer, link, size, verdict, tier, reasons, decisive
+FROM season_candidates WHERE search_id = ? AND episode_id = ? ORDER BY rank
+`
+
+type ListSeasonCandidateLinksParams struct {
+	SearchID  int64
+	EpisodeID int64
+}
+
+type ListSeasonCandidateLinksRow struct {
+	ID       int64
+	Title    string
+	Indexer  string
+	Link     string
+	Size     int64
+	Verdict  string
+	Tier     string
+	Reasons  string
+	Decisive int64
+}
+
+// Only packs assigned to this episode can replace its failed download,
+// not packs from the same season that serve other missing episodes.
+func (q *Queries) ListSeasonCandidateLinks(ctx context.Context, arg ListSeasonCandidateLinksParams) ([]ListSeasonCandidateLinksRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSeasonCandidateLinks, arg.SearchID, arg.EpisodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSeasonCandidateLinksRow
+	for rows.Next() {
+		var i ListSeasonCandidateLinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Indexer,
+			&i.Link,
+			&i.Size,
+			&i.Verdict,
+			&i.Tier,
+			&i.Reasons,
+			&i.Decisive,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

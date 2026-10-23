@@ -106,7 +106,7 @@ func (s *Store) SeasonCandidateLink(ctx context.Context, id int64) (Candidate, i
 		return Candidate{}, 0, err
 	}
 	c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
-		Decisive: int(r.Decisive)}
+		SearchSeason: int(r.Season), Decisive: int(r.Decisive)}
 	if err := json.Unmarshal([]byte(r.Reasons), &c.Reasons); err != nil {
 		return Candidate{}, 0, fmt.Errorf("season candidate %d reasons: %w", r.ID, err)
 	}

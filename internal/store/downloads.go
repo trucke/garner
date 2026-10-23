@@ -54,7 +54,7 @@ func (s *Store) StartDownload(ctx context.Context, d Download, now time.Time) (D
 	id, err := q.InsertDownload(ctx, query.InsertDownloadParams{
 		EpisodeID: d.EpisodeID, Title: d.Title, Indexer: d.Indexer, Link: d.Link, Size: d.Size, Verdict: d.Verdict,
 		Tier: d.Tier, Reasons: string(reasons), Decisive: int64(d.Decisive), Manual: boolInt(d.Manual),
-		Replaces: d.Replaces, CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
+		Replaces: d.Replaces, SearchSeason: int64(d.SearchSeason), CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	})
 	if err != nil {
 		return Download{}, fmt.Errorf("record download: %w", err)
@@ -200,6 +200,47 @@ func (s *Store) CandidateLinks(ctx context.Context, episodeID int64) ([]Candidat
 	return out, nil
 }
 
+// DownloadSearch loads the latest results in the scope that started an
+// attempt, with links for replacement selection. A newer search replaces
+// its own result set, never the other scope's.
+func (s *Store) DownloadSearch(ctx context.Context, d Download) (Search, error) {
+	if d.SearchSeason == 0 {
+		sr, err := s.LoadSearch(ctx, d.EpisodeID)
+		if err != nil {
+			return Search{}, err
+		}
+		sr.Candidates, err = s.CandidateLinks(ctx, d.EpisodeID)
+		return sr, err
+	}
+	seriesID, err := s.SeriesOfEpisode(ctx, d.EpisodeID)
+	if err != nil {
+		return Search{}, err
+	}
+	row, err := s.q.GetSeasonSearch(ctx, query.GetSeasonSearchParams{SeriesID: seriesID, Season: int64(d.SearchSeason)})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Search{}, fmt.Errorf("search for season %d: %w", d.SearchSeason, ErrNotFound)
+	}
+	if err != nil {
+		return Search{}, err
+	}
+	// Bind the candidates to this search, not to a search refreshed while
+	// these queries run: the retry budget must use the same search's time.
+	rows, err := s.q.ListSeasonCandidateLinks(ctx, query.ListSeasonCandidateLinksParams{SearchID: row.ID, EpisodeID: d.EpisodeID})
+	if err != nil {
+		return Search{}, err
+	}
+	sr := Search{Season: d.SearchSeason, Searched: time.Unix(row.SearchedAt, 0), Candidates: make([]Candidate, 0, len(rows))}
+	for _, r := range rows {
+		c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
+			SearchSeason: d.SearchSeason, Decisive: int(r.Decisive)}
+		if err := json.Unmarshal([]byte(r.Reasons), &c.Reasons); err != nil {
+			return Search{}, fmt.Errorf("season candidate %d reasons: %w", r.ID, err)
+		}
+		sr.Candidates = append(sr.Candidates, c)
+	}
+	return sr, nil
+}
+
 // CandidateLink returns a candidate with its download link and the episode
 // it was found for.
 func (s *Store) CandidateLink(ctx context.Context, id int64) (Candidate, int64, error) {
@@ -232,7 +273,7 @@ func downloadsFromRows(rows []query.Download) ([]Download, error) {
 
 func downloadFromRow(r query.Download) (Download, error) {
 	d := Download{
-		ID: r.ID, EpisodeID: r.EpisodeID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size,
+		ID: r.ID, EpisodeID: r.EpisodeID, SearchSeason: int(r.SearchSeason), Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size,
 		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, Replaces: r.Replaces, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
 		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0,
 		Created: time.Unix(r.CreatedAt, 0), Updated: time.Unix(r.UpdatedAt, 0),
