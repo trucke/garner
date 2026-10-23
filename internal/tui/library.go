@@ -724,7 +724,7 @@ func pipelineParts(state string, d *api.Download, summary string, nextRetry *tim
 		case api.ImportRejected:
 			parts = []part{{"rejected", sRed}, sep, {clean(d.Import.Detail), sMuted}}
 		default:
-			parts = []part{{"download failed", sRed}, sep, {clean(d.Failure), sMuted}}
+			parts = []part{{"download failed", sRed}, sep, {clean(cmp.Or(d.FailureSummary, d.Failure)), sMuted}}
 		}
 		if nextRetry != nil {
 			parts = append(parts, sep, part{nextSearch(*nextRetry, now), sMuted})

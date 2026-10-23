@@ -37,6 +37,8 @@ type activityScreen struct {
 	offset         int
 	asking         bool // the cancel question
 	choice         int
+	detailScroll   scroller
+	inDetails      bool
 	busy           string
 	flash          flash
 }
@@ -78,6 +80,7 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 			s.err, s.items = nil, msg.items
 			if rows := s.rows(); len(rows) > 0 && !slices.ContainsFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }) {
 				s.selected, s.offset = rows[0].Download.EpisodeID, 0
+				s.detailScroll, s.inDetails = scroller{}, false
 			}
 		}
 		var cmd tea.Cmd
@@ -137,6 +140,13 @@ func (s *activityScreen) apply(d api.Download) tea.Cmd {
 }
 
 func (s *activityScreen) key(key string) tea.Cmd {
+	if key == "tab" && len(s.details(designWidth)) > 0 {
+		s.inDetails = !s.inDetails
+		return nil
+	}
+	if s.inDetails && s.detailScroll.key(key) {
+		return nil
+	}
 	switch key {
 	case "esc":
 		return func() tea.Msg { return switchMsg{s.back} }
@@ -239,7 +249,25 @@ func (s *activityScreen) move(n int) {
 		return
 	}
 	i := max(0, slices.IndexFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
-	s.selected = rows[min(len(rows)-1, max(0, i+n))].Download.EpisodeID
+	selected := rows[min(len(rows)-1, max(0, i+n))].Download.EpisodeID
+	if selected != s.selected {
+		s.detailScroll, s.inDetails = scroller{}, false
+	}
+	s.selected = selected
+}
+
+// details shares the episode screen's full failure report, not the clipped
+// State column. Tab gives this pane its own scroll position.
+func (s *activityScreen) details(width int) []string {
+	it, ok := s.cursor()
+	if !ok {
+		return nil
+	}
+	details := downloadDetails(it.Download, max(20, min(width, designWidth)-6))
+	if details == "" {
+		return nil
+	}
+	return strings.Split(indent(details, 3), "\n")
 }
 
 // downloadState is the state a download puts its episode in, as the
@@ -310,12 +338,25 @@ func (s *activityScreen) view(width, height int) string {
 	case len(rows) == 0:
 		b.WriteString("\n   " + sMuted.Render("Nothing running. Finished downloads stay here for a day."))
 	default:
-		page := max(3, height-activityTop-1)
+		page := max(1, height-activityTop-1)
+		details := s.details(width)
+		detailRoom := 0
+		if len(details) > 0 && page >= 7 {
+			// A short list leaves the rest to the report; a long one keeps
+			// roughly half the screen. Neither pane hides the key bar.
+			detailRoom = min(len(details), page-min(len(rows), page/2)-1)
+			page -= detailRoom + 1
+		} else {
+			s.inDetails = false
+		}
 		cursor := max(0, slices.IndexFunc(rows, func(it api.ActivityItem) bool { return it.Download.EpisodeID == s.selected }))
 		s.offset = min(max(s.offset, cursor-page+1), cursor)
 		now := time.Now()
 		for _, it := range rows[s.offset:min(len(rows), s.offset+page)] {
 			b.WriteString(activityRow(it, it.Download.EpisodeID == s.selected, showWidth, stateWidth, width, now) + "\n")
+		}
+		if detailRoom > 0 {
+			b.WriteString("\n" + strings.Join(s.detailScroll.window(details, detailRoom), "\n") + "\n")
 		}
 	}
 	page := screenLayout(width, height, b.String(), s.bottom())
@@ -372,7 +413,15 @@ func (s *activityScreen) bottom() string {
 	}
 	keys := []string{}
 	if len(s.items) > 0 {
-		keys = append(keys, "j k", "move", "enter", "episode")
+		if s.inDetails {
+			keys = append(keys, "j k", "scroll", "tab", "list")
+		} else {
+			keys = append(keys, "j k", "move")
+			if len(s.details(designWidth)) > 0 {
+				keys = append(keys, "tab", "details")
+			}
+		}
+		keys = append(keys, "enter", "episode")
 	}
 	if it, ok := s.cursor(); ok && cancellable(it.Download) {
 		keys = append(keys, "x", "cancel")
@@ -385,5 +434,9 @@ func (s *activityScreen) flashed() *flash { return &s.flash }
 func (s *activityScreen) captures() bool { return s.asking || s.busy != "" }
 
 func (s *activityScreen) help() (string, []string) {
-	return "Activity", []string{"enter", "open the episode", "x", "cancel the download"}
+	return "Activity", []string{
+		"enter", "open the episode", "tab", "switch between the list and failure details",
+		"j k", "move in the list or scroll the details", "gg G", "first or last row in the focused pane",
+		"ctrl+d u", "move by a page or scroll the details by half a page", "x", "cancel the download",
+	}
 }

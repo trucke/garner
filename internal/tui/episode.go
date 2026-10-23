@@ -386,8 +386,10 @@ func (s *episodeScreen) releaseFacts(d api.Download, w int) string {
 func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 	var out []string
 	d, ok := s.latest()
-	if ok && (d.Import.State == api.ImportFailed || d.Import.State == api.ImportUnverified) && d.Import.Recovery != "" {
-		out = append(out, frame("to fix", []string{sNormal.Render(clean(d.Import.Recovery))}, w))
+	if ok {
+		if details := downloadDetails(d, w); details != "" {
+			out = append(out, details)
+		}
 	}
 	if ok && d.Active() && len(d.Reasons) > 0 {
 		out = append(out, frame("why this release", reasonLines(d.Verdict, d.Reasons, d.Decisive, w-8), w))
@@ -416,7 +418,7 @@ func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 			if len(earlier) == 3*2 {
 				break
 			}
-			glyph, why := gFailed, clean(e.Failure)
+			glyph, why := gFailed, clean(cmp.Or(e.FailureSummary, e.Failure))
 			switch e.State {
 			case api.Cancelled:
 				glyph, why = sSubtle.Render("✗"), "cancelled"
@@ -552,7 +554,7 @@ func pipeline(d api.Download, now time.Time) []step {
 		return steps
 	case d.State == api.Failed && im.State == "":
 		// SABnzbd's failure, in the download or its repair and unpack.
-		fail(1, d.Failure, d.Updated)
+		fail(1, cmp.Or(d.FailureSummary, d.Failure), d.Updated)
 		return steps
 	}
 	done(1, time.Time{}, part{size(d.Size), sMuted})

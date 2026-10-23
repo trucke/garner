@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/trucke/garner/internal/httpx"
 	"github.com/trucke/garner/internal/store/query"
 )
 
@@ -222,6 +223,15 @@ func downloadFromRow(r query.Download) (Download, error) {
 	if d.Stages == nil {
 		d.Stages = []Stage{}
 	}
+	// Existing downloads still hold SABnzbd's HTML. Decode before redacting:
+	// an HTML-escaped query separator must not hide a credential parameter.
+	for i, stage := range d.Stages {
+		actions := stage.Lines()
+		for j, action := range actions {
+			actions[j] = httpx.RedactText(action)
+		}
+		d.Stages[i].Actions = actions
+	}
 	if err := json.Unmarshal([]byte(r.Reasons), &d.Reasons); err != nil {
 		return d, fmt.Errorf("download %d reasons: %w", r.ID, err)
 	}
@@ -229,6 +239,7 @@ func downloadFromRow(r query.Download) (Download, error) {
 	if r.ImportUpdatedAt > 0 {
 		d.Import.Updated = time.Unix(r.ImportUpdatedAt, 0)
 	}
+	d.FailureSummary = d.SummarizeFailure()
 	if err := json.Unmarshal([]byte(r.ImportFiles), &d.Import.Files); err != nil {
 		return d, fmt.Errorf("download %d import files: %w", r.ID, err)
 	}

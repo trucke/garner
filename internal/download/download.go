@@ -381,11 +381,16 @@ func fromQueue(d *store.Download, j sabnzbd.Job) {
 // quote the download link, which holds Prowlarr's API key, so every URL in
 // them is redacted.
 func fromHistory(d *store.Download, h sabnzbd.Done) {
-	d.Progress, d.TimeLeft = 100, ""
+	d.TimeLeft = ""
+	// A history entry may have failed long before the download finished.
+	// Keep its last reported progress instead of inventing completion.
+	if h.Status != "Failed" {
+		d.Progress = 100
+	}
 	d.Stages = make([]store.Stage, len(h.Stages))
 	for i, st := range h.Stages {
-		actions := make([]string, len(st.Actions))
-		for j, a := range st.Actions {
+		actions := (store.Stage{Actions: st.Actions}).Lines()
+		for j, a := range actions {
 			actions[j] = httpx.RedactText(a)
 		}
 		d.Stages[i] = store.Stage{Name: st.Name, Actions: actions}
@@ -397,6 +402,7 @@ func fromHistory(d *store.Download, h sabnzbd.Done) {
 		d.State, d.Detail = store.Failed, h.Status
 		d.Failure = httpx.RedactText(cmp.Or(h.FailMessage, "SABnzbd reports the download as failed without a reason"))
 		d.Retryable = retryable(d.Failure)
+		d.FailureSummary = d.SummarizeFailure()
 	default:
 		d.State, d.Detail = store.Processing, cmp.Or(h.Action, h.Status)
 	}

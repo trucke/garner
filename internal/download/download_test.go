@@ -158,8 +158,8 @@ func TestDownload(t *testing.T) {
 	// Missing articles: another release may succeed, so B starts.
 	fake.finish("job-1", "Failed", "Aborted, cannot be completed - https://sabnzbd.org/not-complete", "")
 	svc.Poll(ctx)
-	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Failed || !d.Retryable {
-		t.Errorf("after missing articles: %+v", d)
+	if d, _ := st.GetDownload(ctx, d.ID); d.State != store.Failed || !d.Retryable || d.Progress != 40 {
+		t.Errorf("after missing articles: state %s, retryable %v, progress %.0f; want failed, retryable and the last reported 40%%", d.State, d.Retryable, d.Progress)
 	}
 	if got := fake.submitted(); len(got) != 2 || got[1] != show+"German.DL.1080p.WEB-B" {
 		t.Fatalf("submitted %q; want the next release", got)
@@ -186,6 +186,57 @@ func TestDownload(t *testing.T) {
 	all, _ := json.Marshal(published)
 	if strings.Contains(string(all), "SECRET") {
 		t.Error("a published download holds the download link's API key")
+	}
+}
+
+// TestFailureEvidence checks the live event as well as the stored record:
+// HTML must be decoded before credentials are redacted, and a concrete
+// reason must not replace SABnzbd's original failure report.
+func TestFailureEvidence(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setup(t)
+	var event store.Download
+	d, err := svc.Best(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const failure = "Aborted, cannot be completed - https://sabnzbd.org/not-complete"
+	fake.finish(d.JobID, "Failed", failure, "")
+	fake.mu.Lock()
+	fake.history[0]["stage_log"] = []map[string]any{
+		{"name": "Source", "actions": []string{"https://indexer.invalid/download?file=1&amp;apikey=SECRET"}},
+		{"name": "Download", "actions": []string{"Downloaded in 12 seconds<br/>27 articles were missing"}},
+	}
+	fake.mu.Unlock()
+	// Keep this job's failure event, not the replacement's submission.
+	svc.OnChange = func(next store.Download) {
+		if next.ID == d.ID {
+			event = next
+		}
+	}
+	svc.Poll(ctx)
+	stored, err := st.GetDownload(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]store.Download{"event": event, "stored": stored} {
+		if got.FailureSummary != "27 articles missing" || got.Failure != failure || got.Progress != 0 {
+			t.Errorf("%s lost the concrete reason, original report or last known progress", name)
+		}
+		encoded, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "SECRET") {
+			t.Errorf("%s exposes a credential", name)
+		}
+		for _, stage := range got.Stages {
+			for _, action := range stage.Actions {
+				if strings.Contains(action, "<br") || strings.Contains(action, "&amp;") {
+					t.Errorf("%s exposes raw HTML", name)
+				}
+			}
+		}
 	}
 }
 
