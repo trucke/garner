@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -15,7 +14,7 @@ import (
 )
 
 // TestFailedDownloadDetails follows an existing failed download from the
-// database into both screens: its evidence must not stop at the API.
+// database into Activity's short reason and the episode's full report.
 func TestFailedDownloadDetails(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(ctx, t.TempDir(), slog.New(slog.DiscardHandler))
@@ -65,7 +64,11 @@ func TestFailedDownloadDetails(t *testing.T) {
 		"episode":  episode.view(120, 36),
 	} {
 		plain := ansi.Strip(view)
-		for _, want := range []string{"27 articles missing", "Aborted, cannot be completed", "Downloaded in 12 seconds", "Age: 210d", "news.example.invalid=96 MB"} {
+		evidence := []string{"27 articles missing"}
+		if name == "episode" {
+			evidence = append(evidence, "Aborted, cannot be completed", "Downloaded in 12 seconds", "Age: 210d", "news.example.invalid=96 MB")
+		}
+		for _, want := range evidence {
 			if !strings.Contains(plain, want) {
 				t.Errorf("%s hides %q", name, want)
 			}
@@ -75,56 +78,5 @@ func TestFailedDownloadDetails(t *testing.T) {
 				t.Errorf("%s shows HTML, a credential, or invented completion (%q)", name, unwanted)
 			}
 		}
-	}
-}
-
-// TestActivityDetailsScroll keeps long diagnostics reachable without
-// moving the selected download or losing the Activity key bar.
-func TestActivityDetailsScroll(t *testing.T) {
-	for _, dimensions := range [][2]int{{120, 36}, {80, 24}, {60, 18}} {
-		t.Run(fmt.Sprint(dimensions), func(t *testing.T) {
-			d := api.Download{ID: 1, EpisodeID: 101, State: api.Failed, Failure: "An unfamiliar failure: keep this exact explanation"}
-			stage := api.Stage{Name: "Repair"}
-			for i := range 40 {
-				stage.Actions = append(stage.Actions, fmt.Sprintf("Repair diagnostic %02d", i))
-			}
-			d.Stages = []api.Stage{stage}
-			s := newActivity(&session{}, nil)
-			s.update(activityMsg{from: s, items: []api.ActivityItem{
-				{Download: d, SeriesName: "Harbor Precinct", Season: 1, Number: 1},
-				{Download: api.Download{EpisodeID: 102, State: api.Completed, Import: api.Import{State: api.ImportDone}}},
-			}})
-			width, height := dimensions[0], dimensions[1]
-			if initial := ansi.Strip(s.view(width, height)); !strings.Contains(initial, "An unfamiliar failure:") {
-				t.Error("the original unknown failure is hidden")
-			}
-			s.key("tab")
-			s.key("G")
-			view := ansi.Strip(s.view(width, height))
-			if !strings.Contains(view, "Repair diagnostic 39") {
-				t.Error("the last diagnostic cannot be reached")
-			}
-			if s.selected != 101 || !strings.Contains(view, "esc back") {
-				t.Error("scrolling diagnostics changed the download or hid navigation")
-			}
-			if lines := strings.Split(view, "\n"); len(lines) != height {
-				t.Errorf("view has %d rows, want %d", len(lines), height)
-			} else {
-				for _, line := range lines {
-					if ansi.StringWidth(line) > width {
-						t.Error("a diagnostic overflows the terminal")
-					}
-				}
-			}
-			s.key("tab")
-			s.key("j")
-			if next := ansi.Strip(s.view(width, height)); strings.Contains(next, "Repair diagnostic") || s.inDetails {
-				t.Error("the previous download's details stayed after moving to another row")
-			}
-			s.key("k")
-			if s.detailScroll.offset != 0 {
-				t.Error("another download inherited the old diagnostic scroll position")
-			}
-		})
 	}
 }

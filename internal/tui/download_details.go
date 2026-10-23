@@ -6,9 +6,9 @@ import (
 	"github.com/trucke/garner/internal/api"
 )
 
-// downloadDetails keeps the original failure and its evidence readable in
-// both Activity and Episode. The short reason comes from the server; the
-// interface does not infer a cause from an unfamiliar error.
+// downloadDetails keeps the original failure and its evidence on the
+// episode details screen. The reason comes from the server; the interface
+// does not infer a cause from an unfamiliar error.
 func downloadDetails(d api.Download, width int) string {
 	state := downloadState(d)
 	if state != api.EpisodeFailed && state != api.EpisodeAttention {
