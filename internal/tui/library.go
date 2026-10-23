@@ -186,7 +186,7 @@ func (s *libraryScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 func (s *libraryScreen) patch(d api.Download) bool {
 	for _, sh := range s.sess.shows {
 		if f := sh.Focus; f != nil && f.Download != nil && f.Download.ID == d.ID {
-			if f.Download.State != d.State || f.Download.Import.State != d.Import.State {
+			if f.Download.State != d.State || f.Download.Import.State != d.Import.State || !f.Download.Acknowledged.Equal(d.Acknowledged) {
 				return false
 			}
 			f.Download = &d
@@ -760,6 +760,13 @@ func pipelineParts(state string, d *api.Download, summary string, nextRetry *tim
 		}
 		return []part{{"checking the file", sMuted}}
 	case api.EpisodeWaiting, api.EpisodeNotSearched:
+		if d != nil && !d.Acknowledged.IsZero() {
+			parts := []part{{"missing · last download failed", sMuted}}
+			if nextRetry != nil {
+				parts = append(parts, sep, part{nextSearch(*nextRetry, now), sMuted})
+			}
+			return parts
+		}
 		if d != nil && d.State == api.Cancelled {
 			// The monitor leaves it to you until you download it.
 			return []part{{"missing · download cancelled", sMuted}}

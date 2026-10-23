@@ -101,6 +101,17 @@ func (s *activityScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.flash.info(gDone + " " + sNormal.Render("Cancelled the download"))
 		return s, s.reload()
+	case acknowledgedMsg:
+		s.busy = ""
+		switch {
+		case errors.Is(msg.err, client.ErrUnauthorized):
+			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
+		case msg.err != nil:
+			s.flash.stay(gFailed + " " + sRed.Render("Could not clear the failure: "+clean(msg.err.Error())))
+			return s, nil
+		}
+		s.flash.info(gDone + " " + sNormal.Render("Failure cleared"))
+		return s, s.apply(msg.download)
 	case eventMsg:
 		switch msg.Type {
 		case client.EventConnected, "series.deleted":
@@ -162,6 +173,11 @@ func (s *activityScreen) key(key string) tea.Cmd {
 		next := newEpisode(s.sess, show, it.Download.EpisodeID)
 		next.back = s
 		return func() tea.Msg { return switchMsg{next} }
+	case "c":
+		if it, ok := s.cursor(); ok && it.Download.CanAcknowledge() {
+			s.busy = "Clearing the failure…"
+			return acknowledgeFailure(s.sess.client, it.Download.ID)
+		}
 	case "x":
 		if it, ok := s.cursor(); ok && cancellable(it.Download) {
 			s.asking, s.choice = true, 0 // the safe choice: keep going
@@ -209,16 +225,28 @@ func cancellable(d api.Download) bool {
 
 // activityRank orders the rows: what needs the user first, then what runs,
 // furthest along first, then what ended.
+const activityCleared = "cleared"
+
 var activityRank = map[string]int{
 	api.EpisodeFailed: 0, api.EpisodeAttention: 1, api.EpisodeImporting: 2, api.EpisodeProcessing: 3,
-	api.EpisodeDownloading: 4, api.EpisodeImported: 5, api.Cancelled: 5,
+	api.EpisodeDownloading: 4, api.EpisodeImported: 5, api.Cancelled: 5, activityCleared: 5,
+}
+
+// Cleared failures are ended activity, not a new download state. Their
+// original failure remains available on the episode screen.
+func activityState(d api.Download) string {
+	state := downloadState(d)
+	if state == api.EpisodeFailed && !d.Acknowledged.IsZero() {
+		return activityCleared
+	}
+	return state
 }
 
 // rows are the items in display order: by state, then the newest first.
 func (s *activityScreen) rows() []api.ActivityItem {
 	rows := slices.Clone(s.items)
 	slices.SortStableFunc(rows, func(a, b api.ActivityItem) int {
-		return cmp.Or(cmp.Compare(activityRank[downloadState(a.Download)], activityRank[downloadState(b.Download)]),
+		return cmp.Or(cmp.Compare(activityRank[activityState(a.Download)], activityRank[activityState(b.Download)]),
 			since(b.Download).Compare(since(a.Download)))
 	})
 	return rows
@@ -336,7 +364,7 @@ func (s *activityScreen) view(width, height int) string {
 func activityRow(it api.ActivityItem, selected bool, showWidth, stateWidth, width int, now time.Time) string {
 	bg := selectBg(selected)
 	d := it.Download
-	state := downloadState(d)
+	state := activityState(d)
 	glyph, glyphStyle := episodeGlyph(state)
 	text := sNormal
 	var parts []part
@@ -348,6 +376,9 @@ func activityRow(it api.ActivityItem, selected bool, showWidth, stateWidth, widt
 		if d.Replaces != "" {
 			parts = append(parts, part{" · replaced " + clean(d.Replaces), sSubtle})
 		}
+	case activityCleared:
+		glyph, glyphStyle, text = "✗", sSubtle, sSubtle
+		parts = []part{{"cleared · " + clean(cmp.Or(d.FailureSummary, d.Failure)), sSubtle}}
 	case api.Cancelled:
 		glyph, glyphStyle, text = "✗", sSubtle, sSubtle
 		parts = []part{{"cancelled", sSubtle}}
@@ -374,8 +405,13 @@ func (s *activityScreen) bottom() string {
 	if len(s.items) > 0 {
 		keys = append(keys, "j k", "move", "enter", "episode")
 	}
-	if it, ok := s.cursor(); ok && cancellable(it.Download) {
-		keys = append(keys, "x", "cancel")
+	if it, ok := s.cursor(); ok {
+		if cancellable(it.Download) {
+			keys = append(keys, "x", "cancel")
+		}
+		if it.Download.CanAcknowledge() {
+			keys = append(keys, "c", "clear failure")
+		}
 	}
 	return keyBar(append(keys, "?", "help", "esc", "back")...)
 }
@@ -385,5 +421,5 @@ func (s *activityScreen) flashed() *flash { return &s.flash }
 func (s *activityScreen) captures() bool { return s.asking || s.busy != "" }
 
 func (s *activityScreen) help() (string, []string) {
-	return "Activity", []string{"enter", "open the episode", "x", "cancel the download"}
+	return "Activity", []string{"enter", "open the episode", "x", "cancel the download", "c", "clear the selected download failure"}
 }

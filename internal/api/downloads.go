@@ -53,6 +53,9 @@ type Download struct {
 	Stages    []Stage   `json:"stages"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+	// Acknowledged is when the user cleared this attempt's warning. The
+	// failure, its original timestamps and its retry eligibility stay put.
+	Acknowledged time.Time `json:"acknowledged,omitzero"`
 	// Import is the move of the finished files into the library.
 	Import Import `json:"import"`
 }
@@ -70,6 +73,13 @@ func (d Download) Active() bool {
 		return true
 	}
 	return false
+}
+
+// CanAcknowledge reports whether this is an uncleared download failure,
+// not an import problem that still needs fixing. The server also checks
+// that this attempt is still the episode's latest.
+func (d Download) CanAcknowledge() bool {
+	return d.State == Failed && d.Acknowledged.IsZero() && (d.Import.State == "" || d.Import.State == ImportRejected)
 }
 
 // ActivityItem is an episode's latest download with its show and its

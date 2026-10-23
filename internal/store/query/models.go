@@ -73,6 +73,7 @@ type Download struct {
 	Reasons         string
 	Decisive        int64
 	Replaces        string
+	AcknowledgedAt  sql.NullInt64
 }
 
 type Episode struct {

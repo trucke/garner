@@ -38,6 +38,7 @@ func (s *Server) downloadRoutes(mux router) {
 	mux.Handle("GET /api/v1/activity", http.HandlerFunc(s.handleActivity))
 	mux.Handle("POST /api/v1/season-candidates/{id}/download", s.needDownloads(s.handleDownloadSeasonCandidate))
 	mux.Handle("POST /api/v1/downloads/{id}/cancel", s.needDownloads(s.handleCancelDownload))
+	mux.Handle("POST /api/v1/downloads/{id}/acknowledge", http.HandlerFunc(s.handleAcknowledgeDownload))
 	mux.Handle("GET /api/v1/episodes/{id}", http.HandlerFunc(s.handleGetEpisode))
 }
 
@@ -109,6 +110,27 @@ func (s *Server) handleCancelDownload(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("cancel download", "download", id, "err", err)
 		writeError(w, http.StatusBadGateway, "SABnzbd could not cancel it: "+err.Error())
 	default:
+		writeJSON(w, http.StatusOK, d)
+	}
+}
+
+// handleAcknowledgeDownload clears an alert without asking SABnzbd or the
+// importer to do anything. Other connected clients get the same update.
+func (s *Server) handleAcknowledgeDownload(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "invalid download ID")
+	if !ok {
+		return
+	}
+	d, err := s.store.AcknowledgeDownload(r.Context(), id, s.now())
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "no such download")
+	case errors.Is(err, store.ErrCannotAcknowledge):
+		writeError(w, http.StatusConflict, err.Error())
+	case err != nil:
+		s.internalError(w, "clear download failure", err)
+	default:
+		s.events.publish(Event{Type: "download.updated", Data: d})
 		writeJSON(w, http.StatusOK, d)
 	}
 }

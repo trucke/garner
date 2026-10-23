@@ -126,6 +126,17 @@ func (s *episodeScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 		s.flash.info(gWorking + " " + sNormal.Render("Retrying the import"))
 		return s, s.apply(msg.download)
+	case acknowledgedMsg:
+		s.busy = ""
+		switch {
+		case errors.Is(msg.err, client.ErrUnauthorized):
+			return s, func() tea.Msg { return disconnectedMsg{errRevoked} }
+		case msg.err != nil:
+			s.flash.stay(gFailed + " " + sRed.Render("Could not clear the failure: "+clean(msg.err.Error())))
+			return s, nil
+		}
+		s.flash.info(gDone + " " + sNormal.Render("Failure cleared"))
+		return s, tea.Batch(s.apply(msg.download), s.show.reload())
 	case eventMsg:
 		var cmd tea.Cmd
 		switch msg.Type {
@@ -192,6 +203,11 @@ func (s *episodeScreen) key(key string) tea.Cmd {
 	case "x":
 		if _, ok := s.cancellable(); ok {
 			s.asking, s.choice = true, 0 // the safe choice: keep going
+		}
+	case "c":
+		if d, ok := s.latest(); ok && d.CanAcknowledge() {
+			s.busy = "Clearing the failure…"
+			return acknowledgeFailure(s.sess.client, d.ID)
 		}
 	case "r":
 		return s.again()
@@ -360,6 +376,9 @@ func (s *episodeScreen) releaseFacts(d api.Download, w int) string {
 		meta = append(meta, sMuted.Render(sz))
 	}
 	meta = append(meta, sMuted.Render(clean(d.Indexer)))
+	if !d.Acknowledged.IsZero() {
+		meta = append(meta, sSubtle.Render("cleared "+when(d.Acknowledged, time.Now())))
+	}
 	tail := "      " + strings.Join(meta, sMuted.Render(" · "))
 	// Attempts in a row: the downloads that failed or were cancelled just
 	// before this one.
@@ -463,6 +482,9 @@ func (s *episodeScreen) bottom() string {
 	if label := s.againLabel(); label != "" && s.detail != nil {
 		keys = append(keys, "r", label)
 	}
+	if d, ok := s.latest(); ok && d.CanAcknowledge() {
+		keys = append(keys, "c", "clear failure")
+	}
 	return keyBar(append(keys, "A", "activity", "?", "help", "esc", "back")...)
 }
 
@@ -473,6 +495,7 @@ func (s *episodeScreen) captures() bool { return s.asking || s.busy != "" }
 func (s *episodeScreen) help() (string, []string) {
 	return "Episode", []string{
 		"x", "cancel the download", "r", "other releases, search again or retry the import",
+		"c", "clear the latest download failure",
 	}
 }
 

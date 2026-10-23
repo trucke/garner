@@ -85,10 +85,6 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64, sc *Sc
 		d := f.downloads[e.ID]
 		search, searched := f.searches[e.ID]
 		state := episodeState(hasFile, d, search, searched, aired)
-		if state == EpisodeUpcoming && !regular || state == EpisodeNotSearched && !regular {
-			// Specials nobody asked for are not missing.
-			state = ""
-		}
 		var next *time.Time
 		if sc != nil && regular && wants(state, d) && sh.Monitors(e.Aired.String) {
 			own, ran := f.monitored[e.ID]
@@ -98,15 +94,25 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64, sc *Sc
 			}
 			next = &t
 		}
+		// Acknowledgment changes only what needs the user's attention, not
+		// the state used above (or by wanted) to schedule the monitor.
+		cleared := state == EpisodeFailed && d != nil && !d.Acknowledged.IsZero()
+		if cleared {
+			state = episodeState(hasFile, nil, search, searched, aired)
+		}
+		if !regular && (state == EpisodeUpcoming || state == EpisodeNotSearched) {
+			// Specials nobody asked for are not missing.
+			state = ""
+		}
 		if only > 0 {
 			st := EpisodeStatus{EpisodeID: e.ID, State: state, Attempts: f.attempts[e.ID], NextRetry: next}
 			if hasFile {
 				st.Size, st.Tier = file.Size, file.Tier
 			}
-			if explains(state, d) {
+			if cleared || explains(state, d) {
 				st.Download = d
 			}
-			if searched {
+			if searched && !cleared {
 				st.Summary = search.summary
 			}
 			states = append(states, st)
@@ -118,10 +124,10 @@ func (s *Store) summarise(ctx context.Context, now time.Time, only int64, sc *Sc
 			sh.Counts[state]++
 		}
 		focus := &Focus{EpisodeID: e.ID, Season: int(e.Season.Int64), Number: int(e.Number.Int64), State: state, Aired: e.Aired.String, NextRetry: next}
-		if explains(state, d) {
+		if cleared || explains(state, d) {
 			focus.Download = d
 		}
-		if searched {
+		if searched && !cleared {
 			focus.Summary = search.summary
 		}
 		if moreUrgent(focus, sh.Focus) {

@@ -19,6 +19,9 @@ var (
 	ErrCancelled = errors.New("the download was cancelled")
 	// ErrNotRunning means the download has already ended.
 	ErrNotRunning = errors.New("the download is no longer running")
+	// ErrCannotAcknowledge means the attempt was superseded, is not a
+	// failure, or has an import problem that must stay actionable.
+	ErrCannotAcknowledge = errors.New("only the latest failed download can be cleared; import problems must be fixed or retried")
 )
 
 // StartDownload records a download before SABnzbd is asked, refusing a
@@ -89,6 +92,23 @@ func (s *Store) CancelDownload(ctx context.Context, id int64, reason string, now
 		return Download{}, ErrNotRunning
 	}
 	return s.GetDownload(ctx, id)
+}
+
+// AcknowledgeDownload clears only the latest failed attempt's warning. It
+// leaves its state, evidence, timestamps and failed-release exclusion alone.
+func (s *Store) AcknowledgeDownload(ctx context.Context, id int64, now time.Time) (Download, error) {
+	n, err := s.q.AcknowledgeDownload(ctx, query.AcknowledgeDownloadParams{ID: id, AcknowledgedAt: sql.NullInt64{Int64: now.Unix(), Valid: true}})
+	if err != nil {
+		return Download{}, err
+	}
+	d, err := s.GetDownload(ctx, id)
+	if err != nil {
+		return Download{}, err
+	}
+	if n == 0 {
+		return Download{}, ErrCannotAcknowledge
+	}
+	return d, nil
 }
 
 // EpisodeDownloads lists an episode's downloads, newest first.
@@ -216,6 +236,9 @@ func downloadFromRow(r query.Download) (Download, error) {
 		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, Replaces: r.Replaces, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
 		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0,
 		Created: time.Unix(r.CreatedAt, 0), Updated: time.Unix(r.UpdatedAt, 0),
+	}
+	if r.AcknowledgedAt.Valid {
+		d.Acknowledged = time.Unix(r.AcknowledgedAt.Int64, 0)
 	}
 	if err := json.Unmarshal([]byte(r.Stages), &d.Stages); err != nil {
 		return d, fmt.Errorf("download %d stages: %w", r.ID, err)

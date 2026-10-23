@@ -22,6 +22,13 @@ WHERE id = ? AND state != 'cancelled';
 UPDATE downloads SET state = 'cancelled', failure = ?, retryable = 0, time_left = '', updated_at = ?
 WHERE id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing');
 
+-- Only the latest failed attempt can be cleared. Keeping the first time
+-- makes repeated requests harmless, without changing any failure timing.
+-- name: AcknowledgeDownload :execrows
+UPDATE downloads SET acknowledged_at = coalesce(downloads.acknowledged_at, sqlc.arg(acknowledged_at))
+WHERE downloads.id = sqlc.arg(id) AND downloads.state = 'failed' AND downloads.import_state IN ('', 'rejected')
+  AND downloads.id IN (SELECT max(latest.id) FROM downloads AS latest GROUP BY latest.episode_id);
+
 -- name: ListEpisodeDownloads :many
 SELECT * FROM downloads WHERE episode_id = ? ORDER BY id DESC;
 

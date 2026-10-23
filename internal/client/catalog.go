@@ -138,6 +138,12 @@ func (c *Client) CancelDownload(ctx context.Context, downloadID int64) (api.Down
 	return d, c.do(ctx, http.MethodPost, "/api/v1/downloads/"+strconv.FormatInt(downloadID, 10)+"/cancel", nil, &d)
 }
 
+// AcknowledgeDownload clears a failed attempt's warning without retrying it.
+func (c *Client) AcknowledgeDownload(ctx context.Context, downloadID int64) (api.Download, error) {
+	var d api.Download
+	return d, c.do(ctx, http.MethodPost, "/api/v1/downloads/"+strconv.FormatInt(downloadID, 10)+"/acknowledge", nil, &d)
+}
+
 // RetryImport repeats a failed or unconfirmed import.
 func (c *Client) RetryImport(ctx context.Context, downloadID int64) (api.Download, error) {
 	var d api.Download
