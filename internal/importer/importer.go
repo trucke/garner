@@ -334,6 +334,10 @@ func (s *Service) move(ctx context.Context, d *store.Download) {
 	if !ok {
 		return
 	}
+	if len(files) == 0 {
+		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "the library kept its own files, which are as good or better", Files: files, Notes: notes})
+		return
+	}
 	if s.jellyfin == nil {
 		s.save(ctx, d, store.Import{State: store.ImportDone, Detail: "moved into the library; Jellyfin is not configured, so nothing confirmed it", Files: files, Notes: notes})
 		return
@@ -434,12 +438,14 @@ func (s *Service) moveFiles(ctx context.Context, d *store.Download) ([]store.Imp
 		}
 		s.log.Info("imported file", "download", d.ID, "target", f.Target)
 	}
-	if err := s.recordFiles(ctx, d, files); err != nil {
-		s.fail(ctx, d, files, "the files are in the library, but recording them failed: "+err.Error(), "Retry the import.")
+	all := files
+	files, kept, err := s.recordFiles(ctx, d, files)
+	if err != nil {
+		s.fail(ctx, d, all, "the files are in the library, but recording them failed: "+err.Error(), "Retry the import.")
 		return nil, nil, false
 	}
 	s.removeKept(ctx, d, job)
-	notes := append(slices.Clone(d.Import.Notes), s.tidy(ctx, d, files)...)
+	notes := append(append(slices.Clone(d.Import.Notes), kept...), s.tidy(ctx, d, files)...)
 	if notes == nil {
 		notes = []string{}
 	}
@@ -489,7 +495,8 @@ func (s *Service) keepBetter(ctx context.Context, d *store.Download, c showConte
 
 // libraryKeeps reports whether the library keeps its own files of a
 // pack's episodes: none of them is the episode the download is for, and
-// each has a file from a release as good as the pack's or better.
+// each has a file from a release as good as the pack's or better. See
+// keepsGained for the episode the download is for.
 func libraryKeeps(c showContext, d *store.Download, have map[int64]string, episodes []int64) bool {
 	if len(episodes) == 0 || slices.Contains(episodes, d.EpisodeID) {
 		return false
@@ -497,6 +504,40 @@ func libraryKeeps(c showContext, d *store.Download, have map[int64]string, episo
 	pack := selection.TierRank(c.profile, d.Tier)
 	for _, ep := range episodes {
 		if tier, found := have[ep]; !found || selection.TierRank(c.profile, tier) > pack {
+			return false
+		}
+	}
+	return true
+}
+
+// keepsGained reports whether the library keeps its own files of the
+// episodes of a file the import moved, rather than recording the import's,
+// when it records them. Next to libraryKeeps, it keeps the file of the
+// episode the download is for when that is better than the download's and
+// better than the file the download was to replace: one the library gained
+// after the download started, as by a take-over or another import. A
+// worse release the user chose on purpose still replaces the file it was
+// chosen over. A season pack is for the season's missing episodes; the
+// episode it is for is only the first one missing when the season was
+// searched, so the library keeps its file as it does the others'.
+func keepsGained(c showContext, d *store.Download, have map[int64]string, episodes []int64) bool {
+	if libraryKeeps(c, d, have, episodes) {
+		return true
+	}
+	if !slices.Contains(episodes, d.EpisodeID) {
+		return false
+	}
+	rank := func(tier string) int { return selection.TierRank(c.profile, tier) }
+	for _, ep := range episodes {
+		tier, found := have[ep]
+		switch {
+		case !found:
+			return false
+		case ep != d.EpisodeID || d.SearchSeason > 0:
+			if rank(tier) > rank(d.Tier) {
+				return false
+			}
+		case rank(tier) >= rank(d.Tier) || d.Replaces != "" && rank(tier) >= rank(d.Replaces):
 			return false
 		}
 	}
@@ -544,13 +585,38 @@ func (s *Service) removeKept(ctx context.Context, d *store.Download, job func() 
 // recordFiles records each episode's file and removes the version Garner
 // imported or took over before: one version per episode. A record and the
 // plan to remove the version it replaces change in one step, so a crash
-// before the removal leaves the plan for finishChanges.
-func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) error {
+// before the removal leaves the plan for finishChanges. A file whose
+// episodes the library keeps its own files of, as keepsGained decides, is
+// not recorded but removed; the plan may be older than the library's
+// files, as after a retry or a restart. It returns the files it recorded
+// and a note naming the episodes that kept their file.
+func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []store.ImportFile) ([]store.ImportFile, []string, error) {
+	c, err := s.context(ctx, d.EpisodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	have, err := s.store.SeriesFileTiers(ctx, c.data.Series.ID)
+	if err != nil {
+		return nil, nil, err
+	}
 	// The previous versions are claimed while their records still point at
 	// them.
 	claims := map[string]guard.File{}
 	var records []store.EpisodeFile
+	var recorded []store.ImportFile
+	var dropped []string
+	var kept []int64
 	for _, f := range files {
+		// A file recorded already is the import's own, as when Garner
+		// ended after recording it and before saving that it had; one it
+		// cannot check is recorded too.
+		own, err := s.store.FileInUse(ctx, f.Target)
+		if err == nil && !own && keepsGained(c, d, have, f.Episodes) {
+			dropped = append(dropped, f.Target)
+			kept = append(kept, f.Episodes...)
+			continue
+		}
+		recorded = append(recorded, f)
 		for _, ep := range f.Episodes {
 			prev, found, err := s.store.EpisodeFile(ctx, ep)
 			if err == nil && found && prev.Path != f.Target {
@@ -563,16 +629,27 @@ func (s *Service) recordFiles(ctx context.Context, d *store.Download, files []st
 			records = append(records, store.EpisodeFile{EpisodeID: ep, Path: f.Target, Size: f.Size, Tier: d.Tier})
 		}
 	}
-	planned, err := s.store.RecordFiles(ctx, records, d.ID, s.Now(), slices.Sorted(maps.Keys(claims)))
+	planned, err := s.store.RecordFiles(ctx, records, d.ID, s.Now(), append(slices.Sorted(maps.Keys(claims)), dropped...))
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for _, p := range planned {
-		if err := s.removeVersion(ctx, claims[p]); err != nil {
+		claim, ok := claims[p]
+		if !ok { // a dropped file of this import, which the plan now covers
+			if claim, err = s.guard.Planned(ctx, p); err != nil {
+				s.log.Warn("could not claim a file the import does not keep", "path", p, "err", err)
+				continue
+			}
+		}
+		if err := s.removeVersion(ctx, claim); err != nil {
 			s.log.Warn("could not remove the previous version yet; Garner tries again later", "path", p, "err", err)
 		}
 	}
-	return nil
+	if len(kept) == 0 {
+		return recorded, nil, nil
+	}
+	s.log.Info("kept the existing files", "download", d.ID, "episodes", c.show.Describe(kept))
+	return recorded, []string{"kept the existing file of " + c.show.Describe(kept) + ": the library gained it after the download started, and it is as good or better"}, nil
 }
 
 // removeVersion removes a version of an episode's file that no record uses

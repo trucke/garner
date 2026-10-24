@@ -690,3 +690,222 @@ func TestUpgradeRemovesLater(t *testing.T) {
 		}
 	}
 }
+
+// TestImportKeepsBetterGainedMeanwhile moves a 720p pack chosen for S01E01
+// and ends Garner after its first file. Before the import goes on, the
+// library gains a 1080p file of S01E01, as by a take-over: the import must
+// keep it rather than record its own worse file and remove the better one
+// (GRR-47).
+func TestImportKeepsBetterGainedMeanwhile(t *testing.T) {
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	// Only the pack is imported here.
+	os.RemoveAll(filepath.Join(e.share, jobDir))
+	const pack = "Harbor.Precinct.S01.German.DL.720p.WEB-PK"
+	job := filepath.Join(e.share, "usenet/complete/tv", pack)
+	os.MkdirAll(job, 0o755)
+	for _, name := range []string{"Harbor.Precinct.Night.Shift.S01E01.mkv", "Harbor.Precinct.Night.Shift.S01E02.mkv"} {
+		os.WriteFile(filepath.Join(job, name), make([]byte, 1000), 0o644)
+	}
+	d, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: pack, Link: "x", Verdict: "accept", Tier: "German 720p"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.State, d.Storage = store.Completed, "/data/usenet/complete/tv/"+pack
+	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.MarkImportPending(ctx, d.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	type crash struct{}
+	opts := e.svc.opts
+	moves := 0
+	opts.Before = func(op, _ string) {
+		if op == "rename" {
+			if moves++; moves == 2 {
+				panic(crash{})
+			}
+		}
+	}
+	crashing := New(e.st, e.svc.probe, e.svc.jellyfin, opts, slog.New(slog.DiscardHandler))
+	func() {
+		defer func() {
+			if _, ok := recover().(crash); !ok {
+				t.Fatal("the import did not reach its second file")
+			}
+		}()
+		crashing.Work(ctx)
+	}()
+
+	better := filepath.Join(e.share, "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01/Harbor.Precinct.Night.Shift.2013.S01E01.Pilot.WEB-1080p.DE.EN-OTHER.mkv")
+	os.WriteFile(better, make([]byte, 2000), 0o644)
+	if err := e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: better, Size: 2000, Tier: "German 1080p"}, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := New(e.st, e.svc.probe, e.svc.jellyfin, e.svc.opts, slog.New(slog.DiscardHandler))
+	restarted.Work(ctx)
+	if f, _, _ := e.st.EpisodeFile(ctx, 101); f.Path != better {
+		t.Errorf("S01E01's file is %s; the better one should stay", f.Path)
+	}
+	if _, err := os.Stat(better); err != nil {
+		t.Errorf("the better file went: %v", err)
+	}
+	if f, found, _ := e.st.EpisodeFile(ctx, 102); !found || f.Tier != "German 720p" {
+		t.Errorf("S01E02 has %+v, %v; the pack's file should be recorded", f, found)
+	}
+	own := filepath.Join(e.share, "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01")
+	entries, _ := os.ReadDir(own)
+	for _, entry := range entries {
+		if used, _ := e.st.FileInUse(ctx, filepath.Join(own, entry.Name())); !used {
+			t.Errorf("%s is in Garner's folder, but no episode records it", entry.Name())
+		}
+	}
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if !slices.ContainsFunc(got.Import.Notes, func(n string) bool { return strings.HasPrefix(n, "kept the existing file of S01E01") }) {
+		t.Errorf("notes %q", got.Import.Notes)
+	}
+}
+
+// TestImportChosenWorseReplaces imports a 720p release the user chose for
+// S01E01 over its 1080p file: the choice was made knowing the file, so the
+// import replaces it, as keepsGained leaves to the user (GRR-47).
+func TestImportChosenWorseReplaces(t *testing.T) {
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	os.RemoveAll(filepath.Join(e.share, jobDir))
+	old := filepath.Join(e.share, "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01/Harbor.Precinct.Night.Shift.2013.S01E01.Pilot.WEB-1080p.DE.EN-OTHER.mkv")
+	os.MkdirAll(filepath.Dir(old), 0o755)
+	os.WriteFile(old, make([]byte, 2000), 0o644)
+	if err := e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: old, Size: 2000, Tier: "German 1080p"}, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	const title = "Harbor.Precinct.S01E01.German.DL.720p.WEB-CHOSEN"
+	job := filepath.Join(e.share, "usenet/complete/tv", title)
+	os.MkdirAll(job, 0o755)
+	os.WriteFile(filepath.Join(job, "c0ffee.mkv"), make([]byte, 1000), 0o644)
+	d, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: title, Link: "x", Verdict: "reject", Tier: "German 720p", Manual: true}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Replaces != "German 1080p" {
+		t.Fatalf("the download replaces %q", d.Replaces)
+	}
+	d.State, d.Storage = store.Completed, "/data/usenet/complete/tv/"+title
+	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.MarkImportPending(ctx, d.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.svc.Work(ctx)
+	if f, _, _ := e.st.EpisodeFile(ctx, 101); f.Path == old || f.Tier != "German 720p" {
+		t.Errorf("S01E01's file is %+v; the chosen release should replace it", f)
+	}
+	if _, err := os.Stat(old); err == nil {
+		t.Error("the file the user chose to replace is still there")
+	}
+}
+
+// TestImportSeasonPackKeepsFirstEpisode imports a season pack downloaded
+// for S01E01, the first episode missing when the season was searched,
+// after S01E01 got a better file: the pack is for the season's missing
+// episodes, so the library keeps that file as it does for the pack's other
+// episodes (GRR-47).
+func TestImportSeasonPackKeepsFirstEpisode(t *testing.T) {
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	os.RemoveAll(filepath.Join(e.share, jobDir))
+	better := filepath.Join(e.share, "library/tv/Harbor.Precinct.Night.Shift.2013.[tvdbid-42]/Season.01/Harbor.Precinct.Night.Shift.2013.S01E01.Pilot.WEB-1080p.DE.EN-OTHER.mkv")
+	os.MkdirAll(filepath.Dir(better), 0o755)
+	os.WriteFile(better, make([]byte, 2000), 0o644)
+	if err := e.st.SetEpisodeFile(ctx, store.EpisodeFile{EpisodeID: 101, Path: better, Size: 2000, Tier: "German 1080p"}, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	const pack = "Harbor.Precinct.S01.German.DL.720p.WEB-PK"
+	job := filepath.Join(e.share, "usenet/complete/tv", pack)
+	os.MkdirAll(job, 0o755)
+	for _, name := range []string{"Harbor.Precinct.Night.Shift.S01E01.mkv", "Harbor.Precinct.Night.Shift.S01E02.mkv"} {
+		os.WriteFile(filepath.Join(job, name), make([]byte, 1000), 0o644)
+	}
+	d, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, SearchSeason: 1, Title: pack, Link: "x", Verdict: "accept", Tier: "German 720p", Manual: true}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.State, d.Storage = store.Completed, "/data/usenet/complete/tv/"+pack
+	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.MarkImportPending(ctx, d.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	e.svc.Work(ctx)
+	if f, _, _ := e.st.EpisodeFile(ctx, 101); f.Path != better {
+		t.Errorf("S01E01's file is %s; the better one should stay", f.Path)
+	}
+	if f, found, _ := e.st.EpisodeFile(ctx, 102); !found || f.Tier != "German 720p" {
+		t.Errorf("S01E02 has %+v, %v", f, found)
+	}
+}
+
+// TestImportRecordedBeforeCrash ends Garner after an import recorded a
+// season pack's files and before it saved that it did: going on, the
+// import finds its own files recorded and takes them for its own, not for
+// files the library kept (GRR-47).
+func TestImportRecordedBeforeCrash(t *testing.T) {
+	ctx := context.Background()
+	e, _ := setup(t, german)
+	os.RemoveAll(filepath.Join(e.share, jobDir))
+	const pack = "Harbor.Precinct.S01.German.DL.1080p.WEB-PK"
+	job := filepath.Join(e.share, "usenet/complete/tv", pack)
+	os.MkdirAll(job, 0o755)
+	for _, name := range []string{"Harbor.Precinct.Night.Shift.S01E01.mkv", "Harbor.Precinct.Night.Shift.S01E02.mkv", "pack.nfo"} {
+		os.WriteFile(filepath.Join(job, name), make([]byte, 1000), 0o644)
+	}
+	d, err := e.st.StartDownload(ctx, store.Download{EpisodeID: 101, SearchSeason: 1, Title: pack, Link: "x", Verdict: "accept", Tier: "German 1080p"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.State, d.Storage = store.Completed, "/data/usenet/complete/tv/"+pack
+	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.st.MarkImportPending(ctx, d.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	type crash struct{}
+	opts := e.svc.opts
+	opts.Before = func(op, _ string) {
+		if op == "remove all" { // tidying SABnzbd's folder, after the records
+			panic(crash{})
+		}
+	}
+	crashing := New(e.st, e.svc.probe, e.svc.jellyfin, opts, slog.New(slog.DiscardHandler))
+	func() {
+		defer func() {
+			if _, ok := recover().(crash); !ok {
+				t.Fatal("the import did not reach SABnzbd's folder")
+			}
+		}()
+		crashing.Work(ctx)
+	}()
+
+	restarted := New(e.st, e.svc.probe, e.svc.jellyfin, e.svc.opts, slog.New(slog.DiscardHandler))
+	restarted.Work(ctx)
+	got, _ := e.st.GetDownload(ctx, d.ID)
+	if slices.ContainsFunc(got.Import.Notes, func(n string) bool { return strings.HasPrefix(n, "kept the existing file") }) || len(got.Import.Files) != 2 {
+		t.Errorf("import %s, %d files, notes %q", got.Import.State, len(got.Import.Files), got.Import.Notes)
+	}
+	for _, id := range []int64{101, 102} {
+		if f, found, _ := e.st.EpisodeFile(ctx, id); !found {
+			t.Errorf("episode %d has no file", id)
+		} else if _, err := os.Stat(f.Path); err != nil {
+			t.Errorf("episode %d: %v", id, err)
+		}
+	}
+}
