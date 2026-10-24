@@ -356,3 +356,64 @@ func TestRetryable(t *testing.T) {
 		}
 	}
 }
+
+// TestConfirmLeavesOtherJobs confirms a download SABnzbd never answered
+// for while another download of the same release, such as the same season
+// pack for another episode, has its job: the job is not the first one's,
+// so it gives up as without a job (GRR-46).
+func TestConfirmLeavesOtherJobs(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setup(t)
+	start := time.Now()
+	svc.Now = func() time.Time { return start }
+	const pack = "Harbor.Precinct.S01.German.DL.1080p.WEB-P"
+	other, err := st.StartDownload(ctx, store.Download{EpisodeID: 102, Title: pack, Link: "http://prowlarr/1/download?apikey=SECRET", Verdict: "accept"}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.JobID, other.State = "job-7", store.Queued
+	if err := st.UpdateDownload(ctx, other, start); err != nil {
+		t.Fatal(err)
+	}
+	fake.queue = append(fake.queue, map[string]any{"nzo_id": "job-7", "filename": pack, "cat": "tv",
+		"status": "Downloading", "percentage": "10", "timeleft": "0:01:00", "time_added": start.Unix()})
+	lost, err := st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: pack, Link: "http://prowlarr/1/download?apikey=SECRET", Verdict: "accept"}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.Now = func() time.Time { return start.Add(45 * time.Second) }
+	svc.Poll(ctx)
+	if d, _ := st.GetDownload(ctx, lost.ID); d.JobID != "" {
+		t.Errorf("took the other download's job: %+v", d)
+	}
+	svc.Now = func() time.Time { return start.Add(3 * time.Minute) }
+	svc.Poll(ctx)
+	if d, _ := st.GetDownload(ctx, lost.ID); d.State != store.Failed || !strings.Contains(d.Failure, "SABnzbd has no job") {
+		t.Errorf("lost job: %+v", d)
+	}
+	if d, _ := st.GetDownload(ctx, other.ID); d.JobID != "job-7" || !d.Active() {
+		t.Errorf("the other download: %+v", d)
+	}
+}
+
+// TestConfirmWaitsWhenUnsure confirms a download after the time to give up
+// while the database cannot tell whether another download holds the job
+// SABnzbd lists: it tries again later rather than fail (GRR-46).
+func TestConfirmWaitsWhenUnsure(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setup(t)
+	start := time.Now()
+	d, err := st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: show + "German.DL.1080p.WEB-B", Link: "x", Verdict: "accept"}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.queue = append(fake.queue, map[string]any{"nzo_id": "job-3", "filename": d.Title, "cat": "tv",
+		"status": "Downloading", "percentage": "10", "timeleft": "0:01:00", "time_added": start.Unix()})
+	st.Close() // every check fails
+	svc.Now = func() time.Time { return start.Add(3 * time.Minute) }
+	svc.confirm(ctx, &d)
+	if d.State != store.Submitting || d.JobID != "" {
+		t.Errorf("after a failed check: %s, job %q, %q", d.State, d.JobID, d.Failure)
+	}
+}

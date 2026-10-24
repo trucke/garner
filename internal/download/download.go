@@ -268,19 +268,31 @@ func (s *Service) Poll(ctx context.Context) bool {
 	return running
 }
 
-// confirm looks up a download SABnzbd never confirmed, by name.
+// confirm looks up a download SABnzbd never confirmed, by name. A job
+// another download holds is not this one's, though the release is the
+// same, such as a season pack downloaded for two episodes. When that
+// cannot be checked, it tries again at the next poll rather than give up.
 func (s *Service) confirm(ctx context.Context, d *store.Download) {
 	age := s.Now().Sub(d.Created)
 	if age < confirmAfter {
 		return
 	}
 	since := d.Created.Add(-time.Minute)
-	same := func(name, category string, added time.Time) bool {
-		return strings.EqualFold(strings.TrimSuffix(name, ".nzb"), d.Title) && category == s.category && !added.Before(since)
+	unsure := false
+	same := func(id, name, category string, added time.Time) bool {
+		if !strings.EqualFold(strings.TrimSuffix(name, ".nzb"), d.Title) || category != s.category || added.Before(since) {
+			return false
+		}
+		taken, err := s.store.JobTaken(ctx, id, d.ID)
+		if err != nil {
+			s.log.Warn("could not check whether another download holds a job", "download", d.ID, "job", id, "err", err)
+			unsure = true
+		}
+		return err == nil && !taken
 	}
 	if queue, err := s.sab.Queue(ctx, d.Title); err == nil {
 		for _, j := range queue {
-			if same(j.Name, j.Category, j.Added) {
+			if same(j.ID, j.Name, j.Category, j.Added) {
 				d.JobID, d.State, d.Detail = j.ID, store.Queued, j.Status
 				return
 			}
@@ -288,14 +300,14 @@ func (s *Service) confirm(ctx context.Context, d *store.Download) {
 	}
 	if history, err := s.sab.History(ctx, nil, d.Title); err == nil {
 		for _, h := range history {
-			if same(h.Name, h.Category, h.Added) {
+			if same(h.ID, h.Name, h.Category, h.Added) {
 				d.JobID = h.ID
 				fromHistory(d, h)
 				return
 			}
 		}
 	}
-	if age >= giveUpAfter {
+	if age >= giveUpAfter && !unsure {
 		d.State, d.Retryable = store.Failed, true
 		d.Failure = "SABnzbd has no job for this release; Garner stopped or lost the connection before SABnzbd confirmed it"
 	}

@@ -312,3 +312,10 @@ func downloadFromRow(r query.Download) (Download, error) {
 	}
 	return d, nil
 }
+
+// JobTaken reports whether a download other than downloadID holds
+// SABnzbd's job jobID.
+func (s *Store) JobTaken(ctx context.Context, jobID string, downloadID int64) (bool, error) {
+	n, err := s.q.CountOtherDownloadsWithJob(ctx, query.CountOtherDownloadsWithJobParams{JobID: sql.NullString{String: jobID, Valid: true}, DownloadID: downloadID})
+	return n > 0, err
+}

@@ -78,6 +78,22 @@ func (q *Queries) CountFailedDownloadsSince(ctx context.Context, arg CountFailed
 	return count, err
 }
 
+const countOtherDownloadsWithJob = `-- name: CountOtherDownloadsWithJob :one
+SELECT count(*) FROM downloads WHERE job_id = ?1 AND id != ?2
+`
+
+type CountOtherDownloadsWithJobParams struct {
+	JobID      sql.NullString
+	DownloadID int64
+}
+
+func (q *Queries) CountOtherDownloadsWithJob(ctx context.Context, arg CountOtherDownloadsWithJobParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countOtherDownloadsWithJob, arg.JobID, arg.DownloadID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getCandidateLink = `-- name: GetCandidateLink :one
 SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id

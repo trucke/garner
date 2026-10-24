@@ -77,3 +77,6 @@ WHERE d.id IN (SELECT max(id) FROM downloads GROUP BY episode_id)
     OR d.import_state IN ('pending', 'moving', 'scanning', 'failed', 'unverified')
     OR d.updated_at >= sqlc.arg(since) OR d.import_updated_at >= sqlc.arg(since))
 ORDER BY d.id DESC;
+
+-- name: CountOtherDownloadsWithJob :one
+SELECT count(*) FROM downloads WHERE job_id = sqlc.arg(job_id) AND id != sqlc.arg(download_id);
