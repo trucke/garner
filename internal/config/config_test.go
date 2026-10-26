@@ -181,3 +181,18 @@ func TestMovedSettings(t *testing.T) {
 		}
 	}
 }
+
+// TestExamplesLoad loads the configurations users copy: garner.example.toml
+// and the Compose example's. A setting renamed in Config but not in them
+// would stop Garner at its first start.
+func TestExamplesLoad(t *testing.T) {
+	for _, name := range []string{"TVDB_API_KEY", "TVDB_PIN", "PROWLARR_API_KEY", "SABNZBD_API_KEY", "JELLYFIN_API_KEY"} {
+		t.Setenv(name, "")
+		t.Setenv(name+"_FILE", "")
+	}
+	for _, path := range []string{"../../garner.example.toml", "../../examples/compose/garner.toml"} {
+		if _, err := Load(path, true); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+}

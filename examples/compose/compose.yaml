@@ -1,0 +1,62 @@
+# Garner with Prowlarr and SABnzbd, and Jellyfin if you want it, for
+# Docker Compose. README.md next to this file walks through the setup.
+#
+# SABnzbd, Garner and Jellyfin see the media folder at /srv/media, as one
+# mount: Garner moves each download from /srv/media/usenet into
+# /srv/media/library with a rename, which works only within one mount.
+# To keep the media elsewhere, replace ./media below.
+
+services:
+  garner:
+    image: ghcr.io/trucke/garner:latest
+    restart: unless-stopped
+    # The image runs as UID 1000 and needs no privileges.
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # The time zone and Garner's API keys.
+    env_file: .env
+    ports:
+      - 7979:7979
+    volumes:
+      - ./garner.toml:/config/garner.toml:ro
+      - ./garner:/data
+      - ./media:/srv/media
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    environment: &linuxserver
+      PUID: 1000
+      PGID: 1000
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      - 9696:9696
+    volumes:
+      - ./prowlarr:/config
+
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    restart: unless-stopped
+    # SABnzbd answers only requests addressed to a name it knows. On its
+    # first start, it learns its host name, which Garner uses.
+    hostname: sabnzbd
+    environment: *linuxserver
+    ports:
+      - 8080:8080
+    volumes:
+      - ./sabnzbd:/config
+      - ./media:/srv/media
+
+  # Runs only with COMPOSE_PROFILES=jellyfin in .env.
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    profiles: [jellyfin]
+    restart: unless-stopped
+    environment: *linuxserver
+    ports:
+      - 8096:8096
+    volumes:
+      - ./jellyfin:/config
+      - ./media/library:/srv/media/library:ro

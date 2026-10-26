@@ -19,6 +19,7 @@ coverage.*
 # Local secrets and settings
 .env
 .env.*
+!/examples/compose/.env.example
 /devstack.toml
 /mise.local.toml
 /.infisical.json
@@ -31,3 +32,6 @@ coverage.*
 
 # Local configuration; see garner.example.toml
 /garner.toml
+
+# The Compose example's data, when it runs in the repository
+/examples/compose/*/

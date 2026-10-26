@@ -22,7 +22,7 @@ Garner gets show and episode data from TheTVDB with its own key, which the relea
 
 ## Get started
 
-1. Install the server: [docs/install.md](docs/install.md) walks through the configuration, the container and the first connection.
+1. Install the server: [docs/install.md](docs/install.md) walks through the configuration, the container and the first connection. To set up Garner, Prowlarr and SABnzbd together with Docker Compose, use the [Compose example](examples/compose) instead.
 2. Install the terminal interface on the machine you use it from. Download the file for that machine from the [latest release](https://github.com/trucke/garner/releases/latest): `garner-<version>-darwin-arm64` for a Mac with Apple silicon, `darwin-amd64` for an Intel Mac, `linux-amd64` for Linux on x86 or `linux-arm64` for Linux on ARM. Then move it into your path and make it executable. On a Mac with Apple silicon:
 
    ```bash

@@ -114,7 +114,7 @@ The fixed seeds were chosen so that, together, every event changes something, a 
 
 Maintainers release with `mise run release vX.Y.Z [revision]`. The task tags a commit of `main`, the newest by default, and pushes the tag. The commit must be on `main` on GitHub and newer than the previous release. GitHub's release workflow (`.github/workflows/release.yml`) then builds:
 
-- the server image, `ghcr.io/trucke/garner:vX.Y.Z`, with Garner's TheTVDB key from the repository secret `TVDB_API_KEY` built in; the workflow fails without it. Its build cache lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes.
+- the server image, `ghcr.io/trucke/garner:vX.Y.Z`, also tagged `latest` for the Compose example in `examples/compose`, with Garner's TheTVDB key from the repository secret `TVDB_API_KEY` built in; the workflow fails without it. Its build cache lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes.
 - with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS and Linux, on ARM and x86, with SHA-256 sums, and the GitHub release with the image reference and the commits since the previous version. The release also carries `THIRD-PARTY-NOTICES.txt`, the licenses of the Go modules the binaries are built with; run `mise run notices` to regenerate it when a dependency changed.
 
 `goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without publishing anything. The workflow keeps the twenty newest image versions, build cache included. Versions follow semantic versioning.

@@ -1,6 +1,6 @@
 # Install Garner
 
-This guide sets up Garner's server, `garnerd`, as a container next to Prowlarr, SABnzbd and Jellyfin, and connects the terminal interface to it. The examples use Podman; Docker works the same way, with the differences noted.
+This guide sets up Garner's server, `garnerd`, as a container next to Prowlarr, SABnzbd and Jellyfin, and connects the terminal interface to it. The examples use Podman; Docker works the same way, with the differences noted. To set up Garner, Prowlarr and SABnzbd together with Docker Compose, use the [Compose example](../examples/compose) instead.
 
 The examples assume these folders on the server. Adjust them to your setup:
 

@@ -10,6 +10,9 @@ on:
 
 permissions: {}
 
+# One release at a time; one pushed meanwhile waits for its turn.
+concurrency: release
+
 jobs:
   release:
     runs-on: ubuntu-24.04
@@ -53,6 +56,16 @@ jobs:
             exit 1
           }
 
+      # latest names the newest version on main, which the Compose example
+      # pulls; a rerun of an older release leaves it alone.
+      - name: Choose the image tags
+        id: tags
+        run: |
+          newest=$(git tag --merged origin/main | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          tags="$IMAGE:$TAG"
+          [ "$newest" != "$TAG" ] || tags="$tags,$IMAGE:latest"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
       - name: Read the tool versions from mise.toml
         id: tools
         run: |
@@ -83,7 +96,7 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             VERSION=${{ env.TAG }}
             COMMIT=${{ github.sha }}
