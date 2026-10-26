@@ -28,9 +28,10 @@ Garner is young: versions start with `0.`, and a new version can change how thin
    mkdir -p ~/.local/bin
    mv ~/Downloads/garner-*-darwin-arm64 ~/.local/bin/garner
    chmod +x ~/.local/bin/garner
+   xattr -c ~/.local/bin/garner
    ```
 
-   On other machines, use their file instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
+   Apple has not signed the file, so macOS refuses to open it while it carries the mark a browser download gets; the last command removes that mark. On other machines, use their file instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
 
 3. Run `garnerd token create <device>` on the server, run `garner` on your machine and paste the connection code. The terminal interface remembers the connection in `~/.config/garner/connection`.
 4. Press `a` to add a show. Press `?` on any screen for its keys.

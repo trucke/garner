@@ -54,12 +54,14 @@ The examples assume these folders on the server. Adjust them to your setup:
    JELLYFIN_API_KEY=...
    ```
 
-7. Make the user who runs the container the owner of `garner.env`, and let only that user read it:
+7. Make the user who runs the container the owner of both files, and let only that user read `garner.env`:
 
    ```bash
-   sudo chown "$USER": /etc/garner/garner.env
+   sudo chown "$USER": /etc/garner/garner.toml /etc/garner/garner.env
    chmod 600 /etc/garner/garner.env
    ```
+
+   On a server with SELinux, rootless Podman can label only files its user owns; with `garner.toml` left to root, the container does not start.
 
 Secrets never go into `garner.toml`. Instead of the environment, `garnerd` also reads each secret from the file that `NAME_FILE` names, such as `TVDB_API_KEY_FILE`.
 
