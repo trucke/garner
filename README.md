@@ -57,6 +57,8 @@ tiers = ["en 1080p", "en 720p"]
 
 A release that names no language counts as the show's original language. The file check after download confirms the language. `garner.example.toml` describes every setting.
 
+Some rules apply under every profile: Garner never downloads a remux or a 2160p release on its own, ranks releases of one tier by size, completeness, source and age, and checks each video before importing it. [How Garner chooses releases](docs/releases.md) lists them all.
+
 ## Files in the library
 
 Garner manages one file per episode: the files it imports and the files it takes over. It leaves every other file in the library alone.
