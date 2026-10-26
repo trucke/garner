@@ -98,4 +98,4 @@ Scene numbering and alternative titles come from [TheXEM](https://thexem.info). 
 
 ## License
 
-Garner is released under the [MIT license](LICENSE). The container image also contains an FFprobe built from [FFmpeg](https://ffmpeg.org) under the LGPL 2.1 or later; its license text is in the image at `/usr/share/licenses/ffprobe`.
+Garner is released under the [MIT license](LICENSE). The Go modules the released binaries are built with are listed with their licenses in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which ships with them. The container image also contains an FFprobe built from [FFmpeg](https://ffmpeg.org) under the LGPL 2.1 or later; its license text is in the image at `/usr/share/licenses/ffprobe`.

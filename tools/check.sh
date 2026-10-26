@@ -48,6 +48,11 @@ go vet ./... || fail "vet found problems"
 step "Generated database code"
 (cd internal/store && sqlc diff) || fail "internal/store/query does not match the SQL; run mise run generate"
 
+# The notices name the licenses of everything the released binaries
+# compile in; go-licenses, pinned in mise.toml, classifies them.
+step "Third-party notices"
+go run ./tools/notices --check || fail "THIRD-PARTY-NOTICES.txt is not current; run mise run notices"
+
 # govulncheck reads the code and what it calls; it needs nothing built.
 step "Known vulnerabilities, on macOS and in the server as the container image builds it"
 govulncheck ./... || fail "known vulnerabilities reach Garner's code on macOS; see above"

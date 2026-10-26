@@ -21,6 +21,9 @@ archives:
 
 checksum:
   name_template: SHA256SUMS
+  # The notices file travels with the binaries, so its sum is in here too.
+  extra_files:
+    - glob: THIRD-PARTY-NOTICES.txt
 
 # The commits since the previous release, newest first, as git lists them.
 changelog:
@@ -31,3 +34,5 @@ release:
   name_template: "Garner {{ .Tag }}"
   header: |
     Server image: `{{ envOrDefault "IMAGE_REF" "not built in this run" }}`
+  extra_files:
+    - glob: THIRD-PARTY-NOTICES.txt

@@ -3,6 +3,7 @@ go = "1.27.3"
 sqlc = "1.31.1"
 air = "1.67.4"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.9.0"
+"go:github.com/google/go-licenses/v2" = "2.0.1"
 goreleaser = "2.18.3"
 
 [tasks.build]
@@ -39,6 +40,10 @@ run = "bash tools/release.sh"
 [tasks.devstack]
 description = "Control the local dev stack (SABnzbd, Prowlarr, Jellyfin in Podman): up, down, reset or status"
 run = "go run ./tools/devstack"
+
+[tasks.notices]
+description = "Regenerate THIRD-PARTY-NOTICES.txt from the Go modules the release platforms compile in"
+run = "go run ./tools/notices"
 
 [tasks.generate]
 description = "Regenerate database code with sqlc"

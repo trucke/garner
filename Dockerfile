@@ -58,7 +58,7 @@ LABEL org.opencontainers.image.title="Garner" \
 RUN apk add --no-cache libgcc
 COPY --from=ffprobe /src/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffprobe /src/COPYING.LGPLv2.1 /usr/share/licenses/ffprobe/COPYING.LGPLv2.1
-COPY LICENSE /usr/share/licenses/garner/LICENSE
+COPY LICENSE THIRD-PARTY-NOTICES.txt /usr/share/licenses/garner/
 COPY --from=build /out/garnerd /usr/local/bin/garnerd
 # garnerd unpacks Turso's library into the data directory on first start.
 ENV GARNER_CONFIG=/config/garner.toml

@@ -38,6 +38,7 @@ jobs:
             echo "image=$(sed -n 's/^ARG GOLANG=//p' Dockerfile)"
             echo "tags=$(sed -n 's/.*go build -tags \([^ ]*\) .*/\1/p' Dockerfile)"
             echo "govulncheck=$(sed -n 's/^"go:golang.org\/x\/vuln\/cmd\/govulncheck" = "\(.*\)"$/\1/p' mise.toml)"
+            echo "go_licenses=$(sed -n 's#^"go:github.com/google/go-licenses/v2" = "\(.*\)"$#\1#p' mise.toml)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Formatting
@@ -54,6 +55,13 @@ jobs:
       - name: Generated database code
         working-directory: internal/store
         run: sqlc diff
+
+      - name: Third-party notices
+        env:
+          VERSION: ${{ steps.settings.outputs.go_licenses }}
+        run: |
+          go install "github.com/google/go-licenses/v2@v$VERSION"
+          go run ./tools/notices --check
 
       - name: Known vulnerabilities, on macOS and in the server as the container image builds it
         env:
