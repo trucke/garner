@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/trucke/garner/main/docs/profile.schema.json",
+  "title": "Garner profile",
+  "description": "Which releases Garner accepts for a show and how it ranks them. https://github.com/trucke/garner/blob/main/docs/profiles.md describes the format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["garner_profile", "name", "audio", "resolution"],
+  "properties": {
+    "garner_profile": {
+      "description": "The format version.",
+      "const": 1
+    },
+    "name": {
+      "description": "The profile's name, unique within one Garner.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "description": {
+      "description": "One line that lists and the preview show.",
+      "type": "string",
+      "maxLength": 200
+    },
+    "audio": {
+      "description": "Accepted audio languages, best first. original is the show's original language.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["original", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pl", "pt", "ru", "tr", "zh"]
+      }
+    },
+    "resolution": {
+      "description": "Accepted resolutions, best first.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["1080p", "720p"]
+      }
+    },
+    "priority": {
+      "description": "Which list counts more when Garner ranks the preferences.",
+      "enum": ["audio", "resolution"],
+      "default": "audio"
+    },
+    "dual_audio": {
+      "description": "Whether a release that also has the show's original audio ranks first.",
+      "enum": ["prefer", "ignore"],
+      "default": "prefer"
+    },
+    "unnamed_audio": {
+      "description": "A release marked dual or multi that names no languages: reject it, or take it as a last resort and check it after download.",
+      "enum": ["reject", "fallback"],
+      "default": "reject"
+    },
+    "upgrades": {
+      "description": "Replace a file below the first preference when a release in a better preference appears.",
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

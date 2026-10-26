@@ -1,7 +1,9 @@
 package release
 
 import (
+	"maps"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -167,6 +169,10 @@ var languageNames = map[Language]string{
 	"tr": "Turkish", "hi": "Hindi", "ko": "Korean", "zh": "Chinese", "ru": "Russian", "pt": "Portuguese",
 	"pl": "Polish", "nl": "Dutch",
 }
+
+// Languages lists the languages Garner knows by code, in alphabetical
+// order.
+func Languages() []Language { return slices.Sorted(maps.Keys(languageNames)) }
 
 // Name is the language's English name, such as "German".
 func (l Language) Name() string {

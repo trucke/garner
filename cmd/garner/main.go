@@ -26,7 +26,10 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Usage = func() {
 		fmt.Fprint(flag.CommandLine.Output(), "Garner's terminal interface. It keeps its connection to the server in\n"+
-			"$GARNER_CONNECTION or ~/.config/garner/connection.\n\nUsage: garner [--version]\n")
+			"$GARNER_CONNECTION or ~/.config/garner/connection.\n\n"+
+			"Usage: garner [--version]\n"+
+			"       garner profile check FILE   check a profile file, or - for standard input,\n"+
+			"                                   without a server\n")
 	}
 	flag.Parse()
 	v := buildinfo.Version(version, commit)
@@ -34,6 +37,8 @@ func main() {
 	case *showVersion:
 		fmt.Println("garner", v)
 		return
+	case flag.NArg() == 3 && flag.Arg(0) == "profile" && flag.Arg(1) == "check":
+		os.Exit(checkProfile(flag.Arg(2), os.Stdin, os.Stdout))
 	case flag.NArg() > 0:
 		flag.Usage()
 		os.Exit(2)

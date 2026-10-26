@@ -1,0 +1,11 @@
+#:schema https://raw.githubusercontent.com/trucke/garner/main/docs/profile.schema.json
+# A Garner profile; https://github.com/trucke/garner/blob/main/docs/profiles.md describes the format.
+garner_profile = 1
+name = "Original, English dub"
+description = "The original audio; an English dub when no release has it"
+audio = ["original", "en"]
+resolution = ["1080p", "720p"]
+priority = "audio"
+dual_audio = "prefer"
+unnamed_audio = "reject"
+upgrades = true

@@ -1,0 +1,11 @@
+#:schema https://raw.githubusercontent.com/trucke/garner/main/docs/profile.schema.json
+# A Garner profile; https://github.com/trucke/garner/blob/main/docs/profiles.md describes the format.
+garner_profile = 1
+name = "German"
+description = "German audio; releases with the original audio too rank first"
+audio = ["de"]
+resolution = ["1080p", "720p"]
+priority = "audio"
+dual_audio = "prefer"
+unnamed_audio = "reject"
+upgrades = true
