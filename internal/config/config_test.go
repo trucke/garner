@@ -127,3 +127,39 @@ func TestDuration(t *testing.T) {
 		}
 	}
 }
+
+// TestBuiltinTVDBKey loads the configuration of a release, which has
+// Garner's own TheTVDB key built in: it is used only without TVDB_API_KEY,
+// a key of one's own keeps its PIN, and the built-in key never shows.
+func TestBuiltinTVDBKey(t *testing.T) {
+	old := builtinTVDBKey
+	builtinTVDBKey = "builtin-key-1"
+	t.Cleanup(func() { builtinTVDBKey = old })
+	for _, name := range []string{"TVDB_API_KEY", "TVDB_PIN", "PROWLARR_API_KEY", "SABNZBD_API_KEY", "JELLYFIN_API_KEY"} {
+		t.Setenv(name, "")
+		t.Setenv(name+"_FILE", "")
+	}
+	path := t.TempDir() + "/garner.toml"
+
+	t.Setenv("TVDB_PIN", "pin-2")
+	cfg, err := Load(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TVDB.APIKey.Value() != "builtin-key-1" || !cfg.TVDB.BuiltIn || cfg.TVDB.PIN != "" {
+		t.Errorf("without TVDB_API_KEY: key %q, built in %v, PIN %q; want the built-in key without a PIN",
+			cfg.TVDB.APIKey.Value(), cfg.TVDB.BuiltIn, cfg.TVDB.PIN.Value())
+	}
+	if out := fmt.Sprintf("%v %+v", cfg, cfg.TVDB); strings.Contains(out, "builtin-key-1") {
+		t.Errorf("the built-in key shows in %s", out)
+	}
+
+	t.Setenv("TVDB_API_KEY", "own-key-3")
+	if cfg, err = Load(path, false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TVDB.APIKey.Value() != "own-key-3" || cfg.TVDB.BuiltIn || cfg.TVDB.PIN.Value() != "pin-2" {
+		t.Errorf("with TVDB_API_KEY: key %q, built in %v, PIN %q; want the own key with its PIN",
+			cfg.TVDB.APIKey.Value(), cfg.TVDB.BuiltIn, cfg.TVDB.PIN.Value())
+	}
+}

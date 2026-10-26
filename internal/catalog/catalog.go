@@ -47,6 +47,10 @@ type Catalog struct {
 	OnChange func(seriesID int64)
 }
 
+// Paused reports until when and why Garner holds its TVDB requests back;
+// the zero time when it does not.
+func (c *Catalog) Paused() (time.Time, string) { return c.tvdb.Paused() }
+
 type corrections struct {
 	Title []titleCorrection `toml:"title"`
 	Order []orderRule       `toml:"order"`

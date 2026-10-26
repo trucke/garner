@@ -1,8 +1,9 @@
 # Garner configuration. Copy to garner.toml and adjust.
 # Secrets never go in this file. Set them as environment variables, or point
 # NAME_FILE at a file holding the value (systemd credentials, Infisical Agent):
-#   TVDB_API_KEY, TVDB_PIN (optional), PROWLARR_API_KEY, SABNZBD_API_KEY,
-#   JELLYFIN_API_KEY
+#   PROWLARR_API_KEY, SABNZBD_API_KEY, JELLYFIN_API_KEY
+# Release images bring Garner's own TheTVDB key. To use a key of your own,
+# set TVDB_API_KEY, and TVDB_PIN if your key needs a subscriber PIN.
 
 # Database, backups and Garner's own TLS key. Must be on local disk, not a
 # network share. Relative paths are relative to this file.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/api"
+	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -55,7 +56,15 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 func (s *Server) checkTVDB(ctx context.Context) api.ServiceCheck {
 	c := api.ServiceCheck{Name: "TVDB"}
 	if s.catalog == nil {
-		c.Detail = "not set up: TVDB_API_KEY is missing"
+		c.Detail = "not set up: TVDB_API_KEY is missing, and this build has no built-in key"
+		return c
+	}
+	key := "your TVDB_API_KEY"
+	if s.cfg.TVDB.BuiltIn {
+		key = "Garner's built-in key"
+	}
+	if until, reason := s.catalog.Paused(); !until.IsZero() {
+		c.Detail = (&catalog.PausedError{Until: until, Reason: reason}).Error()
 		return c
 	}
 	last, err := s.catalog.LastSync(ctx)
@@ -63,9 +72,9 @@ func (s *Server) checkTVDB(ctx context.Context) api.ServiceCheck {
 	case err != nil:
 		c.Detail = err.Error()
 	case last.IsZero():
-		c.OK, c.Detail = true, "catalogue not synced yet"
+		c.OK, c.Detail = true, "catalogue not synced yet, with "+key
 	default:
-		c.OK, c.Detail, c.At = true, "catalogue synced", &last
+		c.OK, c.Detail, c.At = true, "catalogue synced, with "+key, &last
 	}
 	return c
 }

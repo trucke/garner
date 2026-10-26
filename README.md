@@ -17,7 +17,8 @@ Garner is young: versions start with `0.`, and a new version can change how thin
 - A Linux server with Podman or Docker. Release images are built for x86 (`linux/amd64`).
 - Prowlarr with at least one Newznab indexer, SABnzbd with a Usenet provider, and Jellyfin with the TheTVDB plugin.
 - One filesystem or share that holds both SABnzbd's completed downloads and the library. Garner moves files with a rename, which works only within one filesystem.
-- A [TheTVDB API key](https://thetvdb.com/api-information) for show and episode data.
+
+Garner gets show and episode data from TheTVDB with its own key, which the release images bring along. To use a key of your own, set `TVDB_API_KEY`.
 
 ## Get started
 

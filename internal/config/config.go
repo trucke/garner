@@ -126,7 +126,14 @@ type Library struct {
 type TVDB struct {
 	APIKey Secret `toml:"-"`
 	PIN    Secret `toml:"-"`
+	// BuiltIn means APIKey is Garner's own key, as no TVDB_API_KEY is set.
+	BuiltIn bool `toml:"-"`
 }
+
+// builtinTVDBKey is Garner's TheTVDB project key. The release sets it when
+// it builds the server image (see the Dockerfile); other builds have none
+// and need TVDB_API_KEY.
+var builtinTVDBKey string
 
 // Service is an HTTP service Garner talks to.
 type Service struct {
@@ -246,6 +253,11 @@ func Load(path string, explicit bool) (*Config, error) {
 		if *s.dst, err = secret(s.name); err != nil {
 			return nil, err
 		}
+	}
+	// A key of one's own wins. TVDB_PIN goes with such a key only: a
+	// subscriber PIN means nothing to Garner's project key.
+	if cfg.TVDB.APIKey == "" && builtinTVDBKey != "" {
+		cfg.TVDB.APIKey, cfg.TVDB.PIN, cfg.TVDB.BuiltIn = Secret(builtinTVDBKey), "", true
 	}
 	return cfg, cfg.validate()
 }

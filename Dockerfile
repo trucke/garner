@@ -42,8 +42,16 @@ COPY internal internal
 ARG VERSION=dev
 ARG COMMIT=
 # musl selects Turso's library for Alpine; timetzdata embeds time zones.
-RUN CGO_ENABLED=0 go build -tags musl,timetzdata -trimpath \
-      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/garnerd ./cmd/garnerd
+# The release passes Garner's TheTVDB key as the build secret tvdb_api_key,
+# so the key reaches the binary but not the image's metadata, as a build
+# argument would; other builds have none. -trimpath also keeps -ldflags,
+# and with them the key, out of the build information `go version -m`
+# prints; the last line fails the build should that ever change.
+RUN --mount=type=secret,id=tvdb_api_key,required=false \
+    CGO_ENABLED=0 go build -tags musl,timetzdata -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X github.com/trucke/garner/internal/config.builtinTVDBKey=$(cat /run/secrets/tvdb_api_key 2>/dev/null)" \
+      -o /out/garnerd ./cmd/garnerd \
+ && ! go version -m /out/garnerd | grep -q builtinTVDBKey
 
 FROM ${ALPINE}
 ARG VERSION=dev

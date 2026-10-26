@@ -51,7 +51,7 @@ func TestSearchRanking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(st, NewTVDB(srv.URL, "key", "", client), nil, slog.New(slog.DiscardHandler))
+	c, err := New(st, testTVDB(srv.URL, client), nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

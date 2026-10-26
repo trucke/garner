@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +23,36 @@ var errNotFound = errors.New("not found on TVDB")
 
 // tokenMaxAge renews the login token well before TVDB's one-month expiry.
 const tokenMaxAge = 24 * time.Hour
+
+// Limits on TheTVDB requests. Every installation of a release shares
+// Garner's project key, so one that goes wrong, such as through a bug that
+// reloads shows in a loop, must not get the key blocked for everyone.
+const (
+	// tvdbInterval paces requests: at most five per second.
+	tvdbInterval = 200 * time.Millisecond
+	// tvdbBudget is the most requests in tvdbWindow. Loading a show takes
+	// three or four, so even taking over a large library stays far below.
+	tvdbBudget = 10_000
+	tvdbWindow = 24 * time.Hour
+	// tvdbBackoff holds every request back after TheTVDB answers 429 or
+	// 503 without saying for how long; tvdbMaxBackoff caps what it asks.
+	tvdbBackoff    = 15 * time.Minute
+	tvdbMaxBackoff = 24 * time.Hour
+	// tvdbRefusedPause holds requests back after TheTVDB refuses the key,
+	// so a revoked key does not make every installation log in again with
+	// every request.
+	tvdbRefusedPause = time.Hour
+)
+
+// PausedError means Garner holds its TheTVDB requests back until Until.
+type PausedError struct {
+	Until  time.Time
+	Reason string
+}
+
+func (e *PausedError) Error() string {
+	return fmt.Sprintf("TVDB requests paused until %s: %s", e.Until.Format("Mon 15:04"), e.Reason)
+}
 
 // tvdbMaxResponse bounds each TVDB response body. The largest answers
 // Garner reads are extended series records with aliases, season types
@@ -42,21 +73,115 @@ func readBounded(r io.Reader, limit int64) ([]byte, bool, error) {
 	return b, int64(len(b)) > limit, nil
 }
 
-// TVDB is a client for TheTVDB's v4 API.
+// TVDB is a client for TheTVDB's v4 API, within the limits above.
 type TVDB struct {
 	base   string
 	apiKey string
 	pin    string
 	http   *http.Client
 
+	// Now tells the time, and Sleep waits on the same clock; the
+	// simulation replaces both.
+	Now   func() time.Time
+	Sleep func(ctx context.Context, d time.Duration) error
+
 	mu      sync.Mutex
 	token   string
 	tokenAt time.Time
+
+	lim         sync.Mutex
+	next        time.Time // when the next request may start
+	windowStart time.Time
+	used        int // requests since windowStart
+	pausedUntil time.Time
+	pauseReason string
 }
 
 // NewTVDB returns a client. pin is the subscriber PIN and may be empty.
 func NewTVDB(base, apiKey, pin string, client *http.Client) *TVDB {
-	return &TVDB{base: base, apiKey: apiKey, pin: pin, http: client}
+	return &TVDB{base: base, apiKey: apiKey, pin: pin, http: client, Now: time.Now, Sleep: sleep}
+}
+
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// reserve admits one request. It fails while requests are held back or
+// the budget is spent, and otherwise waits for the request's turn.
+func (c *TVDB) reserve(ctx context.Context) error {
+	c.lim.Lock()
+	now := c.Now()
+	if now.Before(c.pausedUntil) {
+		err := &PausedError{Until: c.pausedUntil, Reason: c.pauseReason}
+		c.lim.Unlock()
+		return err
+	}
+	if now.Sub(c.windowStart) >= tvdbWindow {
+		c.windowStart, c.used = now, 0
+	}
+	if c.used >= tvdbBudget {
+		c.pausedUntil = c.windowStart.Add(tvdbWindow)
+		c.pauseReason = fmt.Sprintf("Garner sent TVDB %d requests within %s, its limit; this points to a bug in Garner, please report it",
+			tvdbBudget, tvdbWindow)
+		err := &PausedError{Until: c.pausedUntil, Reason: c.pauseReason}
+		c.lim.Unlock()
+		return err
+	}
+	c.used++
+	start := now
+	if c.next.After(now) {
+		start = c.next
+	}
+	c.next = start.Add(tvdbInterval)
+	c.lim.Unlock()
+	if wait := start.Sub(now); wait > 0 {
+		return c.Sleep(ctx, wait)
+	}
+	return nil
+}
+
+// pause holds every request back until until. A longer pause in place
+// stays.
+func (c *TVDB) pause(until time.Time, reason string) *PausedError {
+	c.lim.Lock()
+	defer c.lim.Unlock()
+	if until.After(c.pausedUntil) {
+		c.pausedUntil, c.pauseReason = until, reason
+	}
+	return &PausedError{Until: c.pausedUntil, Reason: c.pauseReason}
+}
+
+// Paused reports until when and why requests are held back; the zero time
+// when they are not.
+func (c *TVDB) Paused() (time.Time, string) {
+	c.lim.Lock()
+	defer c.lim.Unlock()
+	if c.Now().Before(c.pausedUntil) {
+		return c.pausedUntil, c.pauseReason
+	}
+	return time.Time{}, ""
+}
+
+// slowDown handles TheTVDB's 429 and 503: it holds every request back for
+// as long as Retry-After asks, in seconds or as a date, up to
+// tvdbMaxBackoff, or for tvdbBackoff when it does not say.
+func (c *TVDB) slowDown(resp *http.Response) *PausedError {
+	now := c.Now()
+	wait := tvdbBackoff
+	v := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if s, err := strconv.Atoi(v); err == nil && s > 0 {
+		wait = time.Duration(s) * time.Second
+	} else if t, err := http.ParseTime(v); err == nil && t.After(now) {
+		wait = t.Sub(now)
+	}
+	return c.pause(now.Add(min(wait, tvdbMaxBackoff)), fmt.Sprintf("TVDB answered %s and asked Garner to wait", resp.Status))
 }
 
 type envelope struct {
@@ -72,8 +197,11 @@ type envelope struct {
 func (c *TVDB) login(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.token != "" && time.Since(c.tokenAt) < tokenMaxAge {
+	if c.token != "" && c.Now().Sub(c.tokenAt) < tokenMaxAge {
 		return c.token, nil
+	}
+	if err := c.reserve(ctx); err != nil {
+		return "", err
 	}
 	body := map[string]string{"apikey": c.apiKey}
 	if c.pin != "" {
@@ -98,8 +226,19 @@ func (c *TVDB) login(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("TVDB login: response over %d MiB", tvdbMaxResponse>>20)
 	}
 	var env envelope
-	if err := json.Unmarshal(respBody, &env); err != nil || resp.StatusCode != http.StatusOK {
+	decodeErr := json.Unmarshal(respBody, &env)
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return "", c.slowDown(resp)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "", c.pause(c.Now().Add(tvdbRefusedPause), fmt.Sprintf(
+			"TVDB refused the API key (%s %s); with Garner's built-in key, set TVDB_API_KEY to a key of your own", resp.Status, env.Message))
+	default:
 		return "", fmt.Errorf("TVDB login failed (%s): %s", resp.Status, env.Message)
+	}
+	if decodeErr != nil {
+		return "", fmt.Errorf("TVDB login: unreadable response: %w", decodeErr)
 	}
 	var data struct {
 		Token string `json:"token"`
@@ -107,7 +246,7 @@ func (c *TVDB) login(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(env.Data, &data); err != nil || data.Token == "" {
 		return "", errors.New("TVDB login returned no token")
 	}
-	c.token, c.tokenAt = data.Token, time.Now()
+	c.token, c.tokenAt = data.Token, c.Now()
 	return c.token, nil
 }
 
@@ -123,6 +262,9 @@ func (c *TVDB) get(ctx context.Context, path string, out any) (*envelope, error)
 	for attempt := 0; ; attempt++ {
 		token, err := c.login(ctx)
 		if err != nil {
+			return nil, err
+		}
+		if err := c.reserve(ctx); err != nil {
 			return nil, err
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
@@ -146,6 +288,8 @@ func (c *TVDB) get(ctx context.Context, path string, out any) (*envelope, error)
 		case resp.StatusCode == http.StatusUnauthorized && attempt == 0:
 			c.forgetToken()
 			continue
+		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable:
+			return nil, c.slowDown(resp)
 		case tooLarge:
 			return nil, fmt.Errorf("TVDB %s: response over %d MiB", path, tvdbMaxResponse>>20)
 		case resp.StatusCode == http.StatusNotFound:

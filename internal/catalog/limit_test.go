@@ -40,7 +40,7 @@ func TestTVDBResponseLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := NewTVDB(srv.URL, "key", "", client)
+	c := testTVDB(srv.URL, client)
 
 	if _, err := c.login(context.Background()); err == nil || !strings.Contains(err.Error(), "TVDB login: response over 16 MiB") {
 		t.Fatalf("login over the limit: %v", err)

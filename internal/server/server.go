@@ -228,7 +228,7 @@ func (s *Server) StepMonitor(ctx context.Context) {
 
 func (s *Server) setupCatalog() error {
 	if s.cfg.TVDB.APIKey == "" {
-		s.log.Warn("TVDB_API_KEY is not set; the catalogue is unavailable")
+		s.log.Warn("TVDB_API_KEY is not set, and this build has no built-in key; the catalogue is unavailable")
 		return nil
 	}
 	client, err := s.httpClient("", 30*time.Second)
@@ -236,6 +236,10 @@ func (s *Server) setupCatalog() error {
 		return err
 	}
 	tvdb := catalog.NewTVDB(catalog.TVDBBaseURL, s.cfg.TVDB.APIKey.Value(), s.cfg.TVDB.PIN.Value(), client)
+	tvdb.Now = s.now
+	if s.deps.Sleep != nil {
+		tvdb.Sleep = s.deps.Sleep
+	}
 	c, err := catalog.New(s.store, tvdb, catalog.NewXEM(catalog.XEMBaseURL, client), s.log)
 	if err != nil {
 		return err

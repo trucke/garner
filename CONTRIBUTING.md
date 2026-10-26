@@ -11,7 +11,7 @@ Bug reports, ideas and pull requests are welcome. For a larger change, open an i
 
 ## Run it locally
 
-Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches other services or libraries. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io), a Usenet account, at least one Newznab indexer and a [TheTVDB API key](https://thetvdb.com/api-information).
+Garner runs on your machine against a local development stack: SABnzbd, Prowlarr and Jellyfin in a Podman pod, so development never touches other services or libraries. You need [mise](https://mise.jdx.dev), [Podman](https://podman.io), a Usenet account, at least one Newznab indexer and a [TheTVDB API key](https://thetvdb.com/api-information): only release images have Garner's own key built in.
 
 1. Copy `devstack.example.toml` to `devstack.toml` and fill in your Usenet server and indexers. Set `TVDB_API_KEY` in the environment, for example in `mise.local.toml`:
 
@@ -112,7 +112,7 @@ The fixed seeds were chosen so that, together, every event changes something, a 
 
 Maintainers release with `mise run release vX.Y.Z [revision]`. The task tags a commit of `main`, the newest by default, and pushes the tag. The commit must be on `main` on GitHub and newer than the previous release. GitHub's release workflow (`.github/workflows/release.yml`) then builds:
 
-- the server image, `ghcr.io/trucke/garner:vX.Y.Z`. Its build cache lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes.
+- the server image, `ghcr.io/trucke/garner:vX.Y.Z`, with Garner's TheTVDB key from the repository secret `TVDB_API_KEY` built in; the workflow fails without it. Its build cache lives on `ghcr.io` too, so FFprobe is compiled only when the Dockerfile's FFmpeg changes.
 - with GoReleaser (`.goreleaser.yaml`), the terminal interface for macOS and Linux, on ARM and x86, with SHA-256 sums, and the GitHub release with the image reference and the commits since the previous version. The release also carries `THIRD-PARTY-NOTICES.txt`, the licenses of the Go modules the binaries are built with; run `mise run notices` to regenerate it when a dependency changed.
 
 `goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without publishing anything. The workflow keeps the twenty newest image versions, build cache included. Versions follow semantic versioning.

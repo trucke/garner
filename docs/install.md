@@ -19,7 +19,7 @@ The examples assume these folders on the server. Adjust them to your setup:
 4. If Garner will reach SABnzbd by a host name, such as `sabnzbd.home.lan`, add that name to `host_whitelist` under **Config › Special** in SABnzbd. SABnzbd refuses requests addressed to any other name; Garner then shows `Hostname verification failed` for SABnzbd.
 5. Make sure that SABnzbd's completed folder and the library are on the same filesystem. Garner moves each file with a rename, which fails across filesystems.
 6. Make sure that Garner can write the library folders and SABnzbd's completed folder. Garner runs as UID 1000 in the container. With rootless Podman and the `--userns=keep-id:uid=1000,gid=1000` option used below, that is your own user on the server. With Docker, it is UID 1000 on the server.
-7. Note the API keys of Prowlarr (**Settings › General**) and SABnzbd (**Config › General**), and get a [TheTVDB API key](https://thetvdb.com/api-information).
+7. Note the API keys of Prowlarr (**Settings › General**) and SABnzbd (**Config › General**).
 
 ## Configure Garner
 
@@ -48,11 +48,12 @@ The examples assume these folders on the server. Adjust them to your setup:
 6. Write the secrets to `/etc/garner/garner.env`:
 
    ```bash
-   TVDB_API_KEY=...
    PROWLARR_API_KEY=...
    SABNZBD_API_KEY=...
    JELLYFIN_API_KEY=...
    ```
+
+   Garner's image brings its own TheTVDB key. To use a key of your own, add `TVDB_API_KEY`, and `TVDB_PIN` if your key needs a subscriber PIN.
 
 7. Make the user who runs the container the owner of both files, and let only that user read `garner.env`:
 
@@ -63,7 +64,7 @@ The examples assume these folders on the server. Adjust them to your setup:
 
    On a server with SELinux, rootless Podman can label only files its user owns; with `garner.toml` left to root, the container does not start.
 
-Secrets never go into `garner.toml`. Instead of the environment, `garnerd` also reads each secret from the file that `NAME_FILE` names, such as `TVDB_API_KEY_FILE`.
+Secrets never go into `garner.toml`. Instead of the environment, `garnerd` also reads each secret from the file that `NAME_FILE` names, such as `SABNZBD_API_KEY_FILE`.
 
 ## Start the server
 

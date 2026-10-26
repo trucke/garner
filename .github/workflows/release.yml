@@ -42,6 +42,17 @@ jobs:
             exit 1
           }
 
+      # Every release builds Garner's TheTVDB key into the server, so users
+      # need none of their own.
+      - name: Check that the TheTVDB key is set
+        env:
+          TVDB_API_KEY: ${{ secrets.TVDB_API_KEY }}
+        run: |
+          [ -n "$TVDB_API_KEY" ] || {
+            echo "::error::the repository secret TVDB_API_KEY is missing"
+            exit 1
+          }
+
       - name: Read the tool versions from mise.toml
         id: tools
         run: |
@@ -76,6 +87,8 @@ jobs:
           build-args: |
             VERSION=${{ env.TAG }}
             COMMIT=${{ github.sha }}
+          secrets: |
+            tvdb_api_key=${{ secrets.TVDB_API_KEY }}
           cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
           provenance: false
