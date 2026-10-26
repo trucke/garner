@@ -31,13 +31,13 @@ type Schedule struct {
 	// MissingRecent and MissingOlder are the waits between searches for a
 	// missing episode.
 	MissingRecent, MissingOlder time.Duration
-	// Upgrades has the monitor look for a release in a better tier for a
-	// file below its profile's best tier, waiting UpgradeRecent or
-	// UpgradeOlder between looks.
-	Upgrades                    bool
+	// UpgradeRecent and UpgradeOlder are the waits between looks for a
+	// release in a better tier, for a file below the best tier of a
+	// profile that wants upgrades.
 	UpgradeRecent, UpgradeOlder time.Duration
-	// Best names a profile's best tier, such as "German 1080p".
-	Best func(profile string) string
+	// Upgrade tells whether a show's profile wants upgrades and names its
+	// best tier, such as "German 1080p".
+	Upgrade func(sr Series) (best string, on bool)
 }
 
 // retryFailed is the wait after a search every indexer failed.
@@ -103,9 +103,14 @@ func (sc Schedule) next(upgrade bool, aired string, own searchOutcome, searched 
 
 // upgradable reports whether the monitor looks for a better release of a
 // show's episode whose file came from a release in tier: one below the
-// profile's best. A file of unknown tier is left alone.
+// best tier of a profile that wants upgrades. A file of unknown tier is
+// left alone.
 func (sc Schedule) upgradable(sr Series, tier string) bool {
-	return sc.Upgrades && tier != "" && sc.Best != nil && tier != sc.Best(sr.Profile)
+	if sc.Upgrade == nil || tier == "" {
+		return false
+	}
+	best, on := sc.Upgrade(sr)
+	return on && best != "" && tier != best
 }
 
 // leftToYou reports whether the episode's latest download waits for the

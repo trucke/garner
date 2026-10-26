@@ -459,7 +459,7 @@ func (s *showScreen) view(width, height int) string {
 func (s *showScreen) facts(now time.Time, width int) string {
 	d := s.detail
 	typ := "TV"
-	if d.Series.Profile == "anime" {
+	if d.Series.Type == api.TypeAnime {
 		typ = "Anime"
 	}
 	st := status(d.Series.Status)

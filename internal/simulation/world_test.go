@@ -413,7 +413,7 @@ func (w *world) seriesData(s *show) store.SeriesData {
 	d := store.SeriesData{Series: store.Series{
 		ID: s.id, Slug: strings.ToLower(strings.ReplaceAll(s.name, " ", "-")), Name: s.name, NameEng: s.name,
 		OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Continuing", Year: s.year,
-		DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: s.profile,
+		DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: s.profile,
 	}}
 	for _, e := range s.episodes {
 		d.Episodes = append(d.Episodes, store.Episode{
@@ -435,7 +435,7 @@ func (w *world) config() *config.Config {
 		Monitor: config.Monitor{
 			Enabled: true, RecentDays: 14,
 			MissingRecent: config.Duration(6 * time.Hour), MissingOlder: config.Duration(24 * time.Hour),
-			Upgrades: true, UpgradeRecent: config.Duration(24 * time.Hour), UpgradeOlder: config.Duration(7 * 24 * time.Hour),
+			UpgradeRecent: config.Duration(24 * time.Hour), UpgradeOlder: config.Duration(7 * 24 * time.Hour),
 		},
 	}
 	if w.mapped {

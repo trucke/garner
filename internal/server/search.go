@@ -13,7 +13,6 @@ import (
 	"github.com/trucke/garner/internal/prowlarr"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/search"
-	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -37,9 +36,8 @@ func (s *Server) setupSearch() error {
 	if s.deps.Sleep != nil {
 		s.prowlarr.Sleep = s.deps.Sleep
 	}
-	svc := search.New(s.store, s.prowlarr, rules, s.log)
+	svc := search.New(s.store, s.prowlarr, rules, s.profileFor, s.log)
 	svc.Now = s.now
-	svc.Profiles = s.profiles
 	svc.OnProgress = func(p api.SearchProgress) { s.events.publish(Event{Type: "search.progress", Data: p}) }
 	svc.OnDone = func(sr store.Search) {
 		s.events.publish(Event{Type: "search.finished", Data: map[string]any{"episode_id": sr.EpisodeID, "outcome": sr.Outcome}})
@@ -189,29 +187,37 @@ func (s *Server) handleUpdateSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Profile string `json:"profile"`
-		Monitor string `json:"monitor"`
+		ProfileID int64  `json:"profile_id"`
+		Type      string `json:"type"`
+		Monitor   string `json:"monitor"`
 	}
 	err := readJSON(r, &req)
 	switch {
-	case err != nil || req.Profile == "" && req.Monitor == "",
-		req.Profile != "" && req.Profile != selection.TVName && req.Profile != selection.AnimeName,
+	case err != nil || req.ProfileID == 0 && req.Type == "" && req.Monitor == "",
+		req.ProfileID < 0,
+		req.Type != "" && req.Type != store.TypeTV && req.Type != store.TypeAnime,
 		req.Monitor != "" && !slices.Contains(store.MonitorModes, req.Monitor):
-		writeError(w, http.StatusBadRequest, `expected {"profile": "tv" or "anime"}, {"monitor": "new", "all" or "off"}, or both`)
+		writeError(w, http.StatusBadRequest, `expected any of {"profile_id": a profile's ID, "type": "tv" or "anime", "monitor": "new", "all" or "off"}`)
 		return
 	}
 	ctx := r.Context()
-	if req.Profile != "" {
-		err = s.store.ChangeProfile(ctx, id, req.Profile)
+	if req.ProfileID != 0 {
+		err = s.store.ChangeProfile(ctx, id, req.ProfileID)
+	}
+	if err == nil && req.Type != "" {
+		err = s.store.ChangeType(ctx, id, req.Type)
 	}
 	if err == nil && req.Monitor != "" {
 		err = s.store.SetMonitor(ctx, id, req.Monitor, s.now())
 	}
-	if errors.Is(err, store.ErrNotFound) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "series is not in the catalogue")
 		return
-	}
-	if err != nil {
+	case errors.Is(err, store.ErrNoProfile):
+		writeError(w, http.StatusBadRequest, "no profile has that ID")
+		return
+	case err != nil:
 		s.internalError(w, "update series", err)
 		return
 	}

@@ -24,7 +24,7 @@ func TestFailedDownloadDetails(t *testing.T) {
 	defer st.Close()
 	now := time.Now()
 	data := api.SeriesData{
-		Series:   api.Series{ID: 42, Name: "Harbor Precinct", DefaultOrder: "official", Profile: "tv"},
+		Series:   api.Series{ID: 42, Name: "Harbor Precinct", DefaultOrder: "official", Type: "tv"},
 		Episodes: []api.Episode{{ID: 101, Numbers: map[string]api.Position{"official": {Season: 1, Number: 1}}}},
 	}
 	if err := st.SaveSeries(ctx, data, true, now); err != nil {

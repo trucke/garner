@@ -270,11 +270,45 @@ func (s *Store) DeleteSeries(ctx context.Context, seriesID int64) error {
 	return tx.Commit()
 }
 
-// ChangeProfile sets a show's profile and, when it changed, drops the
-// show's search results in the same transaction: they were judged by the
-// old rules, and the next search judges by the new ones. Episodes with a
-// running download keep theirs: it may need a replacement from them.
-func (s *Store) ChangeProfile(ctx context.Context, seriesID int64, profile string) error {
+// ChangeProfile gives a show another profile and, when it changed, drops
+// the show's search results in the same transaction: they were judged by
+// the old rules, and the next search judges by the new ones. Episodes with
+// a running download keep theirs: it may need a replacement from them.
+func (s *Store) ChangeProfile(ctx context.Context, seriesID, profileID int64) error {
+	return s.changeSeries(ctx, seriesID, func(q *query.Queries, row query.Series) (bool, error) {
+		if row.ProfileID.Int64 == profileID {
+			return false, nil
+		}
+		if _, err := q.GetProfile(ctx, profileID); errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("profile %d: %w", profileID, ErrNoProfile)
+		} else if err != nil {
+			return false, err
+		}
+		_, err := q.SetSeriesProfile(ctx, query.SetSeriesProfileParams{ProfileID: sql.NullInt64{Int64: profileID, Valid: true}, ID: seriesID})
+		return true, err
+	})
+}
+
+// ChangeType sets a show's type, TypeTV or TypeAnime, and, when it
+// changed, drops the show's search results as ChangeProfile does: they
+// were matched with the old numbering. Files in the library stay where
+// they are; new ones go to the type's folder.
+func (s *Store) ChangeType(ctx context.Context, seriesID int64, typ string) error {
+	if typ != TypeTV && typ != TypeAnime {
+		return fmt.Errorf("type %q is neither %s nor %s", typ, TypeTV, TypeAnime)
+	}
+	return s.changeSeries(ctx, seriesID, func(q *query.Queries, row query.Series) (bool, error) {
+		if row.Type.String == typ {
+			return false, nil
+		}
+		_, err := q.SetSeriesType(ctx, query.SetSeriesTypeParams{Type: nullString(typ), ID: seriesID})
+		return true, err
+	})
+}
+
+// changeSeries runs change on a show in a transaction and, when change
+// reports a change, drops the show's search results.
+func (s *Store) changeSeries(ctx context.Context, seriesID int64, change func(*query.Queries, query.Series) (bool, error)) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -288,21 +322,25 @@ func (s *Store) ChangeProfile(ctx context.Context, seriesID int64, profile strin
 	if err != nil {
 		return err
 	}
-	if row.Profile.String == profile {
-		return nil
-	}
-	if _, err := q.SetSeriesProfile(ctx, query.SetSeriesProfileParams{Profile: nullString(profile), ID: seriesID}); err != nil {
+	changed, err := change(q, row)
+	if err != nil || !changed {
 		return err
 	}
+	if err := clearJudgements(ctx, q, seriesID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// clearJudgements drops a show's search results, so the next search judges
+// releases by its current type and profile, and the monitor searches it
+// anew.
+func clearJudgements(ctx context.Context, q *query.Queries, seriesID int64) error {
 	if err := q.ClearSeriesSearches(ctx, seriesID); err != nil {
 		return err
 	}
 	if err := q.ClearSeriesSeasonSearches(ctx, seriesID); err != nil {
 		return err
 	}
-	// The monitor searches the show anew, by the new rules.
-	if err := q.ClearSeriesMonitorSearches(ctx, seriesID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return q.ClearSeriesMonitorSearches(ctx, seriesID)
 }

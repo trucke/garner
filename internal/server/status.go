@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -35,9 +36,9 @@ func (s *Server) handleServices(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "library totals", err)
 		return
 	}
-	out.Library = api.LibraryTotals{Shows: len(shows), Profiles: map[string]int{}, Folders: []string{}, MonitorOff: s.monitorOff()}
+	out.Library = api.LibraryTotals{Shows: len(shows), Types: map[string]int{}, Folders: []string{}, MonitorOff: s.monitorOff()}
 	for _, sh := range shows {
-		out.Library.Profiles[sh.Profile]++
+		out.Library.Types[cmp.Or(sh.Type, store.TypeTV)]++
 		if sh.Monitor != store.MonitorOff {
 			out.Library.Monitored++
 		}

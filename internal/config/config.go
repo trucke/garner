@@ -33,14 +33,12 @@ type Config struct {
 	SABnzbd  SABnzbd `toml:"sabnzbd"`
 	Jellyfin Service `toml:"jellyfin"`
 	Monitor  Monitor `toml:"monitor"`
-	// Profiles change the built-in profiles' rules; package selection
-	// checks them.
-	Profiles Profiles `toml:"profiles"`
 }
 
 // Monitor is the background search: it searches the episodes monitored
 // shows miss and downloads the best release it accepts, and looks for
-// better releases of files below their profile's best tier.
+// better releases of files below their profile's best tier, for profiles
+// that want upgrades.
 type Monitor struct {
 	// Enabled turns it on for every show; each show's own mode then says
 	// which of its episodes it gets.
@@ -52,27 +50,10 @@ type Monitor struct {
 	// an episode not in the library.
 	MissingRecent Duration `toml:"missing_recent"`
 	MissingOlder  Duration `toml:"missing_older"`
-	// Upgrades turns on the search for better releases; UpgradeRecent and
-	// UpgradeOlder are the waits between those searches.
-	Upgrades      bool     `toml:"upgrades"`
+	// UpgradeRecent and UpgradeOlder are the waits between searches for
+	// a better release.
 	UpgradeRecent Duration `toml:"upgrade_recent"`
 	UpgradeOlder  Duration `toml:"upgrade_older"`
-}
-
-// Profiles holds the settings of the two profiles shows choose from.
-type Profiles struct {
-	TV    Profile `toml:"tv"`
-	Anime Profile `toml:"anime"`
-}
-
-// Profile changes a profile's rules; unset fields keep the built-in ones.
-type Profile struct {
-	// Tiers are the acceptable audio language and resolution pairs, best
-	// first, such as "en 1080p".
-	Tiers []string `toml:"tiers"`
-	// PreferDual ranks releases with the tier's language plus the show's
-	// original audio above the tier's language alone.
-	PreferDual *bool `toml:"prefer_dual"`
 }
 
 // Recent is how long after airing an episode counts as recent.
@@ -213,7 +194,7 @@ func Load(path string, explicit bool) (*Config, error) {
 		Monitor: Monitor{
 			Enabled: true, RecentDays: 14,
 			MissingRecent: Duration(6 * time.Hour), MissingOlder: Duration(24 * time.Hour),
-			Upgrades: true, UpgradeRecent: Duration(24 * time.Hour), UpgradeOlder: Duration(7 * 24 * time.Hour),
+			UpgradeRecent: Duration(24 * time.Hour), UpgradeOlder: Duration(7 * 24 * time.Hour),
 		},
 	}
 	base := "."
@@ -222,6 +203,10 @@ func Load(path string, explicit bool) (*Config, error) {
 	case errors.Is(err, os.ErrNotExist) && !explicit:
 	case err != nil:
 		return nil, fmt.Errorf("read %s: %w", path, err)
+	case meta.IsDefined("profiles"):
+		return nil, fmt.Errorf("%s: [profiles] is no setting of garner.toml any more: Garner keeps its profiles in its database, where the terminal interface manages them; remove [profiles]", path)
+	case meta.IsDefined("monitor", "upgrades"):
+		return nil, fmt.Errorf("%s: monitor.upgrades is no setting of garner.toml any more: each profile says whether Garner upgrades its shows' files; remove upgrades from [monitor]", path)
 	default:
 		if undecoded := meta.Undecoded(); len(undecoded) > 0 {
 			keys := make([]string, len(undecoded))

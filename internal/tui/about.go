@@ -173,8 +173,8 @@ func (s *aboutScreen) view(width, height int) string {
 		b.WriteString(indent(frame("services", lines, w), 3) + "\n\n")
 		l := s.services.Library
 		shows := fmt.Sprint(l.Shows)
-		if n := l.Profiles["tv"] + l.Profiles["anime"]; n > 0 {
-			shows += fmt.Sprintf(" · %d TV · %d anime", l.Profiles["tv"], l.Profiles["anime"])
+		if n := l.Types[api.TypeTV] + l.Types[api.TypeAnime]; n > 0 {
+			shows += fmt.Sprintf(" · %d TV · %d anime", l.Types[api.TypeTV], l.Types[api.TypeAnime])
 		}
 		episodes := fmt.Sprintf("%d of %d", l.Imported, l.Aired)
 		if sz := size(l.Bytes); sz != "" {

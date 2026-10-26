@@ -362,9 +362,9 @@ func (s *libraryScreen) rows() (rows []api.Show, total int) {
 func (c category) holds(sh api.Show) bool {
 	switch c {
 	case catTV:
-		return sh.Profile != "anime"
+		return sh.Type != api.TypeAnime
 	case catAnime:
-		return sh.Profile == "anime"
+		return sh.Type == api.TypeAnime
 	case catMovies:
 		return false
 	}

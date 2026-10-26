@@ -2,7 +2,10 @@
 SELECT series_id FROM episodes WHERE id = ?;
 
 -- name: SetSeriesProfile :execrows
-UPDATE series SET profile = ? WHERE id = ?;
+UPDATE series SET profile_id = ? WHERE id = ?;
+
+-- name: SetSeriesType :execrows
+UPDATE series SET type = ? WHERE id = ?;
 
 -- name: DeleteSearch :exec
 DELETE FROM searches WHERE episode_id = ?;

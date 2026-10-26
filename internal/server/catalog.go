@@ -14,7 +14,6 @@ import (
 	"github.com/trucke/garner/internal/catalog"
 	"github.com/trucke/garner/internal/importer"
 	"github.com/trucke/garner/internal/importer/guard"
-	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
@@ -196,17 +195,14 @@ func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request, id int64) 
 		s.internalError(w, "summarise series", err)
 		return api.SeriesDetail{}, false
 	}
-	profile := s.profiles.Named(d.Series.Profile)
-	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+	profile := s.profileFor(d.Series)
+	original := selection.OriginalLanguage(d.Series.OriginalLanguage)
 	detail := api.SeriesDetail{
-		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Tiers[0].String(),
-		Rules: profile.Describe(), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(profile, original),
+		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Best(),
+		Profile: profile.Name, Rules: profile.Describe(), Profiles: s.profileInfos(d.Series), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(profile, original),
 		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(),
 	}
-	for _, p := range s.profiles.All() {
-		detail.Profiles = append(detail.Profiles, api.ProfileInfo{Name: p.Name, Rules: p.Describe()})
-	}
-	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series, profile); err == nil {
+	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series); err == nil {
 		detail.Folder = folder
 	}
 	if s.monitor != nil {

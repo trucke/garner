@@ -135,7 +135,7 @@ func (s *Service) TakeOver(ctx context.Context, seriesID int64) (api.TakeOver, e
 func (s *Service) showFolders(ctx context.Context, c showContext) (folders, notes []string) {
 	notes = []string{}
 	var candidates []string
-	if own, err := ShowFolder(s.opts.Library, c.data.Series, c.profile); err == nil {
+	if own, err := ShowFolder(s.opts.Library, c.data.Series); err == nil {
 		candidates = append(candidates, own)
 	} else {
 		notes = append(notes, err.Error())
@@ -282,7 +282,7 @@ func (c showContext) fileTier(path string, p inspect.Probe) string {
 // renamable counts the show's taken-over files outside Garner's folder for
 // it.
 func (s *Service) renamable(ctx context.Context, c showContext) (int, error) {
-	own, err := ShowFolder(s.opts.Library, c.data.Series, c.profile)
+	own, err := ShowFolder(s.opts.Library, c.data.Series)
 	if err != nil {
 		return 0, nil
 	}
@@ -314,7 +314,7 @@ func (s *Service) Rename(ctx context.Context, seriesID int64) (api.Renamed, erro
 	if err != nil {
 		return out, err
 	}
-	own, err := ShowFolder(s.opts.Library, c.data.Series, c.profile)
+	own, err := ShowFolder(s.opts.Library, c.data.Series)
 	if err != nil {
 		return out, err
 	}

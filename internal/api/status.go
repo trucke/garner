@@ -20,11 +20,11 @@ type ServiceCheck struct {
 	At *time.Time `json:"at,omitempty"`
 }
 
-// LibraryTotals sums up the library: shows by profile, aired episodes in
+// LibraryTotals sums up the library: shows by type, aired episodes in
 // it, their size, and the library folders as the server sees them.
 type LibraryTotals struct {
 	Shows    int            `json:"shows"`
-	Profiles map[string]int `json:"profiles"`
+	Types    map[string]int `json:"types"`
 	Imported int            `json:"imported"`
 	Aired    int            `json:"aired"`
 	Bytes    int64          `json:"bytes"`

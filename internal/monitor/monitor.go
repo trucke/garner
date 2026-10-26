@@ -21,7 +21,6 @@ import (
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/search"
-	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -232,7 +231,7 @@ func (m *Service) held(ctx context.Context, seriesID int64) (map[int64]bool, err
 	if err != nil {
 		return nil, err
 	}
-	show := match.NewShow(d, match.Options{Anime: d.Series.Profile == selection.AnimeName, ServiceOrders: m.rules(seriesID)})
+	show := match.NewShow(d, match.Options{Anime: d.Series.Type == store.TypeAnime, ServiceOrders: m.rules(seriesID)})
 	held := map[int64]bool{}
 	for _, dl := range busy {
 		held[dl.EpisodeID] = true

@@ -39,7 +39,7 @@ func TestAcknowledgeDownload(t *testing.T) {
 		episodes = append(episodes, e)
 	}
 	if err := st.SaveSeries(ctx, api.SeriesData{
-		Series:   api.Series{ID: 42, Name: "Harbor Precinct", DefaultOrder: "official", Profile: "tv", Monitor: api.MonitorAll},
+		Series:   api.Series{ID: 42, Name: "Harbor Precinct", DefaultOrder: "official", Type: "tv", Monitor: api.MonitorAll},
 		Episodes: episodes,
 	}, true, now); err != nil {
 		t.Fatal(err)

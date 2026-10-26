@@ -3,13 +3,11 @@ package selection
 import (
 	"bytes"
 	"log/slog"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
@@ -32,22 +30,12 @@ func evaluate(p Profile, show string, original release.Language, name string, la
 }
 
 // german1080 accepts German 1080p only.
-var german1080 = func() Profile {
-	ps, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: []string{"de 1080p"}}})
-	if err != nil {
-		panic(err)
-	}
-	return ps.Named(TVName)
-}()
+var german1080 = fromText(`audio = ["de"]
+resolution = ["1080p"]`, "")
 
-// english is a profile configured for English audio.
-var english = func() Profile {
-	ps, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: []string{"en 1080p", "en 720p"}}})
-	if err != nil {
-		panic(err)
-	}
-	return ps.Named(TVName)
-}()
+// english accepts English audio.
+var english = fromText(`audio = ["en"]
+resolution = ["1080p", "720p"]`, "")
 
 // evaluateTests are made-up release names and the verdicts they must get.
 // FuzzEvaluate seeds its corpus from them.
@@ -269,25 +257,54 @@ func TestFileTier(t *testing.T) {
 	}
 }
 
-func TestNewProfiles(t *testing.T) {
-	dual := false
-	ps, err := NewProfiles(config.Profiles{Anime: config.Profile{Tiers: []string{"English 1080p", "ja 720p"}, PreferDual: &dual}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := ps.Named(AnimeName).Describe(); got != "English 1080p → Japanese 720p" {
-		t.Errorf("anime: %q", got)
-	}
-	if got := ps.Named(TVName).Describe(); got != TV.Describe() {
-		t.Errorf("tv keeps the built-in rules: %q", got)
-	}
-	if got := (Profiles{}).Named(AnimeName).Describe(); got != Anime.Describe() {
-		t.Errorf("zero value: %q", got)
-	}
-	for _, tiers := range [][]string{{}, {"en"}, {"xx 1080p"}, {"en 2160p"}, {"en 1080p", "English 1080p"}} {
-		if _, err := NewProfiles(config.Profiles{TV: config.Profile{Tiers: tiers}}); err == nil {
-			t.Errorf("tiers %q: no error", tiers)
+// TestFromProfile applies stored profiles to shows: "original" becomes the
+// show's language, a repeated tier goes, and the settings carry over.
+func TestFromProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name, text, original string
+		want                 string
+	}{
+		{"original", `audio = ["original", "en"]
+resolution = ["1080p", "720p"]`, "jpn", "Japanese 1080p → Japanese 720p → English 1080p → English 720p · dual audio preferred"},
+		{"original repeats a language", `audio = ["original", "en"]
+resolution = ["1080p", "720p"]`, "eng", "English 1080p → English 720p · dual audio preferred"},
+		{"by resolution", `audio = ["de", "en"]
+resolution = ["1080p", "720p"]
+priority = "resolution"
+dual_audio = "ignore"`, "deu", "German 1080p → English 1080p → German 720p → English 720p"},
+		{"language Garner does not know", `audio = ["original"]
+resolution = ["1080p"]`, "swe", "swe 1080p · dual audio preferred"},
+		{"no original language", `audio = ["original", "de"]
+resolution = ["1080p"]`, "", "German 1080p · dual audio preferred"},
+		{"nothing left", `audio = ["original"]
+resolution = ["1080p"]`, "", "nothing: the profile wants the show's original language, which TVDB does not name"},
+	} {
+		if got := fromText(tc.text, tc.original).Describe(); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
 		}
+	}
+	p := fromText(`audio = ["de", "en"]
+resolution = ["720p"]
+dual_audio = "ignore"
+unnamed_audio = "fallback"
+upgrades = false`, "")
+	if p.PreferDual || !p.UnnamedFallback || p.Upgrades || p.Best() != "German 720p" {
+		t.Errorf("settings: %+v, best %q", p, p.Best())
+	}
+	if got := fromText(`audio = ["original"]
+resolution = ["1080p"]`, "").Best(); got != "" {
+		t.Errorf("a profile that accepts nothing has the best tier %q", got)
+	}
+}
+
+// TestNothingAccepted judges a release for a show whose profile accepts
+// nothing: it is rejected with the reason, not by an empty language list.
+func TestNothingAccepted(t *testing.T) {
+	p := fromText(`audio = ["original"]
+resolution = ["1080p"]`, "")
+	e := evaluate(p, "Harbor Precinct", "", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP")
+	if e.Verdict != Reject || !slices.ContainsFunc(e.Reasons, func(r string) bool { return strings.Contains(r, "TVDB does not name") }) {
+		t.Errorf("%s %q", e.Verdict, e.Reasons)
 	}
 }
 
@@ -304,24 +321,6 @@ func TestOriginalNote(t *testing.T) {
 	} {
 		if got := OriginalNote(tc.p, tc.original); got != tc.want {
 			t.Errorf("%s, %s: %q", tc.p.Describe(), tc.original, got)
-		}
-	}
-}
-
-// TestExampleProfiles checks that garner.example.toml shows the built-in
-// rules.
-func TestExampleProfiles(t *testing.T) {
-	cfg, err := config.Load("../../garner.example.toml", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps, err := NewProfiles(cfg.Profiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{TVName, AnimeName} {
-		if got, want := ps.Named(name), (Profiles{}).Named(name); !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: %+v, built in %+v", name, got, want)
 		}
 	}
 }

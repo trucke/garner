@@ -1,12 +1,12 @@
 -- The monitor mode is chosen when adding a show; refreshes keep it, as
--- they keep a changed profile.
+-- they keep a changed type and profile.
 -- name: UpsertSeries :exec
 INSERT INTO series (id, slug, name, name_eng, name_deu, original_language, original_country, status, year,
-    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile,
+    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, type, profile_id,
     network, last_aired, overview, overview_language, monitor, monitor_since)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
-    profile = coalesce(series.profile, excluded.profile),
+    type = coalesce(series.type, excluded.type), profile_id = coalesce(series.profile_id, excluded.profile_id),
     slug = excluded.slug, name = excluded.name, name_eng = excluded.name_eng, name_deu = excluded.name_deu,
     original_language = excluded.original_language, original_country = excluded.original_country,
     status = excluded.status, year = excluded.year, first_aired = excluded.first_aired,

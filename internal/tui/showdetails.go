@@ -159,7 +159,7 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	}
 	switch key {
 	case "p":
-		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p api.ProfileInfo) bool { return p.Name == d.Series.Profile }))
+		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p api.ProfileInfo) bool { return p.ID == d.Series.ProfileID }))
 	case "m":
 		s.overlay, s.choice = monitorOverlay, max(0, monitorIndex(d.Series.Monitor))
 	case "d":
@@ -225,14 +225,14 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 		s.overlay = noOverlay
 		cl, id := s.sess.client, s.show.id
 		switch {
-		case overlay == profileOverlay && s.choice < len(d.Profiles) && d.Profiles[s.choice].Name != d.Series.Profile:
-			profile := d.Profiles[s.choice].Name
+		case overlay == profileOverlay && s.choice < len(d.Profiles) && d.Profiles[s.choice].ID != d.Series.ProfileID:
+			profile := d.Profiles[s.choice]
 			s.busy = "Changing the profile…"
 			return func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				d, err := cl.SetProfile(ctx, id, profile)
-				return detailChangedMsg{d, err, "Profile changed to " + profile}
+				d, err := cl.SetProfile(ctx, id, profile.ID)
+				return detailChangedMsg{d, err, "Profile changed to " + profile.Name}
 			}
 		}
 	}
@@ -254,7 +254,7 @@ func (s *showDetailsScreen) view(width, height int) string {
 	w := max(40, min(detailsWidth, width-6))
 	sr := d.Series
 	typ := "TV"
-	if sr.Profile == "anime" {
+	if sr.Type == api.TypeAnime {
 		typ = "Anime"
 	}
 	b.WriteString(titleBlock(sr.Name, sr.NameEng, sr.NameDeu, typ, sr.Year, sr.Status) + "\n")
@@ -288,7 +288,7 @@ func (s *showDetailsScreen) view(width, height int) string {
 func (s *showDetailsScreen) libraryLines(inner int) []string {
 	d := s.show.detail
 	var lines []string
-	lines = append(lines, field("Profile", d.Series.Profile, sNormal, inner)...)
+	lines = append(lines, field("Profile", d.Profile, sNormal, inner)...)
 	lines = append(lines, field("", clean(d.Rules), sMuted, inner)...)
 	lines = append(lines, field("Monitor", monitorLine(d.Series), sNormal, inner)...)
 	if d.MonitorOff != "" && d.Series.Monitor != api.MonitorOff {

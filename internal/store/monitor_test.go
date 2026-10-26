@@ -29,7 +29,7 @@ func TestWanted(t *testing.T) {
 	save := func(id int64, mode string, episodes ...Episode) {
 		t.Helper()
 		if err := st.SaveSeries(ctx, SeriesData{
-			Series:   Series{ID: id, Slug: "s", Name: "Show", OriginalLanguage: "deu", OriginalCountry: "deu", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv", Monitor: mode},
+			Series:   Series{ID: id, Slug: "s", Name: "Show", OriginalLanguage: "deu", OriginalCountry: "deu", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv", Monitor: mode},
 			Episodes: episodes,
 		}, false, added); err != nil {
 			t.Fatal(err)
@@ -49,8 +49,8 @@ func TestWanted(t *testing.T) {
 	}
 	sched := Schedule{
 		Recent: 14 * 24 * time.Hour, MissingRecent: 6 * time.Hour, MissingOlder: 24 * time.Hour,
-		Upgrades: true, UpgradeRecent: 24 * time.Hour, UpgradeOlder: 7 * 24 * time.Hour,
-		Best: func(string) string { return "German 1080p" },
+		UpgradeRecent: 24 * time.Hour, UpgradeOlder: 7 * 24 * time.Hour,
+		Upgrade: func(Series) (string, bool) { return "German 1080p", true },
 	}
 	// imported gives an episode a file from a release in tier, imported at.
 	imported := func(episode int64, tier string, at time.Time) {
@@ -163,8 +163,9 @@ func TestWanted(t *testing.T) {
 		ids := slices.Sorted(maps.Keys(got))
 		t.Fatalf("wanted %v: %v\nwant %v", ids, got, want)
 	}
+	// A profile that wants no upgrades leaves every file as it is.
 	noUpgrades := sched
-	noUpgrades.Upgrades = false
+	noUpgrades.Upgrade = func(Series) (string, bool) { return "German 1080p", false }
 	got := wanted(noUpgrades)
 	if _, ok := got[110]; ok || len(got) != len(want)-3 {
 		t.Errorf("without upgrades: %v", slices.Sorted(maps.Keys(got)))
@@ -237,7 +238,7 @@ func TestWantedLeavesFailedImportsToYou(t *testing.T) {
 		return Episode{ID: id, Aired: "2026-01-01", Numbers: map[string]Position{"official": {Season: 1, Number: number}}}
 	}
 	if err := st.SaveSeries(ctx, SeriesData{
-		Series:   Series{ID: 1, Slug: "s", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv", Monitor: MonitorAll},
+		Series:   Series{ID: 1, Slug: "s", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv", Monitor: MonitorAll},
 		Episodes: []Episode{ep(101, 1), ep(102, 2)},
 	}, false, now.Add(-30*24*time.Hour)); err != nil {
 		t.Fatal(err)

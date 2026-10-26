@@ -119,6 +119,14 @@ type MonitorSearch struct {
 	Outcome    string
 }
 
+type Profile struct {
+	ID           int64
+	Name         string
+	Text         string
+	DefaultTv    int64
+	DefaultAnime int64
+}
+
 type SceneNumber struct {
 	SeriesID      int64
 	TvdbSeason    int64
@@ -191,13 +199,14 @@ type Series struct {
 	AddedAt          int64
 	FetchedAt        int64
 	XemFetchedAt     sql.NullInt64
-	Profile          sql.NullString
 	Network          sql.NullString
 	LastAired        sql.NullString
 	Overview         sql.NullString
 	OverviewLanguage sql.NullString
 	Monitor          string
 	MonitorSince     int64
+	Type             sql.NullString
+	ProfileID        sql.NullInt64
 }
 
 type SeriesOrder struct {

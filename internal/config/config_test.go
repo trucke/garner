@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -161,5 +162,22 @@ func TestBuiltinTVDBKey(t *testing.T) {
 	if cfg.TVDB.APIKey.Value() != "own-key-3" || cfg.TVDB.BuiltIn || cfg.TVDB.PIN.Value() != "pin-2" {
 		t.Errorf("with TVDB_API_KEY: key %q, built in %v, PIN %q; want the own key with its PIN",
 			cfg.TVDB.APIKey.Value(), cfg.TVDB.BuiltIn, cfg.TVDB.PIN.Value())
+	}
+}
+
+// TestMovedSettings loads a garner.toml that still holds the profiles or
+// the upgrade switch: Garner stops and says where the setting went.
+func TestMovedSettings(t *testing.T) {
+	for _, tc := range []struct{ toml, want string }{
+		{"[profiles.tv]\ntiers = [\"en 1080p\"]\n", "[profiles] is no setting of garner.toml any more"},
+		{"[monitor]\nupgrades = false\n", "monitor.upgrades is no setting of garner.toml any more"},
+	} {
+		path := t.TempDir() + "/garner.toml"
+		if err := os.WriteFile(path, []byte(tc.toml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path, true); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%q: %v, want %q", tc.toml, err, tc.want)
+		}
 	}
 }

@@ -30,7 +30,7 @@ func TestDeleteSeries(t *testing.T) {
 	now := time.Now()
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 42, Slug: "harbor-precinct", Name: "Harbor Precinct", OriginalLanguage: "eng",
-			OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []store.Episode{
 			{ID: 101, Aired: "2026-01-01", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}},
 			{ID: 102, Aired: "2026-01-08", Numbers: map[string]store.Position{"official": {Season: 1, Number: 2}}},
@@ -84,11 +84,11 @@ func TestDeleteSeries(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	if code := call(http.MethodPatch, "/api/v1/series/42", `{"profile":"anime"}`); code != http.StatusOK {
-		t.Fatalf("change profile: %d", code)
+	if code := call(http.MethodPatch, "/api/v1/series/42", `{"type":"anime"}`); code != http.StatusOK {
+		t.Fatalf("change type: %d", code)
 	}
 	if _, err := st.LoadSearch(ctx, 101); err == nil {
-		t.Error("the search judged with the old profile survived the change")
+		t.Error("the search matched with the old numbering survived the change")
 	}
 
 	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: now, Outcome: "nothing", Summary: "No matching release found"}); err != nil {
@@ -146,7 +146,7 @@ func TestDeleteSeries(t *testing.T) {
 	// files=keep removes the show and leaves its files in the library.
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 43, Slug: "quiet-harbour", Name: "Quiet Harbour", OriginalLanguage: "eng",
-			OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			OriginalCountry: "usa", Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []store.Episode{{ID: 201, Aired: "2026-01-01", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}}},
 	}, true, now); err != nil {
 		t.Fatal(err)

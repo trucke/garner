@@ -18,8 +18,8 @@ import (
 	"github.com/trucke/garner/internal/importer/guard"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/jellyfin"
-	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/testprofiles"
 )
 
 type fakeProber struct{ probe inspect.Probe }
@@ -106,7 +106,7 @@ func setup(t *testing.T, probe inspect.Probe) (*env, store.Download) {
 	t.Cleanup(func() { st.Close() })
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 42, Slug: "x", Name: "Harbor Precinct: Night Shift", OriginalLanguage: "eng", OriginalCountry: "usa",
-			Status: "Ended", Year: 2013, DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			Status: "Ended", Year: 2013, DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []store.Episode{
 			{ID: 101, Runtime: 22, NameEng: "Pilot", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}},
 			{ID: 102, Runtime: 22, NameEng: "What? Why?", Numbers: map[string]store.Position{"official": {Season: 1, Number: 2}}},
@@ -143,6 +143,7 @@ func setup(t *testing.T, probe inspect.Probe) (*env, store.Download) {
 	t.Cleanup(srv.Close)
 	e := &env{st: st, jf: jf, share: share}
 	e.svc = New(st, fakeProber{probe}, jellyfin.New(srv.URL, "key", srv.Client()), Options{
+		Profile:       testprofiles.ByType,
 		SABnzbdPaths:  config.PathMap{"/data/usenet": filepath.Join(share, "usenet")},
 		JellyfinPaths: config.PathMap{"/data/library": filepath.Join(share, "library")},
 		Library:       config.Library{TV: filepath.Join(share, "library", "tv"), Anime: filepath.Join(share, "library", "anime")},
@@ -187,7 +188,7 @@ func TestImport(t *testing.T) {
 func TestImportSamePaths(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
-	e.svc = New(e.st, fakeProber{german}, e.svc.jellyfin, Options{Library: e.svc.opts.Library}, slog.New(slog.DiscardHandler))
+	e.svc = New(e.st, fakeProber{german}, e.svc.jellyfin, Options{Library: e.svc.opts.Library, Profile: testprofiles.ByType}, slog.New(slog.DiscardHandler))
 	d.Storage = filepath.Join(e.share, jobDir)
 	if err := e.st.UpdateDownload(ctx, d, time.Now()); err != nil {
 		t.Fatal(err)
@@ -470,7 +471,6 @@ func TestDotted(t *testing.T) {
 func TestTargetLength(t *testing.T) {
 	long := strings.Repeat("Very Long Title ", 20)
 	c := showContext{
-		profile:  selection.TV,
 		data:     store.SeriesData{Series: store.Series{ID: 42, Name: long, Year: 2013}},
 		episodes: map[int64]store.Episode{1: {ID: 1, NameEng: long, Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}}},
 	}

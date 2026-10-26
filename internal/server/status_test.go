@@ -27,7 +27,7 @@ func TestServices(t *testing.T) {
 	defer st.Close()
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 42, Slug: "x", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa",
-			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []store.Episode{{ID: 101, Aired: "2026-01-01", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}}},
 	}, true, time.Now()); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestServices(t *testing.T) {
 			t.Errorf("%s without setup: %+v", c.Name, c)
 		}
 	}
-	if l := got.Library; l.Shows != 1 || l.Profiles["tv"] != 1 || l.Aired != 1 || len(l.Folders) != 1 {
+	if l := got.Library; l.Shows != 1 || l.Types["tv"] != 1 || l.Aired != 1 || len(l.Folders) != 1 {
 		t.Errorf("library = %+v", l)
 	}
 }

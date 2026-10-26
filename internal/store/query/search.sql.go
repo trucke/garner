@@ -500,16 +500,33 @@ func (q *Queries) SeriesOfEpisode(ctx context.Context, id int64) (int64, error) 
 }
 
 const setSeriesProfile = `-- name: SetSeriesProfile :execrows
-UPDATE series SET profile = ? WHERE id = ?
+UPDATE series SET profile_id = ? WHERE id = ?
 `
 
 type SetSeriesProfileParams struct {
-	Profile sql.NullString
-	ID      int64
+	ProfileID sql.NullInt64
+	ID        int64
 }
 
 func (q *Queries) SetSeriesProfile(ctx context.Context, arg SetSeriesProfileParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setSeriesProfile, arg.Profile, arg.ID)
+	result, err := q.db.ExecContext(ctx, setSeriesProfile, arg.ProfileID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSeriesType = `-- name: SetSeriesType :execrows
+UPDATE series SET type = ? WHERE id = ?
+`
+
+type SetSeriesTypeParams struct {
+	Type sql.NullString
+	ID   int64
+}
+
+func (q *Queries) SetSeriesType(ctx context.Context, arg SetSeriesTypeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSeriesType, arg.Type, arg.ID)
 	if err != nil {
 		return 0, err
 	}

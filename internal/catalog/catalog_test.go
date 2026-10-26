@@ -106,7 +106,7 @@ func TestRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(st, testTVDB(tvdbSrv.URL, client), NewXEM(xemSrv.URL, client), slog.New(slog.DiscardHandler))
+	c, err := New(st, testTVDB(tvdbSrv.URL, client), NewXEM(xemSrv.URL, client), defaultGerman, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

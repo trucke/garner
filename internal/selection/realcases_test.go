@@ -60,13 +60,13 @@ func TestRealSelectCases(t *testing.T) {
 			catalog[tc.Series] = d
 		}
 		t.Run(tc.Name, func(t *testing.T) {
-			profile := Profiles{}.Named(tc.Profile)
-			show := match.NewShow(d, match.Options{Anime: profile.Name == AnimeName, ServiceOrders: tc.Rules})
+			profile := map[string]Profile{"tv": TV, "anime": Anime}[tc.Profile]
+			show := match.NewShow(d, match.Options{Anime: tc.Profile == "anime", ServiceOrders: tc.Rules})
 			var published time.Time
 			if tc.Published != "" {
 				published, _ = time.Parse(time.DateOnly, tc.Published)
 			}
-			original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+			original := OriginalLanguage(d.Series.OriginalLanguage)
 			ctx := Context{Profile: profile, Show: show, Want: episodeAt(t, d, tc.Want), Original: original}
 			claims := release.Parse(tc.Name)
 			e := Evaluate(ctx, Release{Claims: claims, Match: show.Match(claims, published), IndexerLanguages: IndexerLanguages(tc.Languages)})

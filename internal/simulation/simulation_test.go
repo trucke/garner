@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -26,9 +27,11 @@ import (
 
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/importer/guard"
+	"github.com/trucke/garner/internal/profile"
 	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/server"
 	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/testprofiles"
 )
 
 var (
@@ -141,11 +144,13 @@ type sim struct {
 	w     *world
 	cfg   *config.Config
 	st    *store.Store
-	srv   *server.Server
-	api   http.Handler
-	token string
-	pick  *rand.Rand // the next event
-	user  *rand.Rand // the user's choices
+	// profiles holds the profile of each type, as installProfiles made it.
+	profiles map[string]int64
+	srv      *server.Server
+	api      http.Handler
+	token    string
+	pick     *rand.Rand // the next event
+	user     *rand.Rand // the user's choices
 	// inside decides what happens at a change to a file: a crash, another
 	// step first or nothing.
 	inside *rand.Rand
@@ -289,6 +294,10 @@ func setup(w *world) []string {
 func (s *sim) start() error {
 	st, err := store.Open(s.ctx, s.cfg.DataDir, slog.New(slog.DiscardHandler))
 	if err != nil {
+		return err
+	}
+	if err := s.installProfiles(st); err != nil {
+		st.Close()
 		return err
 	}
 	deps := server.Deps{
@@ -452,8 +461,9 @@ func (s *sim) outOfStep(episodes bool) string {
 			continue
 		}
 		delete(garner, sh.id)
-		if sr.Monitor != sh.monitor || sr.Profile != sh.profile {
-			return fmt.Sprintf("show %d: the simulation notes monitor %s and profile %s, Garner has %s and %s", sh.id, sh.monitor, sh.profile, sr.Monitor, sr.Profile)
+		if sr.Monitor != sh.monitor || sr.Type != sh.profile || sr.ProfileID != s.profiles[sh.profile] {
+			return fmt.Sprintf("show %d: the simulation notes monitor %s and type %s, Garner has %s, %s and profile %d",
+				sh.id, sh.monitor, sh.profile, sr.Monitor, sr.Type, sr.ProfileID)
 		}
 		if sr.Monitor == store.MonitorNew && sr.MonitorSince.Unix() != sh.since.Unix() {
 			return fmt.Sprintf("show %d: the simulation notes new episodes from %s, Garner from %s", sh.id, sh.since, sr.MonitorSince)
@@ -1066,12 +1076,40 @@ func (s *sim) changeProfile() string {
 	if sh == nil {
 		return ""
 	}
+	// Type and profile change together, as the one profile of each type
+	// did before profiles moved into the database.
 	profile := map[string]string{"tv": "anime", "anime": "tv"}[sh.profile]
-	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id), fmt.Sprintf(`{"profile":%q}`, profile))
+	code, body := s.call(http.MethodPatch, fmt.Sprintf("/api/v1/series/%d", sh.id),
+		fmt.Sprintf(`{"type":%q,"profile_id":%d}`, profile, s.profiles[profile]))
 	if code == http.StatusOK {
 		sh.profile = profile
 	}
 	return fmt.Sprintf("show %d to %s: %s", sh.id, profile, answer(code, body))
+}
+
+// installProfiles gives Garner the profiles of an installation from before
+// profiles moved into the database, once: German for TV shows and German
+// with English for anime, as the defaults. The simulation notes a show's
+// type; its profile follows the type.
+func (s *sim) installProfiles(st *store.Store) error {
+	s.profiles = map[string]int64{}
+	for _, p := range []struct {
+		profile profile.Profile
+		typ     string
+	}{{testprofiles.German, store.TypeTV}, {testprofiles.GermanEnglish, store.TypeAnime}} {
+		stored, err := st.ProfileByName(s.ctx, p.profile.Name)
+		if errors.Is(err, store.ErrNoProfile) {
+			stored.ID, err = st.CreateProfile(s.ctx, p.profile.Name, profile.Encode(p.profile))
+			if err == nil {
+				err = st.SetDefaultProfile(s.ctx, p.typ, stored.ID)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		s.profiles[p.typ] = stored.ID
+	}
+	return nil
 }
 
 // snapshot is what the rules compare before and after a step.
@@ -1254,9 +1292,9 @@ func (s *sim) worse(before, after snapshot, e int64) string {
 	if ep == nil {
 		return ""
 	}
-	profile := selection.TV
-	if ep.show.profile == selection.AnimeName {
-		profile = selection.Anime
+	profile := selection.FromProfile(testprofiles.German, "")
+	if ep.show.profile == store.TypeAnime {
+		profile = selection.FromProfile(testprofiles.GermanEnglish, "")
 	}
 	rank := func(tier string) int { return selection.TierRank(profile, tier) }
 	old, now := before.tiers[e], after.tiers[e]

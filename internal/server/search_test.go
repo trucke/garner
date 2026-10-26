@@ -20,6 +20,7 @@ import (
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/testprofiles"
 )
 
 // TestSearchAndDownload searches through the API against a fake Prowlarr
@@ -36,7 +37,7 @@ func TestSearchAndDownload(t *testing.T) {
 	defer st.Close()
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 42, Slug: "harbor-precinct", Name: "Harbor Precinct", OriginalLanguage: "eng",
-			OriginalCountry: "usa", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			OriginalCountry: "usa", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []store.Episode{
 			{ID: 101, Aired: "2026-01-01", Numbers: map[string]store.Position{"official": {Season: 1, Number: 1}}},
 			{ID: 102, Aired: "2026-01-08", Numbers: map[string]store.Position{"official": {Season: 1, Number: 2}}},
@@ -75,7 +76,7 @@ func TestSearchAndDownload(t *testing.T) {
 	defer indexer.Close()
 
 	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
-	s.search = search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, log)
+	s.search = search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, testprofiles.ByType, log)
 	var progress []string
 	s.search.OnProgress = func(p api.SearchProgress) {
 		var states []string
@@ -185,7 +186,21 @@ func TestSearchAndDownload(t *testing.T) {
 	if code, _ := call(http.MethodPost, "/api/v1/episodes/999/search", ""); code != http.StatusNotFound {
 		t.Errorf("unknown episode: %d", code)
 	}
-	if code, body := call(http.MethodPatch, "/api/v1/series/42", `{"profile":"anime"}`); code != http.StatusOK || !strings.Contains(body, `"profile":"anime"`) {
+	if code, body := call(http.MethodPatch, "/api/v1/series/42", `{"type":"anime"}`); code != http.StatusOK || !strings.Contains(body, `"type":"anime"`) {
+		t.Errorf("set type: %d %s", code, body)
+	}
+	_, anime := testprofiles.Install(t, st)
+	if err := s.loadProfiles(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := call(http.MethodPatch, "/api/v1/series/42", fmt.Sprintf(`{"profile_id":%d}`, anime)); code != http.StatusOK ||
+		!strings.Contains(body, `"profile":"German, English fallback"`) {
 		t.Errorf("set profile: %d %s", code, body)
+	}
+	if code, _ := call(http.MethodPatch, "/api/v1/series/42", `{"profile_id":999}`); code != http.StatusBadRequest {
+		t.Errorf("unknown profile: %d", code)
+	}
+	if code, _ := call(http.MethodPatch, "/api/v1/series/42", `{"type":"cartoon"}`); code != http.StatusBadRequest {
+		t.Errorf("unknown type: %d", code)
 	}
 }

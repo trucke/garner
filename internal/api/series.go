@@ -16,8 +16,11 @@ type Series struct {
 	FirstAired       string `json:"first_aired,omitempty"`
 	AverageRuntime   int    `json:"average_runtime,omitempty"`
 	DefaultOrder     string `json:"default_order"`
-	// Profile is "tv" or "anime".
-	Profile     string     `json:"profile"`
+	// Type is TypeTV or TypeAnime: how Garner reads episode numbers and
+	// which library folder takes the show's files. ProfileID is the
+	// profile that says which releases the show accepts.
+	Type        string     `json:"type"`
+	ProfileID   int64      `json:"profile_id"`
 	TVDBUpdated string     `json:"tvdb_updated"`
 	Added       time.Time  `json:"added"`
 	Fetched     time.Time  `json:"fetched"`
@@ -48,6 +51,13 @@ func (sr Series) Monitors(aired string) bool {
 	}
 	return false
 }
+
+// Show types: how Garner reads a show's episode numbers and which library
+// folder takes its files.
+const (
+	TypeTV    = "tv"
+	TypeAnime = "anime" // reads a bare number such as 101 as an absolute episode first
+)
 
 // Monitor modes: which of a show's episodes the monitor gets on its own.
 const (
@@ -203,8 +213,9 @@ type SeriesDetail struct {
 	// Folder is where new files of the show go; URL is its TVDB page.
 	Folder string `json:"folder,omitempty"`
 	URL    string `json:"url"`
-	// Rules describes the profile; Profiles lists the profiles to choose
-	// from with their rules.
+	// Profile names the show's profile and Rules describes it; Profiles
+	// lists the profiles to choose from, with their rules for the show.
+	Profile  string        `json:"profile"`
 	Rules    string        `json:"rules"`
 	Profiles []ProfileInfo `json:"profiles"`
 	// LanguageName and LanguageNote say what the original language means
@@ -257,6 +268,7 @@ type Renamed struct {
 
 // ProfileInfo names a profile and its rules.
 type ProfileInfo struct {
+	ID    int64  `json:"id"`
 	Name  string `json:"name"`
 	Rules string `json:"rules"`
 }

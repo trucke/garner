@@ -27,7 +27,6 @@ import (
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
-	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 	"github.com/trucke/garner/internal/tlsident"
 )
@@ -49,7 +48,7 @@ type Server struct {
 	downloads *download.Service // nil without SABnzbd
 	imports   *importer.Service // nil without library folders or ffprobe
 	monitor   *monitor.Service  // nil without searching and downloading; runs show searches even when the monitor is off
-	profiles  selection.Profiles
+	profiles  profileCache
 	// The services' clients, for the status checks; nil when not set up.
 	prowlarr *prowlarr.Client
 	sabnzbd  *sabnzbd.Client
@@ -174,12 +173,11 @@ func Run(ctx context.Context, cfg *config.Config, version string, log *slog.Logg
 // starting their loops: Run does both, the simulation drives the steps
 // itself.
 func New(cfg *config.Config, st *store.Store, version string, deps Deps, log *slog.Logger) (*Server, error) {
-	profiles, err := selection.NewProfiles(cfg.Profiles)
-	if err != nil {
+	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), deps: deps}
+	s.started = s.now()
+	if err := s.loadProfiles(context.Background()); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: st, log: log, version: version, events: newBroker(), profiles: profiles, deps: deps}
-	s.started = s.now()
 	for _, setup := range []func() error{s.setupCatalog, s.setupSearch, s.setupDownloads, s.setupImports} {
 		if err := setup(); err != nil {
 			return nil, err
@@ -240,11 +238,10 @@ func (s *Server) setupCatalog() error {
 	if s.deps.Sleep != nil {
 		tvdb.Sleep = s.deps.Sleep
 	}
-	c, err := catalog.New(s.store, tvdb, catalog.NewXEM(catalog.XEMBaseURL, client), s.log)
+	c, err := catalog.New(s.store, tvdb, catalog.NewXEM(catalog.XEMBaseURL, client), s.defaultProfileFor, s.log)
 	if err != nil {
 		return err
 	}
-	c.Profiles = s.profiles
 	c.OnChange = func(id int64) {
 		s.events.publish(Event{Type: "series.updated", Data: map[string]int64{"id": id}})
 		// New air dates may make episodes due.
@@ -276,9 +273,11 @@ func (s *Server) schedule() *store.Schedule {
 	return &store.Schedule{
 		Recent:        m.Recent(),
 		MissingRecent: time.Duration(m.MissingRecent), MissingOlder: time.Duration(m.MissingOlder),
-		Upgrades:      m.Upgrades,
 		UpgradeRecent: time.Duration(m.UpgradeRecent), UpgradeOlder: time.Duration(m.UpgradeOlder),
-		Best: func(profile string) string { return s.profiles.Named(profile).Tiers[0].String() },
+		Upgrade: func(sr store.Series) (string, bool) {
+			p := s.profileFor(sr)
+			return p.Best(), p.Upgrades
+		},
 	}
 }
 

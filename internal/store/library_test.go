@@ -24,7 +24,7 @@ func TestLibrary(t *testing.T) {
 	save := func(id int64, episodes ...Episode) {
 		t.Helper()
 		if err := st.SaveSeries(ctx, SeriesData{
-			Series:   Series{ID: id, Slug: "s", Name: "Show", OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv"},
+			Series:   Series{ID: id, Slug: "s", Name: "Show", OriginalLanguage: "eng", OriginalCountry: "usa", Status: "Continuing", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv"},
 			Episodes: episodes,
 		}, false, now); err != nil {
 			t.Fatal(err)
@@ -117,7 +117,7 @@ func TestUpdateSeriesKeepsDeleted(t *testing.T) {
 	}
 	defer st.Close()
 	d := SeriesData{Series: Series{ID: 7, Slug: "s", Name: "Show", OriginalLanguage: "eng", OriginalCountry: "usa",
-		Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv"}}
+		Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv"}}
 	now := time.Now()
 	if err := st.SaveSeries(ctx, d, false, now); err != nil {
 		t.Fatal(err)

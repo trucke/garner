@@ -26,12 +26,11 @@ type Service struct {
 	prowlarr *prowlarr.Client
 	// rules returns a show's reviewed streaming-service order rules.
 	rules func(seriesID int64) map[release.Service]string
-	log   *slog.Logger
+	// profile applies a show's stored profile to the show.
+	profile func(store.Series) selection.Profile
+	log     *slog.Logger
 	// Now tells the time: time.Now, or the simulation's clock.
 	Now func() time.Time
-	// Profiles are the profiles shows choose from; the zero value holds
-	// the built-in ones.
-	Profiles selection.Profiles
 	// OnDone is called after a search was stored.
 	OnDone func(store.Search)
 	// OnProgress is called when a search starts asking the indexers and
@@ -39,12 +38,14 @@ type Service struct {
 	OnProgress func(api.SearchProgress)
 }
 
-// New returns a search service. rules may be nil.
-func New(st *store.Store, p *prowlarr.Client, rules func(int64) map[release.Service]string, log *slog.Logger) *Service {
+// New returns a search service that judges releases by the profile that
+// profile applies to a show. rules may be nil.
+func New(st *store.Store, p *prowlarr.Client, rules func(int64) map[release.Service]string,
+	profile func(store.Series) selection.Profile, log *slog.Logger) *Service {
 	if rules == nil {
 		rules = func(int64) map[release.Service]string { return nil }
 	}
-	return &Service{store: st, prowlarr: p, rules: rules, log: log, Now: time.Now}
+	return &Service{store: st, prowlarr: p, rules: rules, profile: profile, log: log, Now: time.Now}
 }
 
 // Episode searches for an episode and stores the outcome, replacing the
@@ -73,9 +74,9 @@ func (s *Service) Episode(ctx context.Context, episodeID int64) (store.Search, e
 		return store.Search{}, err
 	}
 	start := s.Now()
-	profile := s.Profiles.Named(d.Series.Profile)
-	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
-	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+	profile := s.profile(d.Series)
+	show := match.NewShow(d, match.Options{Anime: d.Series.Type == store.TypeAnime, ServiceOrders: s.rules(seriesID)})
+	original := selection.OriginalLanguage(d.Series.OriginalLanguage)
 	judge := selection.Context{Profile: profile, Show: show, Want: episodeID, Original: original,
 		Missing: missing(d, seasonEpisodes(d, "official", pos.Season), files, start), Have: files[episodeID]}
 
@@ -168,9 +169,9 @@ func (s *Service) Season(ctx context.Context, seriesID int64, season int) (store
 	}
 	start := s.Now()
 	wanted := missing(d, episodes, files, start)
-	profile := s.Profiles.Named(d.Series.Profile)
-	show := match.NewShow(d, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.rules(seriesID)})
-	original, _ := release.LanguageNamed(d.Series.OriginalLanguage)
+	profile := s.profile(d.Series)
+	show := match.NewShow(d, match.Options{Anime: d.Series.Type == store.TypeAnime, ServiceOrders: s.rules(seriesID)})
+	original := selection.OriginalLanguage(d.Series.OriginalLanguage)
 
 	sr := store.Search{Season: season, Searched: start, Indexers: []store.SearchIndexer{}}
 	var hits []hit

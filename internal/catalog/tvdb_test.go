@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/httpx"
+	"github.com/trucke/garner/internal/release"
+	"github.com/trucke/garner/internal/selection"
+	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/testprofiles"
 )
 
 // testTVDB is a client whose pacing does not wait, for tests about other
@@ -240,4 +244,11 @@ func TestTVDBRefusedKey(t *testing.T) {
 	if err := getSeries(c); err != nil {
 		t.Fatalf("an hour later: %v", err)
 	}
+}
+
+// defaultGerman is the default profile of an installation from before
+// profiles moved into the database: German for TV, German and English for
+// anime.
+func defaultGerman(typ string, original release.Language) selection.Profile {
+	return testprofiles.ByType(store.Series{Type: typ, OriginalLanguage: string(original)})
 }

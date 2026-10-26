@@ -25,8 +25,10 @@ type (
 	Candidate     = api.Candidate
 )
 
-// Episode, download, import and monitor states.
+// Show types, and episode, download, import and monitor states.
 const (
+	TypeTV             = api.TypeTV
+	TypeAnime          = api.TypeAnime
 	MonitorNew         = api.MonitorNew
 	MonitorAll         = api.MonitorAll
 	MonitorOff         = api.MonitorOff

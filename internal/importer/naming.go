@@ -15,7 +15,6 @@ import (
 	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/inspect"
 	"github.com/trucke/garner/internal/release"
-	"github.com/trucke/garner/internal/selection"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -35,7 +34,7 @@ const (
 //
 // tags are the release details from releaseTags.
 func (c showContext) target(lib config.Library, episodes []int64, tags, ext string) (string, error) {
-	folder, err := ShowFolder(lib, c.data.Series, c.profile)
+	folder, err := ShowFolder(lib, c.data.Series)
 	if err != nil {
 		return "", err
 	}
@@ -67,13 +66,13 @@ func (c showContext) target(lib config.Library, episodes []int64, tags, ext stri
 // ShowFolder is the folder new files of a show go to, as Garner reaches it:
 //
 //	<library root>/Show.2013.[tvdbid-1]
-func ShowFolder(lib config.Library, sr store.Series, profile selection.Profile) (string, error) {
-	root := lib.TV
-	if profile.Name == selection.AnimeName {
-		root = lib.Anime
+func ShowFolder(lib config.Library, sr store.Series) (string, error) {
+	root, setting := lib.TV, "library.tv"
+	if sr.Type == store.TypeAnime {
+		root, setting = lib.Anime, "library.anime"
 	}
 	if root == "" {
-		return "", fmt.Errorf("no library folder is set for the %s profile", profile.Name)
+		return "", fmt.Errorf("%s is not set, which %s shows go to", setting, cmp.Or(sr.Type, store.TypeTV))
 	}
 	return filepath.Join(filepath.Clean(root), fmt.Sprintf("%s.[tvdbid-%d]", showName(sr), sr.ID)), nil
 }

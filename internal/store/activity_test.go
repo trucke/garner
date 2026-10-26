@@ -20,7 +20,7 @@ func TestActivity(t *testing.T) {
 	pos := func(n int) map[string]Position { return map[string]Position{"official": {Season: 1, Number: n}} }
 	if err := st.SaveSeries(ctx, SeriesData{
 		Series: Series{ID: 42, Slug: "x", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa",
-			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Profile: "tv"},
+			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "2026-01-01", Type: "tv"},
 		Episodes: []Episode{{ID: 101, Numbers: pos(1)}, {ID: 102, Numbers: pos(2)}, {ID: 103, Numbers: pos(3)}, {ID: 104, Numbers: pos(4)}},
 	}, true, time.Now()); err != nil {
 		t.Fatal(err)

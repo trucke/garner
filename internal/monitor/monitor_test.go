@@ -17,6 +17,7 @@ import (
 	"github.com/trucke/garner/internal/sabnzbd"
 	"github.com/trucke/garner/internal/search"
 	"github.com/trucke/garner/internal/store"
+	"github.com/trucke/garner/internal/testprofiles"
 )
 
 // TestDue checks what the monitor searches now, and in which order: new
@@ -61,7 +62,7 @@ func TestSearchShow(t *testing.T) {
 	}
 	if err := st.SaveSeries(ctx, store.SeriesData{
 		Series: store.Series{ID: 42, Slug: "harbor-precinct", Name: "Harbor Precinct", OriginalLanguage: "deu", OriginalCountry: "deu",
-			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv", Monitor: store.MonitorOff},
+			Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv", Monitor: store.MonitorOff},
 		Episodes: []store.Episode{ep(101, 1), ep(102, 2), ep(103, 3)},
 	}, false, now); err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestSearchShow(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	m := New(st, search.New(st, prowlarr.New(srv.URL, "key", srv.Client()), nil, log), download.New(st, nil, "tv", log), nil, nil, log)
+	m := New(st, search.New(st, prowlarr.New(srv.URL, "key", srv.Client()), nil, testprofiles.ByType, log), download.New(st, nil, "tv", log), nil, nil, log)
 	var reports []api.ShowProgress
 	m.OnShowProgress = func(p api.ShowProgress) { reports = append(reports, p) }
 
@@ -152,7 +153,7 @@ func TestUpgrade(t *testing.T) {
 		}
 		if err := st.SaveSeries(ctx, store.SeriesData{
 			Series: store.Series{ID: 42, Slug: "harbor-precinct", Name: "Harbor Precinct", OriginalLanguage: "eng", OriginalCountry: "usa",
-				Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Profile: "tv", Monitor: store.MonitorAll},
+				Status: "Ended", DefaultOrder: "official", TVDBUpdated: "x", Type: "tv", Monitor: store.MonitorAll},
 			Episodes: []store.Episode{ep(101, 1), ep(102, 2)},
 		}, false, now); err != nil {
 			t.Fatal(err)
@@ -195,10 +196,10 @@ func TestUpgrade(t *testing.T) {
 		defer sab.Close()
 		schedule := &store.Schedule{
 			Recent: 14 * 24 * time.Hour, MissingRecent: time.Hour, MissingOlder: time.Hour,
-			Upgrades: true, UpgradeRecent: time.Hour, UpgradeOlder: time.Hour,
-			Best: func(string) string { return "German 1080p" },
+			UpgradeRecent: time.Hour, UpgradeOlder: time.Hour,
+			Upgrade: func(store.Series) (string, bool) { return "German 1080p", true },
 		}
-		m := New(st, search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, log),
+		m := New(st, search.New(st, prowlarr.New(indexer.URL, "key", indexer.Client()), nil, testprofiles.ByType, log),
 			download.New(st, sabnzbd.New(sab.URL, "key", sab.Client()), "tv", log), schedule, nil, log)
 		m.round(ctx)
 

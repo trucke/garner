@@ -57,11 +57,11 @@ func (c *Client) Series(ctx context.Context, id int64) (api.SeriesDetail, error)
 	return d, c.do(ctx, http.MethodGet, "/api/v1/series/"+strconv.FormatInt(id, 10), nil, &d)
 }
 
-// SetProfile changes a show's profile. Its earlier search results are
+// SetProfile gives a show another profile. Its earlier search results are
 // cleared.
-func (c *Client) SetProfile(ctx context.Context, id int64, profile string) (api.SeriesDetail, error) {
+func (c *Client) SetProfile(ctx context.Context, id, profileID int64) (api.SeriesDetail, error) {
 	var d api.SeriesDetail
-	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"profile": profile}, &d)
+	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]int64{"profile_id": profileID}, &d)
 }
 
 // SetMonitor changes which of a show's episodes the monitor gets.

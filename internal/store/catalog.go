@@ -41,12 +41,23 @@ func (s *Store) saveSeries(ctx context.Context, d SeriesData, scene bool, now ti
 			return fmt.Errorf("series %d: %w", sr.ID, ErrNotFound)
 		}
 	}
+	// A refresh keeps a show's type and profile; a new show gets its type,
+	// TV unless the catalogue says anime, and that type's default profile.
+	typ := cmp.Or(sr.Type, TypeTV)
+	profileID := sr.ProfileID
+	if profileID == 0 {
+		def, err := defaultProfile(ctx, q, typ)
+		if err != nil {
+			return err
+		}
+		profileID = def.ID
+	}
 	if err := q.UpsertSeries(ctx, query.UpsertSeriesParams{
 		ID: sr.ID, Slug: sr.Slug, Name: sr.Name, NameEng: nullString(sr.NameEng), NameDeu: nullString(sr.NameDeu),
 		OriginalLanguage: sr.OriginalLanguage, OriginalCountry: sr.OriginalCountry, Status: sr.Status,
 		Year: nullInt(sr.Year), FirstAired: nullString(sr.FirstAired), AverageRuntime: nullInt(sr.AverageRuntime),
 		DefaultOrder: sr.DefaultOrder, TvdbUpdated: sr.TVDBUpdated, AddedAt: now.Unix(), FetchedAt: now.Unix(),
-		Profile: nullString(sr.Profile),
+		Type: nullString(typ), ProfileID: sql.NullInt64{Int64: profileID, Valid: true},
 		// Never NULL once loaded, even without a network: NULL marks shows
 		// loaded before the details were kept.
 		Network: sql.NullString{String: sr.Network, Valid: true}, LastAired: nullString(sr.LastAired),
@@ -249,7 +260,7 @@ func seriesFromRow(r query.Series) Series {
 		ID: r.ID, Slug: r.Slug, Name: r.Name, NameEng: r.NameEng.String, NameDeu: r.NameDeu.String,
 		OriginalLanguage: r.OriginalLanguage, OriginalCountry: r.OriginalCountry, Status: r.Status,
 		Year: int(r.Year.Int64), FirstAired: r.FirstAired.String, AverageRuntime: int(r.AverageRuntime.Int64),
-		DefaultOrder: r.DefaultOrder, Profile: r.Profile.String, TVDBUpdated: r.TvdbUpdated,
+		DefaultOrder: r.DefaultOrder, Type: r.Type.String, ProfileID: r.ProfileID.Int64, TVDBUpdated: r.TvdbUpdated,
 		Added: time.Unix(r.AddedAt, 0), Fetched: time.Unix(r.FetchedAt, 0),
 		Network: r.Network.String, LastAired: r.LastAired.String, Overview: r.Overview.String,
 		OverviewLanguage: r.OverviewLanguage.String, HasDetails: r.Network.Valid,

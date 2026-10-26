@@ -40,9 +40,9 @@ type Catalog struct {
 	xem         *XEM
 	log         *slog.Logger
 	corrections corrections
-	// Profiles are the profiles shows choose from; the zero value holds
-	// the built-in ones.
-	Profiles selection.Profiles
+	// defaultProfile applies the profile new shows of a type get to a show
+	// whose original language is original, for the preview.
+	defaultProfile func(typ string, original release.Language) selection.Profile
 	// OnChange is called after a show was added or refreshed.
 	OnChange func(seriesID int64)
 }
@@ -73,7 +73,8 @@ type titleCorrection struct {
 }
 
 // New returns a catalogue. xem may be nil to skip TheXEM.
-func New(st *store.Store, tvdb *TVDB, xem *XEM, log *slog.Logger) (*Catalog, error) {
+func New(st *store.Store, tvdb *TVDB, xem *XEM, defaultProfile func(typ string, original release.Language) selection.Profile,
+	log *slog.Logger) (*Catalog, error) {
 	var c corrections
 	meta, err := toml.Decode(correctionsFile, &c)
 	if err != nil {
@@ -98,7 +99,7 @@ func New(st *store.Store, tvdb *TVDB, xem *XEM, log *slog.Logger) (*Catalog, err
 		}
 		seen[key] = true
 	}
-	return &Catalog{store: st, tvdb: tvdb, xem: xem, log: log, corrections: c}, nil
+	return &Catalog{store: st, tvdb: tvdb, xem: xem, defaultProfile: defaultProfile, log: log, corrections: c}, nil
 }
 
 // Add loads a show into the catalogue with the monitor mode, such as
@@ -173,8 +174,8 @@ func (c *Catalog) fetchTVDB(ctx context.Context, id int64) (store.SeriesData, er
 	if s.OriginalNetwork != nil {
 		d.Series.Network = s.OriginalNetwork.Name
 	}
-	// The profile is only stored for new shows; a changed one stays.
-	d.Series.Profile = profileFor(s)
+	// The type is only stored for new shows; a changed one stays.
+	d.Series.Type = typeFor(s)
 	for _, a := range s.Aliases {
 		d.Titles = append(d.Titles, store.Title{Title: a.Name, Language: a.Language, Source: "tvdb"})
 	}

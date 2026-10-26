@@ -50,7 +50,7 @@ func (s *Server) setupImports() error {
 		rules = s.catalog.ServiceOrders
 	}
 	imp := importer.New(s.store, prober, jf, importer.Options{
-		Profiles:     s.profiles,
+		Profile:      s.profileFor,
 		SABnzbdPaths: s.cfg.SABnzbd.Paths, JellyfinPaths: s.cfg.Jellyfin.Paths, Library: lib, Rules: rules,
 		Rename: s.deps.Rename, Before: s.deps.Before,
 	}, s.log)

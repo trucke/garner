@@ -209,14 +209,14 @@ func (c *Catalog) describe(ctx context.Context, id int64) (described, error) {
 		return described{}, err
 	}
 	year, _ := strconv.Atoi(s.Year)
-	original, _ := release.LanguageNamed(s.OriginalLanguage)
+	original := selection.OriginalLanguage(s.OriginalLanguage)
 	d := described{order: "official", Preview: api.Preview{
 		SearchResult: api.SearchResult{ID: s.ID, Slug: s.Slug, Name: s.Name, Year: year, Status: s.Status.Name, Language: s.OriginalLanguage},
-		Type:         profileFor(s), LanguageName: LanguageName(s.OriginalLanguage),
+		Type:         typeFor(s), LanguageName: LanguageName(s.OriginalLanguage),
 		FirstAired: s.FirstAired, LastAired: s.LastAired, Runtime: s.AverageRuntime, Orders: []string{},
 		URL: SeriesURL(s.Slug, s.ID),
 	}}
-	profile := c.Profiles.Named(d.Type)
+	profile := c.defaultProfile(d.Type, original)
 	d.Rules, d.LanguageNote = profile.Describe(), selection.OriginalNote(profile, original)
 	if s.OriginalNetwork != nil {
 		d.Network = s.OriginalNetwork.Name
@@ -270,14 +270,14 @@ func LanguageName(code string) string {
 	return code
 }
 
-// profileFor is the profile a new show gets: anime for TVDB's Anime genre.
-func profileFor(s tvdbSeries) string {
+// typeFor is the type a new show gets: anime for TVDB's Anime genre.
+func typeFor(s tvdbSeries) string {
 	for _, g := range s.Genres {
 		if g.Name == "Anime" {
-			return "anime"
+			return api.TypeAnime
 		}
 	}
-	return "tv"
+	return api.TypeTV
 }
 
 // SeriesURL is a show's page on thetvdb.com, by ID when TVDB has no slug.

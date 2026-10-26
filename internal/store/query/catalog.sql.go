@@ -72,7 +72,7 @@ func (q *Queries) GetEpisodeOverview(ctx context.Context, id int64) (GetEpisodeO
 }
 
 const getSeries = `-- name: GetSeries :one
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language, monitor, monitor_since FROM series WHERE id = ?
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, network, last_aired, overview, overview_language, monitor, monitor_since, type, profile_id FROM series WHERE id = ?
 `
 
 func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
@@ -95,13 +95,14 @@ func (q *Queries) GetSeries(ctx context.Context, id int64) (Series, error) {
 		&i.AddedAt,
 		&i.FetchedAt,
 		&i.XemFetchedAt,
-		&i.Profile,
 		&i.Network,
 		&i.LastAired,
 		&i.Overview,
 		&i.OverviewLanguage,
 		&i.Monitor,
 		&i.MonitorSince,
+		&i.Type,
+		&i.ProfileID,
 	)
 	return i, err
 }
@@ -383,7 +384,7 @@ func (q *Queries) ListSceneNumbers(ctx context.Context, seriesID int64) ([]ListS
 }
 
 const listSeries = `-- name: ListSeries :many
-SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, profile, network, last_aired, overview, overview_language, monitor, monitor_since FROM series ORDER BY coalesce(name_eng, name)
+SELECT id, slug, name, name_eng, name_deu, original_language, original_country, status, year, first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, xem_fetched_at, network, last_aired, overview, overview_language, monitor, monitor_since, type, profile_id FROM series ORDER BY coalesce(name_eng, name)
 `
 
 func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
@@ -412,13 +413,14 @@ func (q *Queries) ListSeries(ctx context.Context) ([]Series, error) {
 			&i.AddedAt,
 			&i.FetchedAt,
 			&i.XemFetchedAt,
-			&i.Profile,
 			&i.Network,
 			&i.LastAired,
 			&i.Overview,
 			&i.OverviewLanguage,
 			&i.Monitor,
 			&i.MonitorSince,
+			&i.Type,
+			&i.ProfileID,
 		); err != nil {
 			return nil, err
 		}
@@ -619,11 +621,11 @@ func (q *Queries) UpsertEpisode(ctx context.Context, arg UpsertEpisodeParams) er
 
 const upsertSeries = `-- name: UpsertSeries :exec
 INSERT INTO series (id, slug, name, name_eng, name_deu, original_language, original_country, status, year,
-    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, profile,
+    first_aired, average_runtime, default_order, tvdb_updated, added_at, fetched_at, type, profile_id,
     network, last_aired, overview, overview_language, monitor, monitor_since)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
-    profile = coalesce(series.profile, excluded.profile),
+    type = coalesce(series.type, excluded.type), profile_id = coalesce(series.profile_id, excluded.profile_id),
     slug = excluded.slug, name = excluded.name, name_eng = excluded.name_eng, name_deu = excluded.name_deu,
     original_language = excluded.original_language, original_country = excluded.original_country,
     status = excluded.status, year = excluded.year, first_aired = excluded.first_aired,
@@ -649,7 +651,8 @@ type UpsertSeriesParams struct {
 	TvdbUpdated      string
 	AddedAt          int64
 	FetchedAt        int64
-	Profile          sql.NullString
+	Type             sql.NullString
+	ProfileID        sql.NullInt64
 	Network          sql.NullString
 	LastAired        sql.NullString
 	Overview         sql.NullString
@@ -659,7 +662,7 @@ type UpsertSeriesParams struct {
 }
 
 // The monitor mode is chosen when adding a show; refreshes keep it, as
-// they keep a changed profile.
+// they keep a changed type and profile.
 func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) error {
 	_, err := q.db.ExecContext(ctx, upsertSeries,
 		arg.ID,
@@ -677,7 +680,8 @@ func (q *Queries) UpsertSeries(ctx context.Context, arg UpsertSeriesParams) erro
 		arg.TvdbUpdated,
 		arg.AddedAt,
 		arg.FetchedAt,
-		arg.Profile,
+		arg.Type,
+		arg.ProfileID,
 		arg.Network,
 		arg.LastAired,
 		arg.Overview,

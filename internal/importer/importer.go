@@ -73,9 +73,8 @@ type Options struct {
 	Library       config.Library
 	// Rules returns a show's reviewed streaming-service order rules.
 	Rules func(seriesID int64) map[release.Service]string
-	// Profiles are the profiles shows choose from; the zero value holds
-	// the built-in ones.
-	Profiles selection.Profiles
+	// Profile applies a show's stored profile to the show.
+	Profile func(store.Series) selection.Profile
 	// Rename moves files for the guard; nil means os.Rename.
 	Rename func(oldpath, newpath string) error
 	// Before runs before each change to a file or folder; see
@@ -876,10 +875,9 @@ func (s *Service) seriesContext(ctx context.Context, seriesID int64) (showContex
 	if err != nil {
 		return showContext{}, err
 	}
-	profile := s.opts.Profiles.Named(data.Series.Profile)
 	c := showContext{
-		data: data, profile: profile, episodes: map[int64]store.Episode{},
-		show: match.NewShow(data, match.Options{Anime: profile.Name == selection.AnimeName, ServiceOrders: s.opts.Rules(seriesID)}),
+		data: data, profile: s.opts.Profile(data.Series), episodes: map[int64]store.Episode{},
+		show: match.NewShow(data, match.Options{Anime: data.Series.Type == store.TypeAnime, ServiceOrders: s.opts.Rules(seriesID)}),
 	}
 	for _, e := range data.Episodes {
 		c.episodes[e.ID] = e
