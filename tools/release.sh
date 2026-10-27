@@ -2,8 +2,8 @@
 # Releases a commit of main as a version: tags it, pushes the tag, and
 # follows the GitHub workflow that builds the server image, the terminal
 # interface and the release. The commit is main's newest unless named; it
-# must be on main on GitHub and newer than the previous release. Every push
-# passed `mise run check`, so what is on main is checked.
+# must be on main on GitHub and newer than the last published release.
+# Every push passed `mise run check`, so what is on main is checked.
 #
 # Usage: mise run release vX.Y.Z [revision]
 set -euo pipefail
@@ -32,17 +32,17 @@ commit=$commits
 git fetch --quiet --tags origin
 git rev-parse --verify --quiet "refs/tags/$version" >/dev/null && fail "$version exists already"
 latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
-if [ -n "$latest" ]; then
-	[ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" = "$version" ] ||
-		fail "$version is not newer than $latest"
-	! git merge-base --is-ancestor "$commit" "$latest" ||
-		fail "${commit:0:12} is already part of $latest"
-fi
+[ -z "$latest" ] || [ "$(printf '%s\n%s\n' "$latest" "$version" | sort -V | tail -1)" = "$version" ] ||
+	fail "$version is not newer than $latest"
+# A failed release keeps its tag, so its commit may go out again under the
+# next version; only a published release counts.
+published=$(gh release list --limit 100 --exclude-drafts --json tagName --jq '.[].tagName') ||
+	fail "could not list the releases on GitHub"
+released=$(printf '%s\n' "$published" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+[ -z "$released" ] || ! git merge-base --is-ancestor "$commit" "$released" ||
+	fail "${commit:0:12} is already part of $released"
 
 printf 'Releasing %s (%s) as %s\n' "${commit:0:12}" "$(jj log -r "$commit" --no-graph -T 'description.first_line()')" "$version"
-# A retry tags the same version again, so a run of the version is ours
-# only if it is newer than every run before the push.
-before=$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId // 0')
 git tag -a "$version" -m "Garner $version" "$commit"
 git push --quiet origin "refs/tags/$version" || {
 	git tag -d "$version" >/dev/null
@@ -53,13 +53,15 @@ git push --quiet origin "refs/tags/$version" || {
 run=""
 for _ in $(seq 1 30); do
 	run=$(gh run list --workflow release.yml --limit 20 --json databaseId,headBranch \
-		--jq ".[] | select(.headBranch == \"$version\" and .databaseId > $before) | .databaseId" | head -1)
+		--jq ".[] | select(.headBranch == \"$version\") | .databaseId" | head -1)
 	[ -n "$run" ] && break
 	sleep 2
 done
 [ -n "$run" ] || fail "GitHub started no release workflow for $version; see the repository's Actions page"
+# Version tags are never deleted, so a failed version stays taken.
+next=$(printf '%s\n' "$version" | awk -F. '{ printf "%s.%s.%d", $1, $2, $3 + 1 }')
 gh run watch "$run" --exit-status --interval 10 >/dev/null ||
-	fail "the release workflow failed: gh run view $run --log-failed. To try again, remove the tag first: git push origin :refs/tags/$version && git tag -d $version"
+	fail "the release workflow failed: gh run view $run --log-failed. $version stays taken; fix the cause and release the next patch version: mise run release $next"
 
 # shellcheck disable=SC2016 # the backticks are literal, as the notes write them
 image=$(gh release view "$version" --json body --jq .body | sed -n 's/^Server image: `\(.*\)`$/\1/p')
