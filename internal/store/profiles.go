@@ -93,6 +93,19 @@ func (s *Store) ProfileByName(ctx context.Context, name string) (StoredProfile, 
 	return storedProfile(r.ID, r.Name, r.Text, r.DefaultTv, r.DefaultAnime), nil
 }
 
+// ProfileShowNames names the shows that use a profile, by name.
+func (s *Store) ProfileShowNames(ctx context.Context, id int64) ([]string, error) {
+	rows, err := s.q.ProfileShows(ctx, sql.NullInt64{Int64: id, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(rows))
+	for i, r := range rows {
+		names[i] = r.Name
+	}
+	return names, nil
+}
+
 // DefaultProfile returns the profile new shows of a type get.
 func (s *Store) DefaultProfile(ctx context.Context, typ string) (StoredProfile, error) {
 	return defaultProfile(ctx, s.q, typ)
@@ -150,17 +163,18 @@ func (s *Store) UpdateProfile(ctx context.Context, id int64, name, text string) 
 	}
 	defer tx.Rollback()
 	q := s.q.WithTx(tx)
+	if _, err := q.GetProfile(ctx, id); errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("profile %d: %w", id, ErrNoProfile)
+	} else if err != nil {
+		return err
+	}
 	if other, err := q.GetProfileByName(ctx, name); err == nil && other.ID != id {
 		return fmt.Errorf("profile %q: %w", name, ErrNameTaken)
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	n, err := q.UpdateProfile(ctx, query.UpdateProfileParams{Name: name, Text: text, ID: id})
-	if err != nil {
+	if _, err := q.UpdateProfile(ctx, query.UpdateProfileParams{Name: name, Text: text, ID: id}); err != nil {
 		return err
-	}
-	if n == 0 {
-		return fmt.Errorf("profile %d: %w", id, ErrNoProfile)
 	}
 	shows, err := q.ProfileShows(ctx, sql.NullInt64{Int64: id, Valid: true})
 	if err != nil {

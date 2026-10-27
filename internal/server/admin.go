@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/connect"
+	"github.com/trucke/garner/internal/profile"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -74,7 +75,65 @@ func (s *Server) AdminRoutes() http.Handler {
 	mux.HandleFunc("DELETE /admin/tokens/{name}", s.handleRevokeToken)
 	mux.HandleFunc("POST /admin/backup", s.handleBackup)
 	mux.HandleFunc("GET /admin/status", s.handleAdminStatus)
+	mux.HandleFunc("POST /admin/profiles", s.handleImportProfile)
 	return mux
+}
+
+// ImportedProfile is what an import from the command line did.
+type ImportedProfile struct {
+	Name string `json:"name"`
+	// Replaced means a profile of that name existed and took the new
+	// settings; Shows are the shows that use it.
+	Replaced bool     `json:"replaced"`
+	Shows    []string `json:"shows"`
+	Warnings []string `json:"warnings"`
+}
+
+// handleImportProfile saves a profile's text, as garnerd profile import
+// reads it from standard input. A profile of the same name is replaced
+// only when the request says so.
+func (s *Server) handleImportProfile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text    string `json:"text"`
+		Replace bool   `json:"replace"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	p, warnings, err := profile.Parse(req.Text)
+	var pe *profile.Error
+	if errors.As(err, &pe) {
+		writeJSON(w, http.StatusBadRequest, apiError{Error: "the profile has problems; nothing was imported", Problems: pe.Problems})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx := r.Context()
+	out := ImportedProfile{Name: p.Name, Warnings: warnings}
+	existing, err := s.store.ProfileByName(ctx, p.Name)
+	switch {
+	case err == nil && !req.Replace:
+		writeError(w, http.StatusConflict, fmt.Sprintf("a profile named %q exists; add --replace to replace it", p.Name))
+		return
+	case err == nil:
+		out.Replaced = true
+		_, err = s.saveProfile(ctx, existing.ID, p)
+	case errors.Is(err, store.ErrNoProfile):
+		existing.ID, err = s.saveProfile(ctx, 0, p)
+	}
+	if err != nil {
+		s.internalError(w, "import profile", err)
+		return
+	}
+	if out.Shows, err = s.store.ProfileShowNames(ctx, existing.ID); err != nil {
+		s.internalError(w, "import profile", err)
+		return
+	}
+	s.log.Info("imported profile", "name", p.Name, "replaced", out.Replaced)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateToken(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +311,14 @@ func (a *Admin) Backup(ctx context.Context, path string) (BackupInfo, error) {
 	return out, a.do(ctx, http.MethodPost, "/admin/backup", map[string]string{"path": path}, &out)
 }
 
+// ImportProfile saves a profile's text, replacing a profile of the same
+// name only when replace is set. A profile with problems fails with a
+// *profile.Error that lists them.
+func (a *Admin) ImportProfile(ctx context.Context, text string, replace bool) (ImportedProfile, error) {
+	var out ImportedProfile
+	return out, a.do(ctx, http.MethodPost, "/admin/profiles", map[string]any{"text": text, "replace": replace}, &out)
+}
+
 func (a *Admin) Status(ctx context.Context) (Status, error) {
 	var out Status
 	return out, a.do(ctx, http.MethodGet, "/admin/status", nil, &out)
@@ -280,6 +347,9 @@ func (a *Admin) do(ctx context.Context, method, path string, body, out any) erro
 		var e apiError
 		if json.NewDecoder(resp.Body).Decode(&e) != nil || e.Error == "" {
 			return fmt.Errorf("server answered %s", resp.Status)
+		}
+		if len(e.Problems) > 0 {
+			return &profile.Error{Problems: e.Problems}
 		}
 		return errors.New(e.Error)
 	}

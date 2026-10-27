@@ -67,6 +67,8 @@ func (e *UntrustedError) Unwrap() error { return e.Err }
 type ServerError struct {
 	Status  int
 	Message string
+	// Problems lists what is wrong with a profile the server refused.
+	Problems []string
 }
 
 func (e *ServerError) Error() string { return e.Message }
@@ -245,12 +247,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return &ServerError{Status: resp.StatusCode, Message: "the server answered with a redirect, which Garner does not follow"}
 	case resp.StatusCode >= 400:
 		var e struct {
-			Error string `json:"error"`
+			Error    string   `json:"error"`
+			Problems []string `json:"problems"`
 		}
 		if json.Unmarshal(data, &e) != nil || e.Error == "" {
 			e.Error = fmt.Sprintf("the server answered %s", resp.Status)
 		}
-		return &ServerError{Status: resp.StatusCode, Message: e.Error}
+		return &ServerError{Status: resp.StatusCode, Message: e.Error, Problems: e.Problems}
 	}
 	if out == nil {
 		return nil

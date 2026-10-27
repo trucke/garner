@@ -65,6 +65,16 @@ It lists the profile's preferences and settings, or every problem. `garner profi
 
 Editors check a profile while you type when they read its first line, `#:schema …`, as the TOML support in VS Code and other editors based on Taplo does. The schema is [`profile.schema.json`](profile.schema.json).
 
+## Import a profile on the server
+
+To import a profile file on the machine that runs Garner, for example in a setup script, pipe it into `garnerd`:
+
+```bash
+garnerd profile import < german.toml
+```
+
+In a container, run it with `podman exec -i garner garnerd profile import < german.toml`, or `docker compose exec -T garner garnerd profile import < german.toml`. A profile with the same name stays as it is; to replace it, add `--replace`. The shows that use it then follow the new settings. Garner stores every profile in the form `garner profile check` reads, without the comments of the imported file.
+
 ## Profiles that come with Garner
 
 | Profile | `audio` | Other settings |

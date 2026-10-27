@@ -37,6 +37,7 @@ func (s *Server) register(mux router) {
 	s.searchRoutes(mux)
 	s.downloadRoutes(mux)
 	s.importRoutes(mux)
+	s.profileRoutes(mux)
 }
 
 func (s *Server) auth(next http.Handler) http.Handler {
@@ -133,6 +134,8 @@ func sse(e Event) string {
 
 type apiError struct {
 	Error string `json:"error"`
+	// Problems lists what is wrong with a profile, one problem each.
+	Problems []string `json:"problems,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

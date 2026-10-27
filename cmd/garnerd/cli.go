@@ -53,7 +53,7 @@ func newRoot(version string) *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVarP(&a.configPath, "config", "c", "", "config file (default $GARNER_CONFIG or "+config.DefaultPath+")")
-	root.AddCommand(a.serveCmd(), a.tokenCmd(), a.backupCmd(), a.statusCmd())
+	root.AddCommand(a.serveCmd(), a.tokenCmd(), a.backupCmd(), a.statusCmd(), a.profileCmd())
 	return root
 }
 
