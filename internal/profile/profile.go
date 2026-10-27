@@ -43,9 +43,9 @@ const Original = "original"
 // The release parser knows the same ones; a test in package selection
 // keeps the two lists equal.
 var languages = map[string]string{
-	"de": "German", "en": "English", "es": "Spanish", "fr": "French", "hi": "Hindi", "it": "Italian",
-	"ja": "Japanese", "ko": "Korean", "nl": "Dutch", "pl": "Polish", "pt": "Portuguese", "ru": "Russian",
-	"tr": "Turkish", "zh": "Chinese",
+	"de": "German", "en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "ja": "Japanese",
+	"ko": "Korean", "nl": "Dutch", "pl": "Polish", "pt": "Portuguese", "tr": "Turkish", "zh": "Chinese",
+	"da": "Danish", "no": "Norwegian", "sv": "Swedish",
 }
 
 // Languages lists the language codes a profile may name besides Original,
@@ -287,11 +287,8 @@ func (r *reader) audio() []string {
 			r.fail("audio: write %q instead of %q", code, c)
 			continue
 		}
-		named := []string{Original + " (the show's own)"}
-		for _, l := range Languages() {
-			named = append(named, fmt.Sprintf("%s (%s)", l, languages[l]))
-		}
-		r.fail("audio: %q is not a language Garner knows; use %s", c, strings.Join(named, ", "))
+		r.fail("audio: %q is not a language Garner knows; use original (the show's own) or one of %s",
+			c, strings.Join(Languages(), ", "))
 	}
 	return codes
 }

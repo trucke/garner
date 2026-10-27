@@ -22,7 +22,7 @@ upgrades = true
 | `garner_profile` | yes | `1` | The format version. Garner refuses a profile of a newer version than it reads. |
 | `name` | yes | text, up to 40 characters | The profile's name, unique within one Garner |
 | `description` | no | one line, up to 200 characters | Shown in lists and before you import the profile |
-| `audio` | yes | best first: `original`, `de`, `en`, `es`, `fr`, `hi`, `it`, `ja`, `ko`, `nl`, `pl`, `pt`, `ru`, `tr`, `zh` | The accepted audio languages. `original` is the show's original language. |
+| `audio` | yes | best first: `original` or [language codes](#languages) | The accepted audio languages. `original` is the show's original language. |
 | `resolution` | yes | best first: `1080p`, `720p` | The accepted resolutions |
 | `priority` | no, default `audio` | `audio`, `resolution` | Which list counts more when Garner ranks the preferences |
 | `dual_audio` | no, default `prefer` | `prefer`, `ignore` | `prefer` ranks a release that also has the show's original audio first, when the preference's language is another one |
@@ -30,6 +30,30 @@ upgrades = true
 | `upgrades` | no, default `true` | `true`, `false` | Whether Garner replaces a file below the first preference when a release in a better preference appears |
 
 Each language has one spelling: its two-letter code, such as `de` for German.
+
+### Languages
+
+Garner recognises these audio languages in release names, in what the indexers report and in the files it imports:
+
+| Code | Language |
+| --- | --- |
+| `zh` | Chinese |
+| `da` | Danish |
+| `nl` | Dutch |
+| `en` | English |
+| `fr` | French |
+| `de` | German |
+| `it` | Italian |
+| `ja` | Japanese |
+| `ko` | Korean |
+| `no` | Norwegian |
+| `pl` | Polish |
+| `pt` | Portuguese |
+| `es` | Spanish |
+| `sv` | Swedish |
+| `tr` | Turkish |
+
+A show's original language counts with `original` even when Garner does not know it: then releases that name no language count as the show's own.
 
 ## Preferences
 

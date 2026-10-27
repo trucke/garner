@@ -139,20 +139,30 @@ var ignoredExact = set("END", "FiNAL")
 var languages = map[string]Language{
 	"german": "de", "deutsch": "de", "english": "en", "japanese": "ja", "spanish": "es", "castellano": "es",
 	"latino":  "es",
-	"italian": "it", "french": "fr", "turkish": "tr", "hindi": "hi", "korean": "ko", "chinese": "zh",
-	"russian": "ru", "portuguese": "pt", "polish": "pl", "dutch": "nl",
+	"italian": "it", "french": "fr", "turkish": "tr", "korean": "ko", "chinese": "zh",
+	"portuguese": "pt", "polish": "pl", "dutch": "nl", "danish": "da", "norwegian": "no", "swedish": "sv",
 	"ger": "de", "deu": "de", "eng": "en", "jpn": "ja", "jap": "ja", "ita": "it", "spa": "es", "esp": "es",
-	"fre": "fr", "fra": "fr", "tur": "tr", "hin": "hi", "kor": "ko", "chi": "zh", "rus": "ru", "por": "pt",
+	"fre": "fr", "fra": "fr", "tur": "tr", "kor": "ko", "chi": "zh", "por": "pt",
 }
 
 var languageCodes = map[string]Language{
 	"de": "de", "en": "en", "ja": "ja", "jp": "ja", "es": "es", "it": "it", "fr": "fr", "tr": "tr",
-	"hi": "hi", "ko": "ko", "zh": "zh", "ru": "ru", "pt": "pt", "pl": "pl", "nl": "nl",
+	"ko": "ko", "zh": "zh", "pt": "pt", "pl": "pl", "nl": "nl",
+}
+
+// languageAliases are codes that name languages outside release names: in
+// TVDB ("zho", "zhtw"), FFprobe's stream tags, subtitle files and indexer
+// attributes. Release names write these languages out, and as words of a
+// name the codes would collide with titles ("Dan", "Nor", "Swe").
+var languageAliases = map[string]Language{
+	"zho": "zh", "zhtw": "zh", "pol": "pl", "nld": "nl", "dut": "nl",
+	"da": "da", "dan": "da", "no": "no", "nb": "no", "nn": "no", "nor": "no", "nob": "no", "nno": "no",
+	"sv": "sv", "swe": "sv",
 }
 
 // LanguageNamed reads a language as indexers and TVDB write it: an English
-// name ("German", "Japanese (Japan)"), an ISO 639 code ("deu", "de") or a
-// locale ("en-US").
+// name ("German", "Japanese (Japan)"), an ISO 639 code ("deu", "de"),
+// TVDB's code ("zhtw") or a locale ("en-US").
 func LanguageNamed(s string) (Language, bool) {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if i := strings.IndexAny(s, " (-_"); i > 0 {
@@ -161,14 +171,17 @@ func LanguageNamed(s string) (Language, bool) {
 	if l, ok := languages[s]; ok {
 		return l, true
 	}
-	l, ok := languageCodes[s]
+	if l, ok := languageCodes[s]; ok {
+		return l, true
+	}
+	l, ok := languageAliases[s]
 	return l, ok
 }
 
 var languageNames = map[Language]string{
 	"de": "German", "en": "English", "ja": "Japanese", "es": "Spanish", "it": "Italian", "fr": "French",
-	"tr": "Turkish", "hi": "Hindi", "ko": "Korean", "zh": "Chinese", "ru": "Russian", "pt": "Portuguese",
-	"pl": "Polish", "nl": "Dutch",
+	"tr": "Turkish", "ko": "Korean", "zh": "Chinese", "pt": "Portuguese", "pl": "Polish", "nl": "Dutch",
+	"da": "Danish", "no": "Norwegian", "sv": "Swedish",
 }
 
 // Languages lists the languages Garner knows by code, in alphabetical

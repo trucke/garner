@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -342,7 +343,10 @@ func (s *editorScreen) openPicker(kind editorRowKind, at int, replace bool) {
 		if !listed(profile.Original) {
 			p.items = append(p.items, pickItem{label: "Original language", note: "the show's own", value: profile.Original})
 		}
-		for _, code := range profile.Languages() {
+		// By name, so German comes after French rather than after Danish (da).
+		codes := profile.Languages()
+		slices.SortFunc(codes, func(a, b string) int { return cmp.Compare(profile.LanguageName(a), profile.LanguageName(b)) })
+		for _, code := range codes {
 			if !listed(code) {
 				p.items = append(p.items, pickItem{label: profile.LanguageName(code), value: code})
 			}
@@ -542,7 +546,7 @@ func (s *editorScreen) view(width, height int) string {
 	page := s.scroll.layout(width, height, b.String(), s.bottom(row))
 	switch {
 	case s.picker != nil:
-		return overlay(page, s.picker.lines(s.pickerTitle()), width, height)
+		return overlay(page, s.picker.lines(s.pickerTitle(), height), width, height)
 	case s.discard:
 		return overlay(page, s.discardLines(), width, height)
 	}

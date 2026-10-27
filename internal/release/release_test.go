@@ -120,7 +120,7 @@ var cases = []struct {
 	{"Example.Show.S06.GERMAN.DUBBED.DL.1080p.WEBRiP.x264-GRP", summary{
 		Series: "Example Show", Numbering: "S06", Resolution: "1080p", Source: "webrip", Group: "GRP", Audio: "de,original"}},
 	{"Example.Show.[2021].S06E01.1080p.[60FPS].Bluray.x264.Dual.Audio.[Hi.Eng].DDP.5.1.Esub.[-Some Uploader-]", summary{
-		Series: "Example Show", Numbering: "S06E01", Resolution: "1080p", Source: "bluray", Year: "2021", Audio: "hi,en", Subtitles: "en", Markers: "dual-audio"}},
+		Series: "Example Show", Numbering: "S06E01", Resolution: "1080p", Source: "bluray", Year: "2021", Audio: "en", Subtitles: "en", Markers: "dual-audio"}},
 	{"Example.Show.S06E07.2021.1080p.Netflix.WEB-DL.AVC.DDP.5.1-GRP", summary{
 		Series: "Example Show", Numbering: "S06E07", Resolution: "1080p", Source: "webdl", Year: "2021", Group: "GRP", Services: "netflix"}},
 	{"Example.Show.1x01.Ciao.Amico.ITA.BDMux.x264-GRP", summary{
@@ -283,9 +283,22 @@ var cases = []struct {
 		Series: "Example Show", Numbering: "S01E01", Resolution: "480p", Source: "webdl", Group: "GRP"}},
 	{"Example.Saga.S02.German.DL.TrueHD.1080p.BluRay.10bit.x265-Mochi-sama", summary{
 		Series: "Example Saga", Numbering: "S02", Resolution: "1080p", Source: "bluray", Group: "Mochi-sama", Audio: "de,original"}},
+	// Languages release names write out, also lists of them and one
+	// directly before the group.
+	{"Harbor.Precinct.S01E01.SWEDiSH.1080p.WEB.h264-GRP", summary{
+		Series: "Harbor Precinct", Numbering: "S01E01", Resolution: "1080p", Source: "web", Group: "GRP", Audio: "sv"}},
+	{"Lanterns.and.Tides.S01E01.Danish.Norwegian.1080p.WEB-DL.x264-GRP", summary{
+		Series: "Lanterns and Tides", Numbering: "S01E01", Resolution: "1080p", Source: "webdl", Group: "GRP", Audio: "da,no"}},
+	{"Glass.Orchard.S01E02.1080p.WEB.h264.Norwegian-GRP", summary{
+		Series: "Glass Orchard", Numbering: "S01E02", Resolution: "1080p", Source: "web", Group: "GRP", Audio: "no"}},
+	{"Glass.Orchard.2024.DANiSH.1080p.WEB.h264-GRP", summary{
+		Series: "Glass Orchard", Resolution: "1080p", Source: "web", Year: "2024", Group: "GRP", Audio: "da"}},
 	// After a year, a language an ordinary word follows names something.
 	{"Harbor.Rally.2026.Spanish.Grand.Prix.Race.1080p.WEB.h264-GRP", summary{
 		Series: "Harbor Rally", Resolution: "1080p", Source: "web", Year: "2026", Group: "GRP"}},
+	// The codes of the new languages stay words in release names.
+	{"Harbor.Precinct.S01E01.Dan.and.Nor.1080p.WEB.h264-GRP", summary{
+		Series: "Harbor Precinct", Episode: "Dan and Nor", Numbering: "S01E01", Resolution: "1080p", Source: "web", Group: "GRP"}},
 }
 
 func TestParse(t *testing.T) {
@@ -296,6 +309,22 @@ func TestParse(t *testing.T) {
 				t.Errorf("Parse(%q)\n got: %+v\nwant: %+v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLanguageNamed reads languages as TVDB, FFprobe, subtitle files and
+// indexers write them.
+func TestLanguageNamed(t *testing.T) {
+	for in, want := range map[string]Language{
+		"zho": "zh", "zhtw": "zh", "pol": "pl", "nld": "nl", "swe": "sv", "nob": "no",
+		"Danish (Denmark)": "da", "sv-SE": "sv", "German": "de",
+	} {
+		if got, ok := LanguageNamed(in); !ok || got != want {
+			t.Errorf("LanguageNamed(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+	if got, ok := LanguageNamed("yue"); ok {
+		t.Errorf("LanguageNamed(yue) = %q, a language Garner does not know", got)
 	}
 }
 

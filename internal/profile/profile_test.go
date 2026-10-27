@@ -102,7 +102,7 @@ func TestProblems(t *testing.T) {
 		{"empty audio", strings.Replace(minimal, `["de", "en"]`, `[]`, 1), "audio must name at least one entry"},
 		{"audio name", strings.Replace(minimal, `["de", "en"]`, `["German"]`, 1), `audio: write "de" instead of "German"`},
 		{"audio upper case", strings.Replace(minimal, `["de", "en"]`, `["DE"]`, 1), `audio: write "de" instead of "DE"`},
-		{"unknown audio", strings.Replace(minimal, `["de", "en"]`, `["xx"]`, 1), `audio: "xx" is not a language Garner knows; use original (the show's own), de (German), en (English),`},
+		{"unknown audio", strings.Replace(minimal, `["de", "en"]`, `["xx"]`, 1), `audio: "xx" is not a language Garner knows; use original (the show's own) or one of da, de, en,`},
 		{"repeated audio", strings.Replace(minimal, `["de", "en"]`, `["de", "de"]`, 1), `audio names "de" twice`},
 		{"audio numbers", strings.Replace(minimal, `["de", "en"]`, `[1, 2]`, 1), "audio must list texts in quotes"},
 		{"2160p", strings.Replace(minimal, `["1080p", "720p"]`, `["2160p"]`, 1), `resolution: "2160p" is not supported yet; use 1080p or 720p`},

@@ -253,6 +253,35 @@ func TestEditorLists(t *testing.T) {
 // TestEditorSave checks that enter refuses to save while the check finds
 // problems, including a name another profile has, and otherwise sends the
 // encoded profile: PUT for a stored profile, POST for a new one.
+// TestLanguagePicker lists the languages by name and, in a short terminal,
+// keeps the overlay whole and the cursor's row on the screen.
+func TestLanguagePicker(t *testing.T) {
+	_, cl := newRecorder(t)
+	a, ed := editorApp(cl, 1)
+	sendKeys(a, "a")
+	if ed.picker == nil {
+		t.Fatal("a did not open the language picker")
+	}
+	var names []string
+	for _, it := range ed.picker.items[1:] {
+		names = append(names, it.label)
+	}
+	if !slices.IsSorted(names) {
+		t.Errorf("the languages are not by name: %v", names)
+	}
+	for _, tc := range []struct{ key, hidden string }{{"", "\u2193"}, {"G", "\u2191"}} {
+		if tc.key != "" {
+			sendKeys(a, tc.key)
+		}
+		view := ansi.Strip(ed.view(80, 18))
+		chosen := ed.picker.items[ed.picker.choice].label
+		if rows := strings.Count(view, "\n") + 1; rows > 18 || !strings.Contains(view, chosen) ||
+			!strings.Contains(view, "esc cancel") || !strings.Contains(view, tc.hidden) {
+			t.Errorf("after %q: %d rows, cursor on %q, view:\n%s", tc.key, rows, chosen, view)
+		}
+	}
+}
+
 func TestEditorSave(t *testing.T) {
 	rec, cl := newRecorder(t)
 	a, ed := editorApp(cl, 3)

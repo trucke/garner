@@ -552,7 +552,7 @@ func (s *profilesScreen) view(width, height int) string {
 	page := screenLayout(width, height, b.String(), s.bottom())
 	switch s.overlay {
 	case newPickerOverlay:
-		return overlay(page, s.picker.lines(sBold.Render("New profile")+"  "+sMuted.Render("start from")), width, height)
+		return overlay(page, s.picker.lines(sBold.Render("New profile")+"  "+sMuted.Render("start from"), height), width, height)
 	case exportOverlay:
 		return overlay(page, s.export.lines(r.Name), width, height)
 	case deleteProfileOverlay:
@@ -944,9 +944,22 @@ func (p *pickList) step(dir int) {
 	}
 }
 
-func (p *pickList) lines(title string) []string {
+// lines draws the list for a screen height rows high. A list longer than
+// fits shows a window around the cursor, with ↑ and ↓ where rows are
+// hidden.
+func (p *pickList) lines(title string, height int) []string {
 	lines := []string{title, ""}
-	for i, it := range p.items {
+	first, last := 0, len(p.items)
+	// The overlay's borders, the title, the key bar and their gaps take 6
+	// rows; a window also takes one row for each mark.
+	if rows := height - 6; len(p.items) > rows {
+		shown := max(1, rows-2)
+		first = min(max(0, p.choice-shown/2), len(p.items)-shown)
+		last = first + shown
+		lines = append(lines, sMuted.Render(mark(first > 0, " ↑")))
+	}
+	for i := first; i < last; i++ {
+		it := p.items[i]
 		switch {
 		case it.header && it.label == "":
 			lines = append(lines, "")
@@ -962,5 +975,16 @@ func (p *pickList) lines(title string) []string {
 				note.Render(fit(it.note, noteWidth, false)))
 		}
 	}
+	if first > 0 || last < len(p.items) {
+		lines = append(lines, sMuted.Render(mark(last < len(p.items), " ↓")))
+	}
 	return append(lines, "", keyBar("j k", "choose", "enter", "ok", "esc", "cancel"))
+}
+
+// mark is s when shown, else an empty row of the same place.
+func mark(shown bool, s string) string {
+	if shown {
+		return s
+	}
+	return ""
 }
