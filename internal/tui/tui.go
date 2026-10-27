@@ -168,6 +168,14 @@ func (a *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, a.screen.init()
 			}
 			return a, nil
+		case "P":
+			switch a.screen.(type) {
+			case *profilesScreen, *editorScreen, *importScreen, *importPreviewScreen:
+				// Already among the profiles.
+				return a, nil
+			}
+			a.screen = newProfiles(a.sess, a.screen)
+			return a, a.screen.init()
 		}
 	case connectedMsg:
 		return a, a.open(msg.client, msg.status)

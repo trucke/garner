@@ -496,12 +496,12 @@ func (s *libraryScreen) bottom(width, shown, total int) string {
 	case s.loaded && len(s.sess.shows) == 0:
 		return keyBar("a", "add show", "?", "help", "q", "quit")
 	case s.filter != "":
-		return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
-			"esc", "clear filter", "?", "help", "q", "quit")
+		return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "/", "filter",
+			"esc", "clear filter", "P", "profiles", "?", "help", "q", "quit")
 	}
-	// tab category is in Help; the tabs show at the top.
-	return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "d", "delete", "/", "filter",
-		"s", "sort", "A", "activity", "?", "help", "q", "quit")
+	// d, s and tab category are in Help; the tabs show at the top.
+	return keyBar("j k", "move", "enter", "open", "i", "details", "a", "add", "/", "filter",
+		"P", "profiles", "A", "activity", "?", "help", "q", "quit")
 }
 
 // columns holds the table's column widths: glyph, show, episodes, size,

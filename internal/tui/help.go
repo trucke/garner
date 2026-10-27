@@ -24,7 +24,8 @@ var everywhere = []string{
 	"j k", "move", "enter", "open",
 	"gg G", "top, bottom", "esc", "back",
 	"ctrl+d u", "half page", "A", "activity",
-	"?", "this help", "q", "quit, from the Library",
+	"P", "profiles", "?", "this help",
+	"q", "quit, from the Library",
 }
 
 // glyphs are the states every list shows, in pipeline order.

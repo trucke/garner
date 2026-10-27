@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,14 +23,20 @@ import (
 type recorder struct {
 	mu       sync.Mutex
 	requests []string
+	bodies   map[string]string // the last body sent to each request
 }
 
 func newRecorder(t *testing.T) (*recorder, *client.Client) {
 	t.Helper()
 	var rec recorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		rec.mu.Lock()
 		rec.requests = append(rec.requests, r.Method+" "+r.URL.RequestURI())
+		if rec.bodies == nil {
+			rec.bodies = map[string]string{}
+		}
+		rec.bodies[r.Method+" "+r.URL.RequestURI()] = string(body)
 		rec.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, "{}")
@@ -54,6 +61,13 @@ func (rec *recorder) made(method string) []string {
 		}
 	}
 	return made
+}
+
+// body is the last body sent with a request, such as "PUT /api/v1/profiles/3".
+func (rec *recorder) body(request string) string {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return rec.bodies[request]
 }
 
 // keyMsg builds the key press the interface would receive for a named key

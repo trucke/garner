@@ -279,8 +279,13 @@ resolution = ["1080p"]`, "", "German 1080p · dual audio preferred"},
 		{"nothing left", `audio = ["original"]
 resolution = ["1080p"]`, "", "nothing: the profile wants the show's original language, which TVDB does not name"},
 	} {
-		if got := fromText(tc.text, tc.original).Describe(); got != tc.want {
+		p := fromText(tc.text, tc.original)
+		if got := p.Describe(); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+		// Preferences is the same without the settings.
+		if want, _, _ := strings.Cut(tc.want, " · "); p.Preferences() != want {
+			t.Errorf("%s: preferences %q, want %q", tc.name, p.Preferences(), want)
 		}
 	}
 	p := fromText(`audio = ["de", "en"]

@@ -107,6 +107,15 @@ func (p Profile) Describe() string {
 	return s
 }
 
+// Preferences states the profile's tiers in order, such as "German 1080p
+// → German 720p", without the settings Describe adds.
+func (p Profile) Preferences() string {
+	if len(p.Tiers) == 0 {
+		return p.Describe()
+	}
+	return p.tierList()
+}
+
 // tierList names the tiers in order, such as "German 1080p → German 720p".
 func (p Profile) tierList() string {
 	tiers := make([]string, len(p.Tiers))

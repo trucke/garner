@@ -64,6 +64,14 @@ func (c *Client) SetProfile(ctx context.Context, id, profileID int64) (api.Serie
 	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]int64{"profile_id": profileID}, &d)
 }
 
+// SetType makes a show a TV show or an anime, api.TypeTV or api.TypeAnime:
+// how Garner reads episode numbers and which library folder takes new
+// files. Files already in the library stay where they are.
+func (c *Client) SetType(ctx context.Context, id int64, typ string) (api.SeriesDetail, error) {
+	var d api.SeriesDetail
+	return d, c.do(ctx, http.MethodPatch, "/api/v1/series/"+strconv.FormatInt(id, 10), map[string]string{"type": typ}, &d)
+}
+
 // SetMonitor changes which of a show's episodes the monitor gets.
 func (c *Client) SetMonitor(ctx context.Context, id int64, mode string) (api.SeriesDetail, error) {
 	var d api.SeriesDetail

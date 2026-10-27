@@ -89,7 +89,8 @@ func (s *Server) profileInfos(sr store.Series) []api.ProfileInfo {
 	out := make([]api.ProfileInfo, 0, len(s.profiles.order))
 	for _, id := range s.profiles.order {
 		p := s.profiles.byID[id]
-		out = append(out, api.ProfileInfo{ID: id, Name: p.Name, Rules: selection.FromProfile(p, original).Describe()})
+		applied := selection.FromProfile(p, original)
+		out = append(out, api.ProfileInfo{ID: id, Name: p.Name, Rules: applied.Describe(), Preferences: applied.Preferences()})
 	}
 	return out
 }

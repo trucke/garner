@@ -126,7 +126,8 @@ func (s *showScreen) update(msg tea.Msg) (screen, tea.Cmd) {
 		}
 	case eventMsg:
 		switch msg.Type {
-		case client.EventConnected, "search.finished", "series.updated":
+		case client.EventConnected, "search.finished", "series.updated", "profiles.updated":
+			// A changed profile changes the show's rules and its details page.
 			return s, s.reload()
 		case "download.updated":
 			var d api.Download

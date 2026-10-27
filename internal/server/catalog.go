@@ -200,7 +200,7 @@ func (s *Server) seriesDetail(w http.ResponseWriter, r *http.Request, id int64) 
 	detail := api.SeriesDetail{
 		SeriesData: d, Issues: catalog.Issues(d), Summary: summary, States: states, Best: profile.Best(),
 		Profile: profile.Name, Rules: profile.Describe(), Profiles: s.profileInfos(d.Series), LanguageName: catalog.LanguageName(d.Series.OriginalLanguage), LanguageNote: selection.OriginalNote(profile, original),
-		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(),
+		URL: catalog.SeriesURL(d.Series.Slug, d.Series.ID), MonitorOff: s.monitorOff(), TypeFolders: s.typeFolders(),
 	}
 	if folder, err := importer.ShowFolder(s.cfg.Library, d.Series); err == nil {
 		detail.Folder = folder
@@ -354,4 +354,17 @@ func seriesID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 func (s *Server) upstreamError(w http.ResponseWriter, what string, err error) {
 	s.log.Error(what, "err", err)
 	writeError(w, http.StatusBadGateway, err.Error())
+}
+
+// typeFolders maps each show type to its library folder, for the types
+// whose folder is set.
+func (s *Server) typeFolders() map[string]string {
+	out := map[string]string{}
+	if s.cfg.Library.TV != "" {
+		out[api.TypeTV] = s.cfg.Library.TV
+	}
+	if s.cfg.Library.Anime != "" {
+		out[api.TypeAnime] = s.cfg.Library.Anime
+	}
+	return out
 }

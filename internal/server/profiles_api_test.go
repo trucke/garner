@@ -43,7 +43,7 @@ func profileServer(t *testing.T) (*Server, *store.Store, func(method, path, body
 	}, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{cfg: &config.Config{}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
+	s := &Server{cfg: &config.Config{Library: config.Library{TV: "/media/tv"}}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
 	if err := s.loadProfiles(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -105,12 +105,21 @@ func TestProfileAPI(t *testing.T) {
 	}
 
 	// The show takes German; replacing German changes its rules at once.
+	// The show's details also offer every profile with its preferences
+	// for the show, and name the library folder of each type that has one.
 	rules := func() string {
 		t.Helper()
 		var d api.SeriesDetail
 		code, body := call(http.MethodPatch, "/api/v1/series/42", `{"monitor":"all"}`)
 		if json.Unmarshal([]byte(body), &d); code != http.StatusOK {
 			t.Fatalf("series: %d %s", code, body)
+		}
+		if i := slices.IndexFunc(d.Profiles, func(p api.ProfileInfo) bool { return p.ID == german.ID }); i < 0 ||
+			d.Profiles[i].Preferences+" · dual audio preferred" != d.Profiles[i].Rules {
+			t.Errorf("the profiles offered: %+v", d.Profiles)
+		}
+		if len(d.TypeFolders) != 1 || d.TypeFolders[api.TypeTV] != "/media/tv" {
+			t.Errorf("type folders: %v, want only tv", d.TypeFolders)
 		}
 		return d.Profile + ": " + d.Rules
 	}

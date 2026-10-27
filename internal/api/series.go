@@ -213,6 +213,10 @@ type SeriesDetail struct {
 	// Folder is where new files of the show go; URL is its TVDB page.
 	Folder string `json:"folder,omitempty"`
 	URL    string `json:"url"`
+	// TypeFolders maps TypeTV and TypeAnime to the library folders new
+	// files of each type go to, as the server sees them; only the folders
+	// that are set.
+	TypeFolders map[string]string `json:"type_folders"`
 	// Profile names the show's profile and Rules describes it; Profiles
 	// lists the profiles to choose from, with their rules for the show.
 	Profile  string        `json:"profile"`
@@ -266,11 +270,13 @@ type Renamed struct {
 	Notes []string `json:"notes"`
 }
 
-// ProfileInfo names a profile and its rules.
+// ProfileInfo names a profile and its rules for a show. Preferences is
+// the rules' list of preferences alone, best first.
 type ProfileInfo struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Rules string `json:"rules"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Rules       string `json:"rules"`
+	Preferences string `json:"preferences"`
 }
 
 // Issue is a problem with imported data that needs a review.

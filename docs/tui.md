@@ -20,7 +20,7 @@ Success and info messages, such as `✓ Added Harbor Precinct`, disappear after 
 
 ## Kinds of surface
 
-- **Full screen:** a place you navigate to and act from, such as Library, Show, Releases, Episode, Activity and About.
+- **Full screen:** a place you navigate to and act from, such as Library, Show, Releases, Episode, Activity, Profiles, the profile editor, Import and About.
 - **Framed pane:** a secondary block inside a screen, such as WHY under Releases. It has square corners in the border colour, an uppercase title in the subtle colour cut into the top edge (`┌─ WHY ───`), two cells of padding and the width of the table above it.
 - **Overlay:** a question or a quick lookup, such as delete show, cancel download, profile or Help. It is a rounded box in the centre, with everything behind it in the faded colour and its keys inside the box. The cursor starts on the safe choice. Overlays have no `y` or `n` shortcuts, and `esc` closes them.
 - **Bottom line:** keys, a message or a prompt. A screen never has a second status row.
@@ -66,7 +66,7 @@ Every screen lists its keys in a `help()` method, and the Help overlay (`?`) sho
 Some keys mean the same everywhere:
 
 - `j k` move, `gg G` jump to the top or bottom, `ctrl+d u` move by half a page.
-- `enter` opens, `esc` goes back, `A` opens Activity, `?` opens Help, `q` quits from the Library.
+- `enter` opens, `esc` goes back, `A` opens Activity, `P` opens Profiles, `?` opens Help, `q` quits from the Library.
 - `/` filters as you type in the bottom line; `enter` keeps the filter and `esc` clears it.
 - `s` sorts by the next column and `I` reverses the order.
 - `d` deletes and is never a navigation key. `j k` never leave a pane; `tab` moves between panes.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -111,5 +112,27 @@ func TestNoRedirects(t *testing.T) {
 	var serverErr *ServerError
 	if _, err := c.Status(context.Background()); !errors.As(err, &serverErr) || followed.Load() {
 		t.Fatalf("redirect: %v, followed %v", err, followed.Load())
+	}
+}
+
+// TestSetType checks that changing a show's type patches the show with
+// only its type, as the server expects.
+func TestSetType(t *testing.T) {
+	var got struct {
+		method, path, body string
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got.method, got.path, got.body = r.Method, r.URL.Path, string(b)
+		w.Write([]byte(`{"series":{"id":42,"type":"anime"}}`))
+	}))
+	defer srv.Close()
+	c, _ := New(connect.Code{URL: srv.URL, Token: "secret"})
+	d, err := c.SetType(context.Background(), 42, "anime")
+	if err != nil || d.Series.Type != "anime" {
+		t.Fatalf("SetType: %+v, %v", d.Series, err)
+	}
+	if got.method != http.MethodPatch || got.path != "/api/v1/series/42" || got.body != `{"type":"anime"}` {
+		t.Errorf("SetType sent %s %s %s", got.method, got.path, got.body)
 	}
 }

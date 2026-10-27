@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/trucke/garner/internal/api"
@@ -159,7 +160,8 @@ func (s *showDetailsScreen) key(key string) tea.Cmd {
 	}
 	switch key {
 	case "p":
-		s.overlay, s.choice = profileOverlay, max(0, slices.IndexFunc(d.Profiles, func(p api.ProfileInfo) bool { return p.ID == d.Series.ProfileID }))
+		// The cursor starts on the show's type: enter there changes nothing.
+		s.overlay, s.choice = profileOverlay, typeIndex(d.Series.Type)
 	case "m":
 		s.overlay, s.choice = monitorOverlay, max(0, monitorIndex(d.Series.Monitor))
 	case "d":
@@ -212,21 +214,36 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 			return detailChangedMsg{d, err, "Monitor: " + monitorLabel(mode)}
 		}
 	}
-	options := len(d.Profiles)
+	// The profile and type overlay: the two types, then the profiles.
+	options := len(showTypes) + len(d.Profiles)
 	switch key {
 	case "esc":
 		s.overlay = noOverlay
-	case "h", "left", "k", "up", "shift+tab":
+	case "k", "up", "shift+tab":
 		s.choice = max(0, s.choice-1)
-	case "l", "right", "j", "down", "tab":
+	case "j", "down", "tab":
 		s.choice = min(options-1, s.choice+1)
+	case "G":
+		s.choice = options - 1
+	case "P":
+		s.overlay = noOverlay
+		next := newProfiles(s.sess, s)
+		return func() tea.Msg { return switchMsg{next} }
 	case "enter":
-		overlay := s.overlay
 		s.overlay = noOverlay
 		cl, id := s.sess.client, s.show.id
 		switch {
-		case overlay == profileOverlay && s.choice < len(d.Profiles) && d.Profiles[s.choice].ID != d.Series.ProfileID:
-			profile := d.Profiles[s.choice]
+		case s.choice < len(showTypes) && showTypes[s.choice].typ != d.Series.Type:
+			t := showTypes[s.choice]
+			s.busy = "Changing the type…"
+			return func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				d, err := cl.SetType(ctx, id, t.typ)
+				return detailChangedMsg{d, err, "Type: " + t.label}
+			}
+		case s.choice >= len(showTypes) && s.choice-len(showTypes) < len(d.Profiles) && d.Profiles[s.choice-len(showTypes)].ID != d.Series.ProfileID:
+			profile := d.Profiles[s.choice-len(showTypes)]
 			s.busy = "Changing the profile…"
 			return func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -237,6 +254,20 @@ func (s *showDetailsScreen) overlayKey(key string) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// showType is a type a show can have, with what it means for the
+// numbering: on the details page, and in the overlay's row.
+type showType struct{ typ, label, numbering, means string }
+
+var showTypes = []showType{
+	{api.TypeTV, "TV", "season and episode numbers, S01E05", "season and episode numbers, S01E05"},
+	{api.TypeAnime, "Anime", "a bare number such as 101 is an absolute episode first", "101 is read as absolute episode 101 first"},
+}
+
+// typeIndex is a type's row in showTypes; an unknown type counts as TV.
+func typeIndex(typ string) int {
+	return max(0, slices.IndexFunc(showTypes, func(t showType) bool { return t.typ == typ }))
 }
 
 func (s *showDetailsScreen) view(width, height int) string {
@@ -251,13 +282,10 @@ func (s *showDetailsScreen) view(width, height int) string {
 		b.WriteString("   " + sMuted.Render("Loading "+s.name()+"…"))
 		return screenLayout(width, height, b.String(), keyBar("esc", "back"))
 	}
-	w := max(40, min(detailsWidth, width-6))
+	// The panes use the full width, so the preferences fit on one line.
+	w := max(40, min(width, designWidth)-6)
 	sr := d.Series
-	typ := "TV"
-	if sr.Type == api.TypeAnime {
-		typ = "Anime"
-	}
-	b.WriteString(titleBlock(sr.Name, sr.NameEng, sr.NameDeu, typ, sr.Year, sr.Status) + "\n")
+	b.WriteString(titleBlock(sr.Name, sr.NameEng, sr.NameDeu, showTypes[typeIndex(sr.Type)].label, sr.Year, sr.Status) + "\n")
 	b.WriteString(indent(frame("library", s.libraryLines(w-6), w), 3) + "\n")
 
 	tvdb := tvdbLines(seriesFacts(d), w-6)
@@ -288,6 +316,19 @@ func (s *showDetailsScreen) view(width, height int) string {
 func (s *showDetailsScreen) libraryLines(inner int) []string {
 	d := s.show.detail
 	var lines []string
+	t := showTypes[typeIndex(d.Series.Type)]
+	typeLine := sNormal.Render(t.label) + sMuted.Render(" · "+t.numbering)
+	if root := d.TypeFolders[t.typ]; root != "" {
+		typeLine += sMuted.Render(" · files under " + clean(root))
+	}
+	// Wrapped under itself, as field does; the line mixes two styles.
+	for i, l := range strings.Split(ansi.Wrap(typeLine, max(10, inner-labelWidth), ""), "\n") {
+		head := strings.Repeat(" ", labelWidth)
+		if i == 0 {
+			head = sSubtle.Render(pad("Type", labelWidth))
+		}
+		lines = append(lines, head+l)
+	}
 	lines = append(lines, field("Profile", d.Profile, sNormal, inner)...)
 	lines = append(lines, field("", clean(d.Rules), sMuted, inner)...)
 	lines = append(lines, field("Monitor", monitorLine(d.Series), sNormal, inner)...)
@@ -408,26 +449,52 @@ func deleteShow(cl *client.Client, id int64, keepFiles bool) tea.Cmd {
 	}
 }
 
+// profileLines is the profile and type overlay: the types with what each
+// means, then the profiles with their preferences for this show. The
+// show's own type and profile are in the text colour, the others subtle;
+// the cursor row has the select background.
 func (s *showDetailsScreen) profileLines() []string {
 	d := s.show.detail
-	lines := []string{sBold.Render("Profile for " + s.name()), ""}
-	nameWidth := 0
-	for _, p := range d.Profiles {
-		nameWidth = max(nameWidth, len(p.Name))
-	}
-	for i, p := range d.Profiles {
-		row := pad(p.Name, nameWidth) + "   " + clean(p.Rules)
-		if i == s.choice {
-			lines = append(lines, sNormal.Background(cSelect).Render(" "+row+" "))
-		} else {
-			lines = append(lines, sNormal.Render(" "+row+" "))
+	const nameWidth, typeWidth = 29, 8
+	width := 92
+	typeNote := func(t showType) string {
+		if root := d.TypeFolders[t.typ]; root != "" {
+			return t.means + " · new files under " + clean(root)
 		}
+		return t.means
+	}
+	for _, p := range d.Profiles {
+		width = max(width, 1+nameWidth+lipgloss.Width(clean(p.Preferences))+1)
+	}
+	for _, t := range showTypes {
+		width = max(width, 1+typeWidth+lipgloss.Width(typeNote(t))+1)
+	}
+	width = min(width, designWidth-8)
+	row := func(i int, current bool, label string, labelWidth int, note string) string {
+		st, noteSt := sSubtle, sMuted
+		if current {
+			st = sNormal
+		}
+		if i == s.choice {
+			st, noteSt = st.Background(cSelect), noteSt.Background(cSelect)
+		}
+		return st.Render(" "+pad(label, labelWidth)) + noteSt.Render(fit(note, width-1-labelWidth, false))
+	}
+	lines := []string{sBold.Render("Profile and type of " + s.name()), "", sSubtle.Render("Type")}
+	for i, t := range showTypes {
+		lines = append(lines, row(i, t.typ == d.Series.Type, t.label, typeWidth, typeNote(t)))
+	}
+	lines = append(lines, "", sSubtle.Render("Profile"))
+	for i, p := range d.Profiles {
+		lines = append(lines, row(len(showTypes)+i, p.ID == d.Series.ProfileID, clean(p.Name), nameWidth, clean(p.Preferences)))
 	}
 	return append(lines, "",
+		sMuted.Render("The type sets the numbering and the folder for new files;"),
+		sMuted.Render("files already in the library stay where they are."),
 		sMuted.Render("Changing the profile clears earlier search results;"),
 		sMuted.Render("the next search judges releases by the new rules."),
 		"",
-		keyBar("j k", "choose", "enter", "ok", "esc", "cancel"))
+		keyBar("j k", "choose", "enter", "ok", "P", "manage profiles", "esc", "cancel"))
 }
 
 func (s *showDetailsScreen) captures() bool {
@@ -436,7 +503,7 @@ func (s *showDetailsScreen) captures() bool {
 
 func (s *showDetailsScreen) help() (string, []string) {
 	return "Show details", []string{
-		"p", "change the profile", "m", "choose the episodes Garner gets",
+		"p", "change the profile or the type", "m", "choose the episodes Garner gets",
 		"r", "refresh from TVDB", "o", "open on TVDB",
 		"t", "take over the show's files in the library", "d", "delete the show",
 	}
@@ -449,7 +516,7 @@ func (s *showDetailsScreen) bottom() string {
 	case s.flash.text != "":
 		return s.flash.text
 	}
-	return keyBar("p", "change profile", "m", "monitor", "r", "refresh", "o", "open on TVDB", "t", "take over", "d", "delete show", "?", "help", "esc", "back")
+	return keyBar("p", "profile and type", "m", "monitor", "r", "refresh", "o", "open on TVDB", "t", "take over", "d", "delete", "?", "help", "esc", "back")
 }
 
 // titleBlock is the heading of a details page: the English name, the
