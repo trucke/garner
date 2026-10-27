@@ -40,6 +40,9 @@ if [ -n "$latest" ]; then
 fi
 
 printf 'Releasing %s (%s) as %s\n' "${commit:0:12}" "$(jj log -r "$commit" --no-graph -T 'description.first_line()')" "$version"
+# A retry tags the same version again, so a run of the version is ours
+# only if it is newer than every run before the push.
+before=$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId // 0')
 git tag -a "$version" -m "Garner $version" "$commit"
 git push --quiet origin "refs/tags/$version" || {
 	git tag -d "$version" >/dev/null
@@ -50,7 +53,7 @@ git push --quiet origin "refs/tags/$version" || {
 run=""
 for _ in $(seq 1 30); do
 	run=$(gh run list --workflow release.yml --limit 20 --json databaseId,headBranch \
-		--jq ".[] | select(.headBranch == \"$version\") | .databaseId" | head -1)
+		--jq ".[] | select(.headBranch == \"$version\" and .databaseId > $before) | .databaseId" | head -1)
 	[ -n "$run" ] && break
 	sleep 2
 done
