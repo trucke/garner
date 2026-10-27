@@ -138,6 +138,7 @@ var ignoredExact = set("END", "FiNAL")
 
 var languages = map[string]Language{
 	"german": "de", "deutsch": "de", "english": "en", "japanese": "ja", "spanish": "es", "castellano": "es",
+	"latino":  "es",
 	"italian": "it", "french": "fr", "turkish": "tr", "hindi": "hi", "korean": "ko", "chinese": "zh",
 	"russian": "ru", "portuguese": "pt", "polish": "pl", "dutch": "nl",
 	"ger": "de", "deu": "de", "eng": "en", "jpn": "ja", "jap": "ja", "ita": "it", "spa": "es", "esp": "es",
@@ -184,7 +185,7 @@ func (l Language) Name() string {
 
 var subtitleLanguages = map[string]Language{
 	"esub": "en", "esubs": "en", "engsub": "en", "engsubs": "en", "gersub": "de", "gersubs": "de", "vostfr": "fr",
-	"uksub": "en", "uksubs": "en", "nlsub": "nl", "nlsubs": "nl", "subfrench": "fr",
+	"uksub": "en", "uksubs": "en", "nlsub": "nl", "nlsubs": "nl", "subfrench": "fr", "ensubbed": "en",
 }
 
 var markers = map[string]Marker{

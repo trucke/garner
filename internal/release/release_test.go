@@ -283,6 +283,9 @@ var cases = []struct {
 		Series: "Example Show", Numbering: "S01E01", Resolution: "480p", Source: "webdl", Group: "GRP"}},
 	{"Example.Saga.S02.German.DL.TrueHD.1080p.BluRay.10bit.x265-Mochi-sama", summary{
 		Series: "Example Saga", Numbering: "S02", Resolution: "1080p", Source: "bluray", Group: "Mochi-sama", Audio: "de,original"}},
+	// After a year, a language an ordinary word follows names something.
+	{"Harbor.Rally.2026.Spanish.Grand.Prix.Race.1080p.WEB.h264-GRP", summary{
+		Series: "Harbor Rally", Resolution: "1080p", Source: "web", Year: "2026", Group: "GRP"}},
 }
 
 func TestParse(t *testing.T) {

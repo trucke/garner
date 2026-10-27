@@ -611,7 +611,9 @@ func (p *parser) languageBracket(i int) {
 }
 
 // languageRun reads consecutive languages. A following Sub or Subbed makes
-// them subtitle languages. Two-letter codes alone are too ambiguous to count.
+// them subtitle languages. Two-letter codes alone are too ambiguous to count,
+// and so are languages an ordinary word follows: after a year they name
+// things, as in "2026.Spanish.Grand.Prix".
 func (p *parser) languageRun(i int) {
 	j, strong := i, false
 	for j < len(p.toks) && (j == i || !p.used[j]) && (p.toks[j].kind == kLanguage || p.toks[j].kind == kLangCode) {
@@ -626,13 +628,19 @@ func (p *parser) languageRun(i int) {
 		p.used[j] = true
 	case j < len(p.toks) && p.toks[j].kind == kDubWord:
 		p.used[j] = true
-	case !strong:
+	case !strong, p.wordAt(j):
 		return
 	}
 	for k := i; k < j; k++ {
 		t := p.toks[k]
 		*target = append(*target, Claim[Language]{t.lang, Span{t.start, t.end}})
 	}
+}
+
+// wordAt reports whether token i is an ordinary word of a name, as "Grand"
+// after "2026.Spanish" is, rather than a tag or the release group.
+func (p *parser) wordAt(i int) bool {
+	return i < len(p.toks) && p.toks[i].kind == kWord && p.toks[i].dash == noDash
 }
 
 func (p *parser) next(i int, k kind) bool {
