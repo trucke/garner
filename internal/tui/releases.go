@@ -438,7 +438,7 @@ func (cols releaseCols) fixed() int {
 
 func (cols releaseCols) head() string {
 	head := func(t string, w int, right bool) string { return sSubtle.Render(fit(t, w, right)) + "   " }
-	line := "   " + " " + "   " + head("Release", cols.name, false) + head("Tier", tierWidth, false)
+	line := "   " + " " + "   " + head("Release", cols.name, false) + head("Preference", tierWidth, false)
 	if cols.audio > 0 {
 		line += head("Audio", cols.audio, false)
 	}

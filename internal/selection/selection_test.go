@@ -58,7 +58,7 @@ var evaluateTests = []struct {
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP", nil, Reject, "", "no German audio named"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.Subbed.1080p.WEB-GRP", nil, Reject, "", "no German audio named"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.iTALiAN.MULTi.1080p.WEB-GRP", nil, Reject, "", "audio is Italian, not German"},
-	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.2160p.WEB-GRP", nil, Reject, "", "2160p is reserved for favourites"},
+	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.2160p.WEB-GRP", nil, Reject, "", "Garner does not take 2160p yet"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.480p.WEB-GRP", nil, Reject, "", "below 720p"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E02.German.1080p.WEB-GRP", nil, Reject, "", "holds S01E02, not S01E01"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP", []string{"German", "en-US"}, Accept, "German 1080p", "as the indexer reports"},
@@ -70,7 +70,7 @@ var evaluateTests = []struct {
 	// A name without languages is in the show's original language.
 	{english, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP", nil, Accept, "English 1080p", "English audio assumed"},
 	{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", nil, Reject, "", "no English audio named"},
-	{german1080, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.720p.WEB-GRP", nil, Reject, "", "720p is not among the profile's tiers: German 1080p"},
+	{german1080, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.720p.WEB-GRP", nil, Reject, "", "720p is not among the profile's preferences: German 1080p"},
 	{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", []string{"English", "Japanese"}, Accept, "English 1080p", "dual audio: English and Japanese"},
 
 	// Anime
@@ -223,7 +223,7 @@ func TestUpgrade(t *testing.T) {
 		if e.Verdict != tc.verdict {
 			t.Errorf("%s over %q: %s %q, want %s", tc.name, tc.have, e.Verdict, e.Reasons, tc.verdict)
 		}
-		if e.Verdict == Reject && e.Reasons[0] != "the library has "+tc.have+" already; only a better tier replaces it" {
+		if e.Verdict == Reject && e.Reasons[0] != "the library has "+tc.have+" already; only a release that meets a better preference replaces it" {
 			t.Errorf("%s: reasons %q", tc.name, e.Reasons)
 		}
 	}

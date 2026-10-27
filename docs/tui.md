@@ -52,7 +52,7 @@ The palette is in `style.go`:
 | border | `#3D3D47` | rules and frames |
 | select | `#242037` | cursor row |
 | mint | `#75B39C` | keys in the key bar (bold), success |
-| amber | `#F79926` | work in progress, needs you, tiers below the best |
+| amber | `#F79926` | work in progress, needs you, files below the profile's first preference |
 | red | `#F54D47` | failures, offline |
 | iris | `#9BA0E3` | links, underlined |
 | faded | `#3A3A44` | everything behind an overlay |

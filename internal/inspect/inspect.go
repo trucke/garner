@@ -150,7 +150,7 @@ func Check(p Probe, e Expect) api.FileCheck {
 		case class < 720:
 			r.Problems = append(r.Problems, fmt.Sprintf("the video is %s, below 720p", r.Resolution))
 		case class >= 2160 && e.Resolution < 2160:
-			r.Problems = append(r.Problems, fmt.Sprintf("the video is %s; 2160p is reserved for favourites", r.Resolution))
+			r.Problems = append(r.Problems, fmt.Sprintf("the video is %s; Garner does not take 2160p yet", r.Resolution))
 		case e.Resolution >= 1080 && class < 1080:
 			r.Problems = append(r.Problems, fmt.Sprintf("the video is %s, but the release claimed %s", r.Resolution, e.Resolution))
 		}

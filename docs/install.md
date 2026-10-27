@@ -44,8 +44,7 @@ The examples assume these folders on the server. Adjust them to your setup:
 
    To use your own certificate or a reverse proxy instead, follow the comments in the `[server]` section.
 4. Set the addresses of Prowlarr, SABnzbd and Jellyfin. When SABnzbd or Jellyfin see the media under other paths than Garner does, map them with `paths`, for example `paths = { "/data/usenet" = "/srv/media/usenet" }`.
-5. To accept other languages than the built-in German, set the profiles' tiers, as in [Choose which releases Garner accepts](../README.md#choose-which-releases-garner-accepts).
-6. Write the secrets to `/etc/garner/garner.env`:
+5. Write the secrets to `/etc/garner/garner.env`:
 
    ```bash
    PROWLARR_API_KEY=...
@@ -55,7 +54,7 @@ The examples assume these folders on the server. Adjust them to your setup:
 
    Garner's image brings its own TheTVDB key. To use a key of your own, add `TVDB_API_KEY`, and `TVDB_PIN` if your key needs a subscriber PIN.
 
-7. Make the user who runs the container the owner of both files, and let only that user read `garner.env`:
+6. Make the user who runs the container the owner of both files, and let only that user read `garner.env`:
 
    ```bash
    sudo chown "$USER": /etc/garner/garner.toml /etc/garner/garner.env
@@ -115,6 +114,7 @@ To start Garner with the server, run the container from a systemd unit, such as 
 2. Install `garner` on that device as the [README](../README.md#get-started) describes, then run `garner`.
 3. Paste the connection code. The library opens.
 4. Press `?`, then `a`, to open the About screen. It shows whether Prowlarr, SABnzbd, Jellyfin and TheTVDB answer, and why not when one of them does not.
+5. Press `P` to see the profiles. Garner starts with Original language, which wants each show in its original audio. To download in another language, press `a` to start a profile from a shipped one, such as German or English, then `u` to make it the profile for new shows. [Choose which releases Garner accepts](../README.md#choose-which-releases-garner-accepts) says more.
 
 `garnerd token list` lists the tokens, and `garnerd token revoke <device>` disconnects a device.
 

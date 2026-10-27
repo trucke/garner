@@ -301,7 +301,7 @@ func judge(ctx Context, r Release) Evaluation {
 	case state == release.Missing:
 		fallbacks = append(fallbacks, "resolution not named; a last resort, checked after download")
 	case res >= 2160:
-		rejects = append(rejects, "2160p is reserved for favourites")
+		rejects = append(rejects, "2160p; Garner does not take 2160p yet")
 	case res < 720:
 		rejects = append(rejects, fmt.Sprintf("%s is below 720p", res))
 	}
@@ -318,7 +318,7 @@ func judge(ctx Context, r Release) Evaluation {
 		switch {
 		case tier < 0 && slices.ContainsFunc(audio, ctx.Profile.Has):
 			// The language fits, but no tier in it has this resolution.
-			rejects = append(rejects, fmt.Sprintf("%s is not among the profile's tiers: %s", res, ctx.Profile.tierList()))
+			rejects = append(rejects, fmt.Sprintf("%s is not among the profile's preferences: %s", res, ctx.Profile.tierList()))
 		case tier < 0 && e.rank.assumed:
 			rejects = append(rejects, fmt.Sprintf("no %s audio named", ctx.Profile.Wanted()))
 		case tier < 0:
@@ -329,13 +329,13 @@ func judge(ctx Context, r Release) Evaluation {
 		}
 		e.rank.tier = tier
 		if state != release.Unambiguous {
-			info = append(info, fmt.Sprintf("%s audio fits; the resolution decides the tier", ctx.Profile.Tiers[tier].Language.Name()))
+			info = append(info, fmt.Sprintf("%s audio fits; the resolution decides which preference it meets", ctx.Profile.Tiers[tier].Language.Name()))
 		} else if res >= 720 && res < 2160 && len(rejects) == 0 {
 			e.Tier = ctx.Profile.Tiers[tier].String()
 			if tier == 0 {
-				info = append(info, "meets "+e.Tier+", the best tier")
+				info = append(info, "meets "+e.Tier+", your 1st preference")
 			} else {
-				info = append(info, fmt.Sprintf("meets %s; %s would be better", e.Tier, ctx.Profile.Tiers[0]))
+				info = append(info, fmt.Sprintf("meets %s, your %s preference; %s would be better", e.Tier, ordinal(tier+1), ctx.Profile.Tiers[0]))
 			}
 		}
 		if l := ctx.Profile.Tiers[tier].Language; l != ctx.Original && slices.Contains(audio, ctx.Original) {
@@ -355,7 +355,7 @@ func judge(ctx Context, r Release) Evaluation {
 	if limit, ok := largeAt[res]; ok && state == release.Unambiguous && len(rejects) == 0 && r.Size > 0 && r.Runtime >= time.Minute {
 		if perMinute := r.Size / 1e6 / int64(r.Runtime/time.Minute); perMinute > limit {
 			e.rank.large = true
-			notes = append(notes, fmt.Sprintf("large for %s: %d MB per minute, more than %d; listed after smaller releases of its tier", res, perMinute, limit))
+			notes = append(notes, fmt.Sprintf("large for %s: %d MB per minute, more than %d; listed after smaller releases that meet the same preference", res, perMinute, limit))
 		}
 	}
 
@@ -368,7 +368,7 @@ func judge(ctx Context, r Release) Evaluation {
 	// A last resort's tier is the best its audio allows, so it is rejected
 	// only when even that is not better.
 	if ctx.Have != "" && len(rejects) == 0 && e.rank.tier >= TierRank(ctx.Profile, ctx.Have) {
-		rejects = append(rejects, fmt.Sprintf("the library has %s already; only a better tier replaces it", ctx.Have))
+		rejects = append(rejects, fmt.Sprintf("the library has %s already; only a release that meets a better preference replaces it", ctx.Have))
 	}
 
 	switch {
@@ -583,6 +583,21 @@ func languageList(ls []release.Language) string {
 		return names[0]
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// ordinal writes 1 as "1st", 2 as "2nd" and so on.
+func ordinal(n int) string {
+	suffix := "th"
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+	case n%10 == 1:
+		suffix = "st"
+	case n%10 == 2:
+		suffix = "nd"
+	case n%10 == 3:
+		suffix = "rd"
+	}
+	return fmt.Sprintf("%d%s", n, suffix)
 }
 
 func compareBool(a, b bool) int {

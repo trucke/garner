@@ -97,11 +97,13 @@ The fixed seeds were chosen so that, together, every event changes something, a 
 
 | Folder | Holds |
 | --- | --- |
-| `cmd/garnerd` | The server's commands: `serve`, `token`, `backup`, `status` |
-| `cmd/garner` | The terminal interface's entry point |
+| `cmd/garnerd` | The server's commands: `serve`, `token`, `backup`, `status`, `profile` |
+| `cmd/garner` | The terminal interface's entry point and `garner profile check` |
 | `internal/release` | Reading release names: episodes, resolution, source, languages |
 | `internal/match` | Matching a release to a show's episodes, including scene and absolute numbering |
-| `internal/selection` | Profiles, verdicts with their reasons, and ranking |
+| `internal/profile` | The profile format: reading, checking and writing profiles, and the shipped ones; no server code, so the terminal interface uses it too |
+| `internal/selection` | A profile applied to a show, verdicts with their reasons, and ranking |
+| `internal/testprofiles` | For tests only: the rules of the profiles from before profiles moved into the database |
 | `internal/search`, `internal/download`, `internal/importer`, `internal/monitor` | Searching through Prowlarr, downloading with SABnzbd, checking and importing files, and the monitor |
 | `internal/catalog` | Show data from TheTVDB and TheXEM, with reviewed corrections in `corrections.toml` |
 | `internal/store` | The database, its migrations and the `sqlc` queries |

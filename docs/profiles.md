@@ -51,6 +51,19 @@ Garner downloads the release in the best preference it finds and rejects release
 
 For each show, `original` becomes the show's original language. When that language is also in the list, Garner keeps only its first place: under `audio = ["original", "en"]`, an English show has the preferences English 1080p and English 720p.
 
+## Manage profiles in Garner
+
+Press `P` on any screen of the terminal interface to see the profiles: each with its preferences, how many shows use it and whether new TV or new anime shows get it. On that screen:
+
+- `a` creates a profile: empty, or from one of yours or a shipped one, which then needs a name of its own.
+- `e` or `enter` opens a profile in the editor. `enter` there saves; the shows that use the profile follow the new settings.
+- `i` imports a profile: paste its text, or type an https link to it. The terminal interface fetches the link itself; the server never does. Before saving, Garner shows the profile and, when one of that name exists, what would change.
+- `x` exports a profile to a file in a folder you choose. Garner does not overwrite a file without asking.
+- `u` makes a profile the one that new TV shows, new anime shows or both get.
+- `d` deletes a profile. Garner keeps a profile that shows use or that new shows get, and names them.
+
+To give a show another profile or type, press `p` on its details page.
+
 ## Check a profile
 
 Garner checks every profile before it uses one, and lists every problem with the key it concerns and what would be right, for example `priority: "audio first" is not allowed; use audio or resolution`. It also warns about a setting that has no effect, such as `priority = "resolution"` with a single language.

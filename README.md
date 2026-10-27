@@ -4,7 +4,7 @@ Garner manages TV shows and anime for a self-hosted media library. It finds rele
 
 ![The library in Garner's terminal interface](docs/screenshot.png)
 
-- **Watches your shows.** The monitor searches for new episodes, or every missing one, and downloads the best release that fits the show's rules. With upgrades on, it replaces a file below the best tier, such as 720p, when a better release turns up.
+- **Watches your shows.** The monitor searches for new episodes, or every missing one, and downloads the best release that fits the show's rules. When the show's profile wants upgrades, it replaces a file below the first preference, such as 720p, when a better release turns up.
 - **Explains every decision.** Every release in a search gets a verdict and the reasons for it: which episode it holds, which language and resolution it has and why it ranks where it does.
 - **Checks files before they reach the library.** FFprobe confirms the audio language, resolution and runtime of each file. Jellyfin then has to identify the file as the intended episode.
 - **Handles anime numbering.** Scene numbering and absolute episode numbers come from [TheXEM](https://thexem.info), so releases of long-running anime match the right episodes.
@@ -39,26 +39,15 @@ Garner gets show and episode data from TheTVDB with its own key, which the relea
 
 ## Choose which releases Garner accepts
 
-Every show has a profile: `tv`, or `anime`, which also matches anime's episode numbering. A profile lists its tiers, the acceptable audio language and resolution pairs, best first. The built-in profiles want German audio:
+Every show has a profile that says which releases Garner accepts for it: the audio languages and resolutions, best first, called its preferences, and a few settings. A new installation starts with the profile Original language, which wants each show in its original audio, 1080p before 720p. Garner ships four more to start from: German; German, English fallback; English; and Original, English dub.
 
-| Profile | Built-in tiers |
-| --- | --- |
-| `tv` | German 1080p, German 720p; releases with German and the original audio rank first |
-| `anime` | German 1080p, German 720p, English 1080p, English 720p |
+To manage the profiles, press `P` in the terminal interface. There you create a profile, start one from a shipped one, change one, import one from a link or pasted text, export one to a file, and choose the profile that new TV and new anime shows get. To give a show another profile, press `p` on its details page. [Profiles](docs/profiles.md) describes the format, so you can share profiles and use the ones others wrote.
 
-To change them, set the tiers in `garner.toml`. For English audio:
+Every show also has a type, TV or anime. Anime reads a bare number such as 101 as an absolute episode number first, and the files of anime shows go to `library.anime`. Garner sets the type from TheTVDB's genres; `p` on the details page changes it too.
 
-```toml
-[profiles.tv]
-tiers = ["en 1080p", "en 720p"]
+A release that names no language counts as the show's original language. The file check after download confirms the language.
 
-[profiles.anime]
-tiers = ["en 1080p", "en 720p"]
-```
-
-A release that names no language counts as the show's original language. The file check after download confirms the language. `garner.example.toml` describes every setting.
-
-Some rules apply under every profile: Garner never downloads a remux or a 2160p release on its own, ranks releases of one tier by size, completeness, source and age, and checks each video before importing it. [How Garner chooses releases](docs/releases.md) lists them all.
+Some rules apply under every profile: Garner never downloads a remux or a 2160p release on its own, ranks the releases that meet the same preference by size, completeness, source and age, and checks each video before importing it. [How Garner chooses releases](docs/releases.md) lists them all.
 
 ## Files in the library
 
@@ -71,7 +60,7 @@ When you add a show, Garner looks for the show's video files before the monitor 
 - Garner's folder for the show, such as `Harbor.Precinct.Night.Shift.2013.[tvdbid-42]`
 - every folder that Jellyfin holds the show in, found by the show's TVDB ID, whatever the folder is called
 
-Garner takes over a file when its name clearly names episodes that have no file yet. FFprobe reads the file's audio languages and resolution, which give the file its tier, as for a download. A file in a tier the profile does not accept, such as English audio under the built-in `tv` profile, ranks below every tier, so an upgrade replaces it. Of two files for one episode, Garner takes the one in the better tier, then the larger one. The terminal interface lists the files that Garner left alone, with the reason. To look again, for example after copying files into the library by hand, press `t` on the show's details page.
+Garner takes over a file when its name clearly names episodes that have no file yet. FFprobe reads the file's audio languages and resolution, which say which preference of the profile the file meets, as for a download. A file that meets none, such as English audio under the German profile, ranks below every preference, so an upgrade replaces it. Of two files for one episode, Garner takes the one that meets the better preference, then the larger one. The terminal interface lists the files that Garner left alone, with the reason. To look again, for example after copying files into the library by hand, press `t` on the show's details page.
 
 Garner reaches Jellyfin's folders only through `jellyfin.paths` in `garner.toml`. Map every folder that Jellyfin's libraries use, including the folders of a library from before Garner, and mount each one into Garner's container at the mapped path. When no mapping covers a folder, the terminal interface names the folder, and Garner looks only in its own folder.
 
