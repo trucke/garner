@@ -38,6 +38,8 @@ The stack listens on `127.0.0.1` only. Downloads, the library, the settings and 
 - `mise run devstack down` stops them and keeps the data.
 - `mise run devstack reset` deletes everything in `~/garner-dev` and builds the stack again. Stop Garner first.
 
+Keep one-off files from testing, such as a copy of the dev data or a second `garner.toml` on another port, in `~/garner-dev/scratch`; Podman sees that folder too. `mise run clean` deletes it, along with the build output in `bin/` and `dist/`, and keeps the stack and its data. Stop Garner first.
+
 `mise run devstack up` removes any Usenet server or indexer that is not in `devstack.toml`, so change them there rather than in SABnzbd or Prowlarr. Some providers and indexers limit how many places may use an account at once; give the stack an account, or an allowance, that nothing else needs.
 
 ## Check your changes
