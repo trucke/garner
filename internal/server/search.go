@@ -18,8 +18,8 @@ import (
 
 func (s *Server) setupSearch() error {
 	p := s.cfg.Prowlarr
-	if p.URL == "" || p.APIKey == "" {
-		s.log.Warn("Prowlarr is not configured (prowlarr.url and PROWLARR_API_KEY); searching is unavailable")
+	if m := s.prowlarrMissing(); len(m) > 0 {
+		s.log.Warn("Prowlarr is not set up: " + lacking(m) + "; searching is unavailable")
 		return nil
 	}
 	// Prowlarr waits for slow indexers, so allow more than a usual request.
@@ -56,7 +56,7 @@ func (s *Server) searchRoutes(mux router) {
 
 func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {
 	if s.search == nil {
-		writeError(w, http.StatusServiceUnavailable, "searching needs Prowlarr: set prowlarr.url and PROWLARR_API_KEY")
+		writeError(w, http.StatusServiceUnavailable, "searching needs Prowlarr: "+lacking(s.prowlarrMissing()))
 		return
 	}
 	id, ok := episodeID(w, r)
@@ -79,7 +79,7 @@ func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {
 // handleSearchSeason searches a whole season for packs.
 func (s *Server) handleSearchSeason(w http.ResponseWriter, r *http.Request) {
 	if s.search == nil {
-		writeError(w, http.StatusServiceUnavailable, "searching needs Prowlarr: set prowlarr.url and PROWLARR_API_KEY")
+		writeError(w, http.StatusServiceUnavailable, "searching needs Prowlarr: "+lacking(s.prowlarrMissing()))
 		return
 	}
 	id, ok := seriesID(w, r)
@@ -109,7 +109,7 @@ func (s *Server) handleSearchSeason(w http.ResponseWriter, r *http.Request) {
 // follow the search, which runs after the ones asked for before.
 func (s *Server) handleSearchShow(w http.ResponseWriter, r *http.Request) {
 	if s.monitor == nil {
-		writeError(w, http.StatusServiceUnavailable, "searching and downloading need Prowlarr and SABnzbd: set prowlarr.url, sabnzbd.url and their API keys")
+		writeError(w, http.StatusServiceUnavailable, "searching and downloading need Prowlarr and SABnzbd: "+lacking(append(s.prowlarrMissing(), s.sabnzbdMissing()...)))
 		return
 	}
 	id, ok := seriesID(w, r)

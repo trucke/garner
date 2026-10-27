@@ -15,8 +15,8 @@ import (
 	"github.com/trucke/garner/internal/store"
 )
 
-// TestServices reports services that are not set up as such, without
-// asking them, and sums up the library.
+// TestServices reports services that are not set up as such, naming what
+// is missing and without asking them, and sums up the library.
 func TestServices(t *testing.T) {
 	ctx := context.Background()
 	log := slog.New(slog.DiscardHandler)
@@ -32,7 +32,12 @@ func TestServices(t *testing.T) {
 	}, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{cfg: &config.Config{Library: config.Library{TV: "/media/tv"}}, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
+	// Prowlarr has its url but no key; Jellyfin has both but is not used,
+	// as this server has no imports.
+	cfg := &config.Config{Library: config.Library{TV: "/media/tv"},
+		Prowlarr: config.Service{URL: "http://prowlarr:9696"},
+		Jellyfin: config.Service{URL: "http://jellyfin:8096", APIKey: "k"}}
+	s := &Server{cfg: cfg, store: st, log: log, events: newBroker(), tlsMode: TLSOff}
 	srv := httptest.NewServer(s.Routes())
 	defer srv.Close()
 	token, _ := st.CreateToken(ctx, "test")
@@ -50,9 +55,15 @@ func TestServices(t *testing.T) {
 	if len(got.Services) != 4 {
 		t.Fatalf("services = %+v", got.Services)
 	}
+	want := map[string]string{
+		"TVDB":     "not set up: TVDB_API_KEY is missing, and this build has no built-in key",
+		"Prowlarr": "not set up: PROWLARR_API_KEY is missing",
+		"SABnzbd":  "not set up: sabnzbd.url and SABNZBD_API_KEY are missing",
+		"Jellyfin": "not used: importing is unavailable, and Garner's log says why",
+	}
 	for _, c := range got.Services {
-		if c.OK || c.Detail == "" {
-			t.Errorf("%s without setup: %+v", c.Name, c)
+		if c.OK || c.Detail != want[c.Name] {
+			t.Errorf("%s = %+v, want detail %q", c.Name, c, want[c.Name])
 		}
 	}
 	if l := got.Library; l.Shows != 1 || l.Types["tv"] != 1 || l.Aired != 1 || len(l.Folders) != 1 {

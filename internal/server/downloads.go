@@ -14,8 +14,8 @@ import (
 
 func (s *Server) setupDownloads() error {
 	c := s.cfg.SABnzbd
-	if c.URL == "" || c.APIKey == "" {
-		s.log.Warn("SABnzbd is not configured (sabnzbd.url and SABNZBD_API_KEY); downloading is unavailable")
+	if m := s.sabnzbdMissing(); len(m) > 0 {
+		s.log.Warn("SABnzbd is not set up: " + lacking(m) + "; downloading is unavailable")
 		return nil
 	}
 	client, err := s.httpClient(c.CAFile, 30*time.Second)
@@ -138,7 +138,7 @@ func (s *Server) handleAcknowledgeDownload(w http.ResponseWriter, r *http.Reques
 func (s *Server) needDownloads(h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.downloads == nil {
-			writeError(w, http.StatusServiceUnavailable, "downloading needs SABnzbd: set sabnzbd.url and SABNZBD_API_KEY")
+			writeError(w, http.StatusServiceUnavailable, "downloading needs SABnzbd: "+lacking(s.sabnzbdMissing()))
 			return
 		}
 		h(w, r)

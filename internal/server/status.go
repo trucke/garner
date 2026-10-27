@@ -11,6 +11,7 @@ import (
 
 	"github.com/trucke/garner/internal/api"
 	"github.com/trucke/garner/internal/catalog"
+	"github.com/trucke/garner/internal/config"
 	"github.com/trucke/garner/internal/store"
 )
 
@@ -83,7 +84,7 @@ func (s *Server) checkTVDB(ctx context.Context) api.ServiceCheck {
 func (s *Server) checkProwlarr(ctx context.Context) api.ServiceCheck {
 	c := api.ServiceCheck{Name: "Prowlarr"}
 	if s.prowlarr == nil {
-		c.Detail = "not set up: prowlarr.url and PROWLARR_API_KEY"
+		c.Detail = "not set up: " + lacking(s.prowlarrMissing())
 		return c
 	}
 	indexers, err := s.prowlarr.Indexers(ctx)
@@ -105,7 +106,7 @@ func (s *Server) checkProwlarr(ctx context.Context) api.ServiceCheck {
 func (s *Server) checkSABnzbd(ctx context.Context) api.ServiceCheck {
 	c := api.ServiceCheck{Name: "SABnzbd"}
 	if s.sabnzbd == nil {
-		c.Detail = "not set up: sabnzbd.url and SABNZBD_API_KEY"
+		c.Detail = "not set up: " + lacking(s.sabnzbdMissing())
 		return c
 	}
 	q, err := s.sabnzbd.State(ctx)
@@ -125,7 +126,10 @@ func (s *Server) checkSABnzbd(ctx context.Context) api.ServiceCheck {
 func (s *Server) checkJellyfin(ctx context.Context) api.ServiceCheck {
 	c := api.ServiceCheck{Name: "Jellyfin"}
 	if s.jellyfin == nil {
-		c.Detail = "not set up: jellyfin.url and JELLYFIN_API_KEY"
+		c.Detail = "not used: importing is unavailable, and Garner's log says why"
+		if m := s.jellyfinMissing(); len(m) > 0 {
+			c.Detail = "not set up: " + lacking(m)
+		}
 		return c
 	}
 	version, shows, err := s.jellyfin.Info(ctx)
@@ -135,6 +139,44 @@ func (s *Server) checkJellyfin(ctx context.Context) api.ServiceCheck {
 	}
 	c.OK, c.Detail = true, fmt.Sprintf("%s · %s in its libraries", version, count(shows, "show"))
 	return c
+}
+
+// missing names the settings a service lacks: its url in garner.toml, its
+// API key or both. Garner sets up Prowlarr, SABnzbd and Jellyfin only
+// with both.
+func missing(c config.Service, section, key string) []string {
+	var m []string
+	if c.URL == "" {
+		m = append(m, section+".url")
+	}
+	if c.APIKey == "" {
+		m = append(m, key)
+	}
+	return m
+}
+
+func (s *Server) prowlarrMissing() []string {
+	return missing(s.cfg.Prowlarr, "prowlarr", "PROWLARR_API_KEY")
+}
+
+func (s *Server) sabnzbdMissing() []string {
+	return missing(s.cfg.SABnzbd.Service, "sabnzbd", "SABNZBD_API_KEY")
+}
+
+func (s *Server) jellyfinMissing() []string {
+	return missing(s.cfg.Jellyfin, "jellyfin", "JELLYFIN_API_KEY")
+}
+
+// lacking says which settings are missing, such as "PROWLARR_API_KEY is
+// missing".
+func lacking(names []string) string {
+	switch len(names) {
+	case 0:
+		return "nothing is missing"
+	case 1:
+		return names[0] + " is missing"
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1] + " are missing"
 }
 
 func count(n int, noun string) string {

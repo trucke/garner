@@ -35,15 +35,16 @@ func (s *Server) setupImports() error {
 		prober = p
 	}
 	var jf *jellyfin.Client
-	if j := s.cfg.Jellyfin; j.URL != "" && j.APIKey != "" {
+	if m := s.jellyfinMissing(); len(m) > 0 {
+		s.log.Warn("Jellyfin is not set up: " + lacking(m) + "; imports are not confirmed")
+	} else {
+		j := s.cfg.Jellyfin
 		client, err := s.httpClient(j.CAFile, 30*time.Second)
 		if err != nil {
 			return err
 		}
 		jf = jellyfin.New(j.URL, j.APIKey.Value(), client)
 		s.jellyfin = jf
-	} else {
-		s.log.Warn("Jellyfin is not configured (jellyfin.url and JELLYFIN_API_KEY); imports are not confirmed")
 	}
 	var rules func(int64) map[release.Service]string
 	if s.catalog != nil {
