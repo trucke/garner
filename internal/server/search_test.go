@@ -117,6 +117,14 @@ func TestSearchAndDownload(t *testing.T) {
 			sr.Candidates[0].Title != "Harbor.Precinct.S01E01.German.DL.1080p.BluRay-GRP" || sr.Candidates[2].Verdict != "reject" {
 			t.Errorf("%s search = %+v", method, sr)
 		}
+		// The source comes from the name, also for a stored search.
+		for _, c := range sr.Candidates {
+			want := map[string]string{"Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP": "WEB", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP": "WEB-DL",
+				"Harbor.Precinct.S01E01.German.DL.1080p.BluRay-GRP": "BluRay"}[c.Title]
+			if c.Source != want {
+				t.Errorf("%s search: %s has source %q, want %q", method, c.Title, c.Source, want)
+			}
+		}
 		// The reasons that decided a verdict are told apart from facts.
 		if c := sr.Candidates; c[0].Decisive < 1 || c[0].Decisive > len(c[0].Reasons) || c[2].Decisive < 1 || c[2].Decisive > len(c[2].Reasons) {
 			t.Errorf("%s search: decisive reasons %d and %d of %v", method, c[0].Decisive, c[2].Decisive, c[2].Reasons)
@@ -167,8 +175,8 @@ func TestSearchAndDownload(t *testing.T) {
 		!strings.HasSuffix(season.Candidates[0].Title, "-PACK") || !strings.HasPrefix(season.Summary, "Found 1 matching season pack") {
 		t.Fatalf("season search: %d %s", code, body)
 	}
-	if !slices.Contains(season.Candidates[0].Reasons, "holds every missing episode of the season") {
-		t.Errorf("pack reasons: %q", season.Candidates[0].Reasons)
+	if !slices.Contains(season.Candidates[0].Reasons, "holds every missing episode of the season") || season.Candidates[0].Source != "BluRay" {
+		t.Errorf("pack reasons %q, source %q", season.Candidates[0].Reasons, season.Candidates[0].Source)
 	}
 	code, body = call(http.MethodPost, fmt.Sprintf("/api/v1/season-candidates/%d/download", season.Candidates[0].ID), "")
 	var pack store.Download

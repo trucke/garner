@@ -344,20 +344,17 @@ func (s *releasesScreen) progressLines() string {
 
 // Column widths of the releases table, except the release name.
 const (
-	tierWidth  = len("English 1080p")
-	triedWidth = len("downloading")
-	audioWidth = len("DE, EN, JA")
-	sizeWidth  = len("99.9 GB")
-	ageWidth   = len("11mo")
+	tierWidth   = len("English 1080p")
+	triedWidth  = len("downloading")
+	sourceWidth = len("WEBRip")
+	audioWidth  = len("DE, EN, JA")
+	sizeWidth   = len("99.9 GB")
+	ageWidth    = len("11mo")
 )
 
 func (s *releasesScreen) table(width, height int) string {
 	all := s.candidates()
-	indexerWidth := len("Indexer")
-	for _, c := range all {
-		indexerWidth = max(indexerWidth, min(16, ansi.StringWidth(clean(c.Indexer))))
-	}
-	cols := releaseCols{audio: audioWidth, age: ageWidth, indexer: indexerWidth}
+	cols := releaseCols{source: sourceWidth, audio: audioWidth, age: ageWidth}
 	// Tried appears once Garner tried one of the postings.
 	if slices.ContainsFunc(all, func(c api.Candidate) bool { return c.Attempt != nil }) {
 		cols.tried = triedWidth
@@ -366,8 +363,8 @@ func (s *releasesScreen) table(width, height int) string {
 	for _, c := range all {
 		longest = max(longest, ansi.StringWidth(clean(c.Title)))
 	}
-	// Narrow: the names keep room; Indexer, then Age, Audio and Tried go.
-	for _, col := range []*int{&cols.indexer, &cols.age, &cols.audio, &cols.tried} {
+	// Narrow: the names keep room; Age, then Audio, Source and Tried go.
+	for _, col := range []*int{&cols.age, &cols.audio, &cols.source, &cols.tried} {
 		if width-cols.fixed() >= min(longest, minReleaseName) {
 			break
 		}
@@ -423,18 +420,18 @@ func (s *releasesScreen) table(width, height int) string {
 // minReleaseName is the room release names keep on a narrow terminal.
 const minReleaseName = 30
 
-// releaseCols sizes the releases table; Tried, Audio, Age and Indexer are
+// releaseCols sizes the releases table; Tried, Source, Audio and Age are
 // 0 when left out, on a narrow terminal or, for Tried, when Garner tried
-// none of the releases.
+// none of the releases. The indexer shows in WHY.
 type releaseCols struct {
-	name, tried, audio, age, indexer int
+	name, tried, source, audio, age int
 }
 
 // fixed is the table's width without the release name: margins, gaps and
 // the columns shown.
 func (cols releaseCols) fixed() int {
 	n := 3 + 1 + 3 + 3 + tierWidth + 3 + sizeWidth + 3
-	for _, w := range []int{cols.tried, cols.audio, cols.age, cols.indexer} {
+	for _, w := range []int{cols.tried, cols.source, cols.audio, cols.age} {
 		if w > 0 {
 			n += w + 3
 		}
@@ -448,15 +445,15 @@ func (cols releaseCols) head() string {
 	if cols.tried > 0 {
 		line += head("Tried", cols.tried, false)
 	}
+	if cols.source > 0 {
+		line += head("Source", cols.source, false)
+	}
 	if cols.audio > 0 {
 		line += head("Audio", cols.audio, false)
 	}
 	line += head("Size", sizeWidth, true)
 	if cols.age > 0 {
 		line += head("Age", cols.age, true)
-	}
-	if cols.indexer > 0 {
-		line += head("Indexer", cols.indexer, false)
 	}
 	return strings.TrimRight(line, " ")
 }
@@ -490,6 +487,9 @@ func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 		label, style := attemptLabel(c.Attempt)
 		line += bg(style).Render(fit(label, cols.tried, false)) + gap
 	}
+	if cols.source > 0 {
+		line += bg(text).Render(fit(clean(c.Source), cols.source, false)) + gap
+	}
 	if cols.audio > 0 {
 		line += bg(text).Render(fit(strings.Join(audio, ", "), cols.audio, false)) + gap
 	}
@@ -497,24 +497,27 @@ func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 	if cols.age > 0 {
 		line += gap + bg(text).Render(fit(age, cols.age, true))
 	}
-	if cols.indexer > 0 {
-		line += gap + bg(text).Render(fit(clean(c.Indexer), cols.indexer, false))
-	}
 	return fill(line, width, bg)
 }
 
-// why explains the release under the cursor: its full name, when it was
-// uploaded, which tells postings of the same name apart, and its page at
-// the indexer, what came of Garner's last try of it, then the reasons that
-// decided its verdict, then the facts.
+// why explains the release under the cursor: its full name, its indexer
+// and when it was uploaded, which tells postings of the same name apart,
+// and its page at the indexer, what came of Garner's last try of it, then
+// the reasons that decided its verdict, then the facts.
 func (s *releasesScreen) why(w int) []string {
 	c, ok := s.cursor()
 	if !ok {
 		return nil
 	}
 	lines := []string{sNormal.Render(clean(c.Title))}
+	facts := []string{fact("Indexer", clean(c.Indexer))}
 	if c.Published != nil {
-		lines = append(lines, fact("Uploaded", c.Published.Local().Format("2 Jan 2006, 15:04")))
+		facts = append(facts, fact("Uploaded", c.Published.Local().Format("2 Jan 2006, 15:04")))
+	}
+	if joined := strings.Join(facts, "      "); lipgloss.Width(joined) <= w-8 {
+		lines = append(lines, joined)
+	} else {
+		lines = append(lines, facts...)
 	}
 	if c.Page != "" {
 		// A link where the terminal supports them; cut, it still opens the page.

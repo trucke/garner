@@ -21,7 +21,7 @@ func TestReleasesTried(t *testing.T) {
 		Updated: time.Now()}
 	s := &releasesScreen{sess: &session{}, back: &showScreen{name: "Harbor Precinct"}, search: &api.Search{Candidates: []api.Candidate{
 		{ID: 1, Rank: 1, Indexer: "One", Title: title, Size: 725e6, Published: &first, Verdict: "accept", Tier: "German 1080p",
-			Audio: []string{"de"}, Reasons: []string{"German audio"}, Attempt: failed, Page: "https://indexer.invalid/details/a1"},
+			Audio: []string{"de"}, Reasons: []string{"German audio"}, Attempt: failed, Page: "https://indexer.invalid/details/a1", Source: "WEB-DL"},
 		{ID: 2, Rank: 2, Indexer: "One", Title: title, Size: 698e6, Published: &second, Verdict: "accept", Tier: "German 1080p",
 			Audio: []string{"de"}, Reasons: []string{"German audio"}},
 	}}, selected: 1}
@@ -45,8 +45,12 @@ func TestReleasesTried(t *testing.T) {
 	if !strings.Contains(head, "Tried") || !strings.Contains(tried, "failed") || strings.Contains(untried, "failed") {
 		t.Errorf("rows do not tell the tried posting apart:\n%s\n%s\n%s", head, tried, untried)
 	}
+	// The source has a column; the indexer moved to WHY.
+	if !strings.Contains(head, "Source") || strings.Contains(head, "Indexer") || !strings.Contains(tried, "WEB-DL") || strings.Contains(tried, " One") {
+		t.Errorf("columns:\n%s\n%s", head, tried)
+	}
 	why := strings.Join(lines, "\n")
-	for _, want := range []string{"Uploaded  10 Sep 2021, 04:26", "Page  https://indexer.invalid/details/a1", "Failed", "102 articles missing",
+	for _, want := range []string{"Indexer  One      Uploaded  10 Sep 2021, 04:26", "Page  https://indexer.invalid/details/a1", "Failed", "102 articles missing",
 		"does not pick this upload again"} {
 		if !strings.Contains(why, want) {
 			t.Errorf("the selected posting's details lack %q:\n%s", want, why)

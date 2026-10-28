@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -73,6 +74,7 @@ func (s *Server) handleSearchEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sr.NextRetry = s.nextSearch(r.Context(), id)
+	withSources(&sr)
 	writeJSON(w, http.StatusOK, sr)
 }
 
@@ -100,6 +102,7 @@ func (s *Server) handleSearchSeason(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "search season", err)
 		return
 	}
+	withSources(&sr)
 	writeJSON(w, http.StatusOK, sr)
 }
 
@@ -157,7 +160,24 @@ func (s *Server) handleGetSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sr.NextRetry = s.nextSearch(r.Context(), id)
+	withSources(&sr)
 	writeJSON(w, http.StatusOK, sr)
+}
+
+// sourceNames are the sources as releases write them.
+var sourceNames = map[release.Source]string{
+	release.BluRay: "BluRay", release.WebDL: "WEB-DL", release.WebRip: "WEBRip", release.Web: "WEB",
+	release.HDTV: "HDTV", release.TV: "TV", release.DVD: "DVD", release.HDRip: "HDRip",
+}
+
+// withSources names each candidate's source as its name gives it. It is read
+// from the name when sent, so searches stored before show it too.
+func withSources(sr *api.Search) {
+	for i := range sr.Candidates {
+		if src := release.Parse(sr.Candidates[i].Title).Source; len(src) > 0 {
+			sr.Candidates[i].Source = cmp.Or(sourceNames[src[0].Value], string(src[0].Value))
+		}
+	}
 }
 
 // nextSearch is when the monitor searches an episode again; nil when it

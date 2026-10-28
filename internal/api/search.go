@@ -43,7 +43,10 @@ type Candidate struct {
 	Posting string `json:"-"`
 	// Page is the release's page at the indexer, for people to open; empty
 	// when unknown or when its address could hold credentials.
-	Page      string     `json:"page,omitempty"`
+	Page string `json:"page,omitempty"`
+	// Source is where the release comes from as its name says, such as
+	// BluRay or WEB-DL; empty when the name does not say.
+	Source    string     `json:"source,omitempty"`
 	Size      int64      `json:"size"`
 	Published *time.Time `json:"published,omitempty"`
 	Grabs     int        `json:"grabs"`
