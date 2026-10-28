@@ -16,7 +16,8 @@ concurrency: release
 jobs:
   release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The image takes a few minutes, notarizing each macOS binary up to 20.
+    timeout-minutes: 75
     permissions:
       contents: write # the GitHub release
       packages: write # the image and its build cache, and removing old ones
@@ -55,6 +56,22 @@ jobs:
             echo "::error::the repository secret TVDB_API_KEY is missing"
             exit 1
           }
+
+      # Without them, GoReleaser would leave the macOS binaries unsigned.
+      - name: Check that the Apple signing secrets are set
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            [ -n "${!name}" ] || {
+              echo "::error::the repository secret $name is missing"
+              exit 1
+            }
+          done
 
       # latest names the newest version on main, which the Compose example
       # pulls; a rerun of an older release leaves it alone.
@@ -114,6 +131,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           IMAGE_REF: ${{ env.IMAGE }}:${{ env.TAG }}@${{ steps.image.outputs.digest }}
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
 
       # The container registry is free for now; keeping twenty versions
       # (images and their build cache) stays small if that changes. The
