@@ -434,9 +434,17 @@ func TestRetryable(t *testing.T) {
 		"Repair failed, not enough repair blocks (12 short)":              true,
 		"Unpacking failed, archive requires a password":                   true,
 		"URL Fetching failed; Server returned 404":                        true,
-		"Unpacking failed, write error or disk is full?":                  false,
-		"Post-processing was aborted":                                     false,
-		"Something SABnzbd has never said":                                false,
+		// SABnzbd 5.1's wording for a release that is broken or locked.
+		"Aborted, encryption detected":                                           true,
+		"Unpacking failed, unable to find Harbor.Precinct.S01E01.part02.rar":     true,
+		"Invalid par2 files or invalid PAR2 parameters, cannot verify or repair": true,
+		"RAR files failed to verify":                                             true,
+		"Unpacking failed, write error or disk is full?":                         false,
+		"Unpacking failed, file too large for filesystem (FAT?)":                 false,
+		"Post-processing was aborted":                                            false,
+		// Par2 itself failed to run; another release would not help.
+		"Repairing failed, [Errno 2] No such file or directory: 'par2'": false,
+		"Something SABnzbd has never said":                              false,
 	} {
 		if got := retryable(msg); got != want {
 			t.Errorf("retryable(%q) = %v, want %v", msg, got, want)

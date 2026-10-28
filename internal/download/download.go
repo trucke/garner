@@ -474,11 +474,12 @@ func summary(d store.Download) string {
 // full disk; replacing the release cannot help.
 var systemFailures = []string{"disk", "no space", "permission", "write error", "post-processing was aborted", "cannot create"}
 
-// releaseFailures are failures of this release that another one may avoid.
+// releaseFailures are failures of this release that another one may avoid,
+// in SABnzbd's words: incomplete, damaged, locked or unwanted contents.
 var releaseFailures = []string{
 	"cannot be completed", "missing articles", "not on your server", "repair failed", "not enough repair blocks",
-	"requires a password", "encrypted", "unwanted extension", "fetching failed", "fetch failed", "empty nzb",
-	"unusable nzb", "invalid nzb", "crc error",
+	"requires a password", "encrypted", "encryption detected", "unwanted extension", "fetching failed", "fetch failed",
+	"empty nzb", "unusable nzb", "invalid nzb", "crc error", "unable to find", "invalid par2", "failed to verify",
 }
 
 // retryable reports whether another release may succeed where this one

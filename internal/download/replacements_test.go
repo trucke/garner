@@ -200,7 +200,8 @@ func TestReplaceKeepsTheChoice(t *testing.T) {
 	if err != nil || len(attempts) != 2 || attempts[0].Posting != "second" || !attempts[0].Manual {
 		t.Fatalf("submitted %q; want the other upload of the chosen release, still the user's choice", fake.submitted())
 	}
-	fake.finish(attempts[0].JobID, "Failed", "Aborted, cannot be completed", "")
+	// SABnzbd's words for a locked upload, as seen in production.
+	fake.finish(attempts[0].JobID, "Failed", "Aborted, encryption detected", "")
 	svc.Poll(ctx)
 	if got := fake.submitted(); len(got) != 2 {
 		t.Errorf("submitted %q after both uploads of the choice failed; want Garner to stop", got)

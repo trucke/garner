@@ -79,7 +79,7 @@ When Garner cannot read SABnzbd's folder or FFprobe does not run, the import sto
 
 ## After a failed download
 
-Garner downloads another release when a download fails in a way another release may avoid: the file check rejected it, or SABnzbd reports a problem of the release itself, such as missing articles, a failed repair or a password. A failure of the disk, of permissions or one Garner does not recognize starts no other release.
+Garner downloads another release when a download fails in a way another release may avoid: the file check rejected it, or SABnzbd reports a problem of the release itself, such as missing articles, a failed repair, a missing part of the archive, a password or encryption. A failure of the disk, of permissions or one Garner does not recognize starts no other release.
 
 - Garner deletes the rejected download's folder when it can tell that the folder belongs to that download.
 - It takes the best release left in the latest results of the same search, the episode's or the season's, and skips uploads that failed or were cancelled before. Another upload of the failed release is not skipped.
