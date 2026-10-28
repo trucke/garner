@@ -45,6 +45,9 @@ unformatted=$(gofmt -l cmd internal tools)
 step "Vet"
 go vet ./... || fail "vet found problems"
 
+step "Shell scripts"
+shellcheck install.sh tools/*.sh || fail "shellcheck found problems"
+
 step "Generated database code"
 (cd internal/store && sqlc diff) || fail "internal/store/query does not match the SQL; run mise run generate"
 

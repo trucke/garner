@@ -27,10 +27,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Go and sqlc in the versions mise.toml pins.
+      # Go, sqlc and shellcheck in the versions mise.toml pins.
       - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
         with:
-          install_args: go sqlc
+          install_args: go sqlc shellcheck
 
       - name: Read the build settings from the Dockerfile and mise.toml
         id: settings
@@ -52,6 +52,9 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      - name: Shell scripts
+        run: shellcheck install.sh tools/*.sh
 
       - name: Generated database code
         working-directory: internal/store
@@ -93,7 +96,6 @@ jobs:
       # The script users pipe into bash, against the newest release.
       - name: Install script
         run: |
-          shellcheck install.sh tools/*.sh
           GARNER_INSTALL_DIR="$RUNNER_TEMP/bin" bash install.sh
           "$RUNNER_TEMP/bin/garner" --version
 
