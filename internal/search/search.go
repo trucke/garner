@@ -310,7 +310,7 @@ type hit struct {
 
 func (h hit) candidate() store.Candidate {
 	c := store.Candidate{
-		Indexer: h.indexer, Title: h.result.Title, Link: h.result.Link, Posting: h.result.Posting, Size: h.result.Size, Grabs: h.result.Grabs,
+		Indexer: h.indexer, Title: h.result.Title, Link: h.result.Link, Posting: h.result.Posting, Page: h.result.Page, Size: h.result.Size, Grabs: h.result.Grabs,
 		Verdict: string(h.eval.Verdict), Tier: h.eval.Tier, Reasons: h.eval.Reasons, Decisive: h.eval.Decisive,
 		Episodes: h.episodes,
 	}

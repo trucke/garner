@@ -18,8 +18,9 @@ RETURNING id;
 INSERT INTO search_indexers (search_id, indexer, results, error) VALUES (?, ?, ?, ?);
 
 -- name: InsertCandidate :exec
-INSERT INTO candidates (search_id, rank, indexer, title, link, posting, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO candidates (search_id, rank, indexer, title, link, posting, page, size, published, grabs, verdict, tier, audio, reasons, episodes,
+    decisive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSearch :one
 SELECT * FROM searches WHERE episode_id = ?;
@@ -29,7 +30,7 @@ SELECT indexer, results, error FROM search_indexers WHERE search_id = ? ORDER BY
 
 -- Candidates without their download links.
 -- name: ListCandidates :many
-SELECT id, rank, indexer, title, posting, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
+SELECT id, rank, indexer, title, posting, page, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank;
 
 -- name: DeleteSeasonSearch :exec
@@ -43,16 +44,16 @@ INSERT INTO season_searches (series_id, season, searched_at, outcome, summary, i
 RETURNING id;
 
 -- name: InsertSeasonCandidate :exec
-INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, posting, size, published, verdict, tier, audio,
-    reasons, decisive, episodes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, posting, page, size, published, verdict, tier,
+    audio, reasons, decisive, episodes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetSeasonSearch :one
 SELECT * FROM season_searches WHERE series_id = ? AND season = ?;
 
 -- Candidates without their download links.
 -- name: ListSeasonCandidates :many
-SELECT id, episode_id, rank, indexer, title, posting, size, published, verdict, tier, audio, reasons, decisive, episodes
+SELECT id, episode_id, rank, indexer, title, posting, page, size, published, verdict, tier, audio, reasons, decisive, episodes
 FROM season_candidates WHERE search_id = ? ORDER BY rank;
 
 -- name: GetSeasonCandidateLink :one

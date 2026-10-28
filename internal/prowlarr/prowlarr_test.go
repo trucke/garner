@@ -118,3 +118,46 @@ func TestPostings(t *testing.T) {
 		t.Error("without an ID, the name, size and time do not stand in")
 	}
 }
+
+// TestPages keeps the address of a release's page at the indexer only when
+// it cannot hold credentials, taking the comments link, else the ID.
+func TestPages(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://indexer.invalid/details/a1b2":                       "https://indexer.invalid/details/a1b2",
+		"https://indexer.invalid/geekseek.php?guid=a1b2":             "https://indexer.invalid/geekseek.php?guid=a1b2",
+		"https://indexer.invalid/details/a1b2#comments":              "https://indexer.invalid/details/a1b2",
+		"https://indexer.invalid/details/a1b2?apikey=SECRET":         "",
+		"https://indexer.invalid/getnzb/a1b2.nzb?i=7&r=SECRET":       "",
+		"https://indexer.invalid/details?id=a1b2&token=SECRET":       "",
+		"https://user:SECRET@indexer.invalid/details/a1b2":           "",
+		"https://indexer.invalid/api/SECRET/details/a1b2":            "",
+		"https://indexer.invalid/details/a1b2/SECRET":                "",
+		"https://indexer.invalid/SECRET/geekseek.php?guid=a1b2":      "",
+		"https://indexer.invalid/details/a1b2?guid=a1b2":             "",
+		"https://indexer.invalid/geekseek.php?guid=a1b2&guid=SECRET": "",
+		"ftp://indexer.invalid/details/a1b2":                         "",
+		"a1b2c3":                                                     "",
+		"":                                                           "",
+	} {
+		if got := page(raw); got != want {
+			t.Errorf("page(%q) = %q, want %q", raw, got, want)
+		}
+	}
+	it := func(guid, comments string) string {
+		x := strings.Replace(item("Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP"), "<title>", guid+comments+"<title>", 1)
+		results, err := parseFeed([]byte(feedOf(x)), 1)
+		if err != nil || len(results) != 1 {
+			t.Fatalf("parse: %v, %d results", err, len(results))
+		}
+		return results[0].Page
+	}
+	if got := it("<guid>https://indexer.invalid/details/g1</guid>", "<comments>https://indexer.invalid/details/c1#comments</comments>"); got != "https://indexer.invalid/details/c1" {
+		t.Errorf("page from the comments link = %q", got)
+	}
+	if got := it("<guid>https://indexer.invalid/details/g1</guid>", ""); got != "https://indexer.invalid/details/g1" {
+		t.Errorf("page from the ID = %q", got)
+	}
+	if got := it("<guid>https://indexer.invalid/details/g1</guid>", "<comments>https://indexer.invalid/api/SECRET/c1</comments>"); got != "https://indexer.invalid/details/g1" {
+		t.Errorf("page from the ID after an unusable comments link = %q", got)
+	}
+}

@@ -42,6 +42,7 @@ type Candidate struct {
 	Episodes  string
 	Decisive  int64
 	Posting   string
+	Page      string
 }
 
 type Download struct {
@@ -173,6 +174,7 @@ type SeasonCandidate struct {
 	Decisive  int64
 	Episodes  string
 	Posting   string
+	Page      string
 }
 
 type SeasonSearch struct {

@@ -14,7 +14,7 @@ Every release gets one of three verdicts, with the reasons for it. The terminal 
 
 Indexers often list a release more than once under the same name: separate uploads of it, which can differ in whether they still download completely. Garner tells them apart by the indexer's ID for each upload. On its own, it never picks an upload that already failed or was cancelled for the episode, not even after a new search, but another upload of the same release stays in the running. You can still choose any of them.
 
-In the terminal interface, the Tried column of the releases list shows what came of each upload Garner tried, and WHY shows when the selected one was uploaded.
+In the terminal interface, the Tried column of the releases list shows what came of each upload Garner tried, and WHY shows when the selected one was uploaded and links to its page at the indexer, where other users may have commented on it.
 
 ## Always rejected
 

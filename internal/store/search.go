@@ -58,7 +58,7 @@ func (s *Store) SaveSearch(ctx context.Context, sr Search) error {
 			published = sql.NullInt64{Int64: c.Published.Unix(), Valid: true}
 		}
 		if err := q.InsertCandidate(ctx, query.InsertCandidateParams{
-			SearchID: id, Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link, Posting: c.Posting, Size: c.Size,
+			SearchID: id, Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link, Posting: c.Posting, Page: c.Page, Size: c.Size,
 			Published: published, Grabs: int64(c.Grabs), Verdict: c.Verdict, Tier: c.Tier,
 			Audio: strings.Join(c.Audio, ","), Reasons: string(reasons), Episodes: string(episodes),
 			Decisive: int64(c.Decisive),
@@ -100,7 +100,7 @@ func (s *Store) LoadSearch(ctx context.Context, episodeID int64) (Search, error)
 	}
 	for _, c := range candidates {
 		cand := Candidate{
-			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Size: c.Size, Grabs: int(c.Grabs),
+			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Page: c.Page, Size: c.Size, Grabs: int(c.Grabs),
 			Verdict: c.Verdict, Tier: c.Tier, Audio: []string{}, Reasons: []string{}, Episodes: []int64{},
 			Decisive: int(c.Decisive),
 		}

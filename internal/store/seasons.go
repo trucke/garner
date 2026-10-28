@@ -45,7 +45,7 @@ func (s *Store) SaveSeasonSearch(ctx context.Context, seriesID int64, sr Search,
 		}
 		if err := q.InsertSeasonCandidate(ctx, query.InsertSeasonCandidateParams{
 			SearchID: id, EpisodeID: owners[i], Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link,
-			Posting: c.Posting, Size: c.Size, Published: published, Verdict: c.Verdict, Tier: c.Tier, Audio: strings.Join(c.Audio, ","),
+			Posting: c.Posting, Page: c.Page, Size: c.Size, Published: published, Verdict: c.Verdict, Tier: c.Tier, Audio: strings.Join(c.Audio, ","),
 			Reasons: string(reasons), Decisive: int64(c.Decisive), Episodes: string(episodes),
 		}); err != nil {
 			return fmt.Errorf("save season candidate %q: %w", c.Title, err)
@@ -76,7 +76,7 @@ func (s *Store) LoadSeasonSearch(ctx context.Context, seriesID int64, season int
 	downloads := map[int64][]Download{} // by episode
 	for _, c := range rows {
 		cand := Candidate{
-			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Size: c.Size, Verdict: c.Verdict,
+			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Page: c.Page, Size: c.Size, Verdict: c.Verdict,
 			Tier: c.Tier, Audio: []string{}, Reasons: []string{}, Episodes: []int64{}, Decisive: int(c.Decisive),
 		}
 		if c.Published.Valid {

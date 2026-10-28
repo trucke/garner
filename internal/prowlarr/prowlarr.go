@@ -4,6 +4,7 @@
 package prowlarr
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -109,7 +110,10 @@ type Result struct {
 	// fingerprint of the indexer and its ID for the posting. The link
 	// cannot, as Prowlarr encrypts it anew for every search; the ID can be
 	// a link with credentials, so only its fingerprint leaves this package.
-	Posting   string
+	Posting string
+	// Page is the release's page at the indexer, where people may have
+	// commented on it; empty when its address could hold credentials.
+	Page      string
 	Size      int64
 	Published time.Time
 	Grabs     int
@@ -195,12 +199,13 @@ func (c *Client) wait(ctx context.Context) error {
 
 type feed struct {
 	Items []struct {
-		Title   string `xml:"title"`
-		GUID    string `xml:"guid"`
-		Link    string `xml:"link"`
-		Size    int64  `xml:"size"`
-		PubDate string `xml:"pubDate"`
-		Attrs   []struct {
+		Title    string `xml:"title"`
+		GUID     string `xml:"guid"`
+		Comments string `xml:"comments"`
+		Link     string `xml:"link"`
+		Size     int64  `xml:"size"`
+		PubDate  string `xml:"pubDate"`
+		Attrs    []struct {
 			Name  string `xml:"name,attr"`
 			Value string `xml:"value,attr"`
 		} `xml:"http://www.newznab.com/DTD/2010/feeds/attributes/ attr"`
@@ -239,11 +244,36 @@ func parseFeed(body []byte, indexer int) ([]Result, error) {
 		}
 		sum := sha256.Sum256(fmt.Appendf(nil, "%d\n%s", indexer, id))
 		r.Posting = hex.EncodeToString(sum[:8])
+		r.Page = cmp.Or(page(strings.TrimSpace(it.Comments)), page(id))
 		if r.Title != "" && r.Link != "" {
 			out = append(out, r)
 		}
 	}
 	return out, nil
+}
+
+// page returns the address of a release's page at the indexer, or "" when
+// it could hold credentials, in its query or its path. Only the two shapes
+// indexers give these pages pass: /details/<id>, and a single page that
+// only the release's guid or id names, as in /geekseek.php?guid=<id>.
+func page(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
+		return ""
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return ""
+	}
+	path := strings.Split(strings.Trim(u.Path, "/"), "/")
+	switch {
+	case len(query) == 0 && len(path) == 2 && path[0] == "details" && path[1] != "":
+	case len(query) == 1 && len(path) == 1 && path[0] != "" && (len(query["guid"]) == 1 || len(query["id"]) == 1):
+	default:
+		return ""
+	}
+	u.Fragment, u.RawFragment = "", ""
+	return u.String()
 }
 
 func newznabError(body []byte) string {

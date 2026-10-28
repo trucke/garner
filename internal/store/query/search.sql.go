@@ -125,8 +125,9 @@ func (q *Queries) GetSeasonSearch(ctx context.Context, arg GetSeasonSearchParams
 }
 
 const insertCandidate = `-- name: InsertCandidate :exec
-INSERT INTO candidates (search_id, rank, indexer, title, link, posting, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO candidates (search_id, rank, indexer, title, link, posting, page, size, published, grabs, verdict, tier, audio, reasons, episodes,
+    decisive)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertCandidateParams struct {
@@ -136,6 +137,7 @@ type InsertCandidateParams struct {
 	Title     string
 	Link      string
 	Posting   string
+	Page      string
 	Size      int64
 	Published sql.NullInt64
 	Grabs     int64
@@ -155,6 +157,7 @@ func (q *Queries) InsertCandidate(ctx context.Context, arg InsertCandidateParams
 		arg.Title,
 		arg.Link,
 		arg.Posting,
+		arg.Page,
 		arg.Size,
 		arg.Published,
 		arg.Grabs,
@@ -216,9 +219,9 @@ func (q *Queries) InsertSearchIndexer(ctx context.Context, arg InsertSearchIndex
 }
 
 const insertSeasonCandidate = `-- name: InsertSeasonCandidate :exec
-INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, posting, size, published, verdict, tier, audio,
-    reasons, decisive, episodes)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO season_candidates (search_id, episode_id, rank, indexer, title, link, posting, page, size, published, verdict, tier,
+    audio, reasons, decisive, episodes)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSeasonCandidateParams struct {
@@ -229,6 +232,7 @@ type InsertSeasonCandidateParams struct {
 	Title     string
 	Link      string
 	Posting   string
+	Page      string
 	Size      int64
 	Published sql.NullInt64
 	Verdict   string
@@ -248,6 +252,7 @@ func (q *Queries) InsertSeasonCandidate(ctx context.Context, arg InsertSeasonCan
 		arg.Title,
 		arg.Link,
 		arg.Posting,
+		arg.Page,
 		arg.Size,
 		arg.Published,
 		arg.Verdict,
@@ -289,7 +294,7 @@ func (q *Queries) InsertSeasonSearch(ctx context.Context, arg InsertSeasonSearch
 }
 
 const listCandidates = `-- name: ListCandidates :many
-SELECT id, rank, indexer, title, posting, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
+SELECT id, rank, indexer, title, posting, page, size, published, grabs, verdict, tier, audio, reasons, episodes, decisive
 FROM candidates WHERE search_id = ? ORDER BY rank
 `
 
@@ -299,6 +304,7 @@ type ListCandidatesRow struct {
 	Indexer   string
 	Title     string
 	Posting   string
+	Page      string
 	Size      int64
 	Published sql.NullInt64
 	Grabs     int64
@@ -326,6 +332,7 @@ func (q *Queries) ListCandidates(ctx context.Context, searchID int64) ([]ListCan
 			&i.Indexer,
 			&i.Title,
 			&i.Posting,
+			&i.Page,
 			&i.Size,
 			&i.Published,
 			&i.Grabs,
@@ -442,7 +449,7 @@ func (q *Queries) ListSeasonCandidateLinks(ctx context.Context, arg ListSeasonCa
 }
 
 const listSeasonCandidates = `-- name: ListSeasonCandidates :many
-SELECT id, episode_id, rank, indexer, title, posting, size, published, verdict, tier, audio, reasons, decisive, episodes
+SELECT id, episode_id, rank, indexer, title, posting, page, size, published, verdict, tier, audio, reasons, decisive, episodes
 FROM season_candidates WHERE search_id = ? ORDER BY rank
 `
 
@@ -453,6 +460,7 @@ type ListSeasonCandidatesRow struct {
 	Indexer   string
 	Title     string
 	Posting   string
+	Page      string
 	Size      int64
 	Published sql.NullInt64
 	Verdict   string
@@ -480,6 +488,7 @@ func (q *Queries) ListSeasonCandidates(ctx context.Context, searchID int64) ([]L
 			&i.Indexer,
 			&i.Title,
 			&i.Posting,
+			&i.Page,
 			&i.Size,
 			&i.Published,
 			&i.Verdict,

@@ -273,7 +273,8 @@ func TestSameTitlePostings(t *testing.T) {
 			size           int64
 		}{{german, "p1", 725}, {german, "p2", 698}, {show + "1080p.WEB-GRP", "p3", 900}} {
 			candidates = append(candidates, store.Candidate{Indexer: "One", Title: c.title, Posting: c.posting, Size: c.size,
-				Verdict: "accept", Link: "http://prowlarr/1/download?apikey=SECRET&" + links + c.posting})
+				Verdict: "accept", Link: "http://prowlarr/1/download?apikey=SECRET&" + links + c.posting,
+				Page: "https://indexer.invalid/details/" + c.posting})
 		}
 		if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now().Add(-time.Minute), Outcome: "found",
 			Candidates: candidates}); err != nil {
@@ -293,6 +294,9 @@ func TestSameTitlePostings(t *testing.T) {
 	sr, err := st.LoadSearch(ctx, 101)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sr.Candidates[1].Page != "https://indexer.invalid/details/p2" {
+		t.Errorf("page = %q after saving the search", sr.Candidates[1].Page)
 	}
 	var states []string
 	for _, c := range sr.Candidates {

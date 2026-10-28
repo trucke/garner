@@ -40,7 +40,10 @@ type Candidate struct {
 	// Posting tells NZB postings of the same release apart: a fingerprint
 	// of the indexer's ID for this one. Empty for candidates stored before
 	// Garner kept it. Never sent to clients.
-	Posting   string     `json:"-"`
+	Posting string `json:"-"`
+	// Page is the release's page at the indexer, for people to open; empty
+	// when unknown or when its address could hold credentials.
+	Page      string     `json:"page,omitempty"`
 	Size      int64      `json:"size"`
 	Published *time.Time `json:"published,omitempty"`
 	Grabs     int        `json:"grabs"`

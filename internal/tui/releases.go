@@ -503,10 +503,10 @@ func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 	return fill(line, width, bg)
 }
 
-// why explains the release under the cursor: its full name and when it
-// was uploaded, which tells postings of the same name apart, what came of
-// Garner's last try of it, then the reasons that decided its verdict, then
-// the facts.
+// why explains the release under the cursor: its full name, when it was
+// uploaded, which tells postings of the same name apart, and its page at
+// the indexer, what came of Garner's last try of it, then the reasons that
+// decided its verdict, then the facts.
 func (s *releasesScreen) why(w int) []string {
 	c, ok := s.cursor()
 	if !ok {
@@ -515,6 +515,11 @@ func (s *releasesScreen) why(w int) []string {
 	lines := []string{sNormal.Render(clean(c.Title))}
 	if c.Published != nil {
 		lines = append(lines, fact("Uploaded", c.Published.Local().Format("2 Jan 2006, 15:04")))
+	}
+	if c.Page != "" {
+		// A link where the terminal supports them; cut, it still opens the page.
+		text := ansi.Truncate(clean(c.Page), max(10, w-8-len("Page  ")), "…")
+		lines = append(lines, sSubtle.Render("Page")+"  "+sNormal.Hyperlink(c.Page).Render(text))
 	}
 	lines = append(lines, "")
 	if c.Attempt != nil {
