@@ -1,0 +1,154 @@
+# Looks for new bugs every night. The fixed seeds and fuzz corpora that go
+# test runs only keep fixed bugs fixed; this runs the simulation with fresh
+# seeds for 50 minutes and each fuzz test for 15 minutes. A failure opens
+# a GitHub issue labelled nightly with the commit and how to replay it, or
+# comments on the one still open (tools/nightly-report.sh). GitHub pauses
+# schedules in a repository without activity for 60 days.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      simulation_minutes:
+        description: Minutes of fresh simulation seeds, at most 60
+        default: "50"
+      fuzz_minutes:
+        description: Minutes of fuzzing per fuzz test, at most 30
+        default: "15"
+
+permissions: {}
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  simulation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    env:
+      MINUTES: ${{ inputs.simulation_minutes || '50' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install_args: go
+
+      # The job's timeout leaves room for setup and the report.
+      - name: Simulation with fresh seeds
+        run: |
+          if ! [[ "$MINUTES" =~ ^[1-9][0-9]*$ ]] || ((MINUTES > 60)); then
+            echo "::error::minutes must be 1 to 60: $MINUTES"
+            exit 1
+          fi
+          go test ./internal/simulation -run 'TestSimulation$' -seeds-for "${MINUTES}m" \
+            -report "$RUNNER_TEMP/report.md" -timeout "$((MINUTES + 15))m" 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      - name: Sum up the run
+        if: always()
+        run: cat "$RUNNER_TEMP/report.md" >>"$GITHUB_STEP_SUMMARY" || true
+
+      # Without a report, the test crashed or ran out of time: the log tells.
+      - name: Report the failure as an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          log=$RUNNER_TEMP/test.log
+          body=$RUNNER_TEMP/report.md
+          if [ ! -f "$log" ]; then
+            body=$RUNNER_TEMP/body.md
+            echo 'The run failed before the simulation started; the workflow run shows why.' >"$body"
+          elif ! grep -q 'seed.* failed' "$body" 2>/dev/null; then
+            body=$RUNNER_TEMP/body.md
+            {
+              echo 'The simulation ended without a report. Its log, from the first panic or the end:'
+              echo
+              echo '```'
+              if grep -q '^panic:' "$log"; then
+                awk '/^panic:/ { p = 1 } p && n < 60 { print; n++ }' "$log"
+              else
+                tail -n 60 "$log"
+              fi
+              echo '```'
+            } >"$body"
+          fi
+          bash tools/nightly-report.sh "The nightly simulation failed" "$body"
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { package: release, target: FuzzParse }
+          - { package: match, target: FuzzMatch }
+          - { package: selection, target: FuzzEvaluate }
+          - { package: profile, target: FuzzParse }
+    env:
+      MINUTES: ${{ inputs.fuzz_minutes || '15' }}
+      PACKAGE: ${{ matrix.package }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
+        with:
+          install_args: go
+
+      - name: Fuzz ${{ matrix.target }} in internal/${{ matrix.package }}
+        run: |
+          if ! [[ "$MINUTES" =~ ^[1-9][0-9]*$ ]] || ((MINUTES > 30)); then
+            echo "::error::minutes must be 1 to 30: $MINUTES"
+            exit 1
+          fi
+          go test "./internal/$PACKAGE" -run '^$' -fuzz "^$TARGET\$" -fuzztime "${MINUTES}m" \
+            -timeout "$((MINUTES + 10))m" 2>&1 | tee "$RUNNER_TEMP/test.log"
+
+      # Go writes the input that broke the test into the package's testdata.
+      - name: Report the failure as an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          log=$RUNNER_TEMP/test.log
+          {
+            if [ ! -f "$log" ]; then
+              echo "Fuzzing \`$TARGET\` in \`internal/$PACKAGE\` failed before it started; the workflow run shows why."
+            else
+              echo "Fuzzing \`$TARGET\` in \`internal/$PACKAGE\` failed. The end of its log:"
+              echo
+              echo '```'
+              tail -n 40 "$log"
+              echo '```'
+            fi
+            git ls-files --others --exclude-standard "internal/$PACKAGE/testdata/fuzz/$TARGET" | while read -r f; do
+              echo
+              echo "Save this input as \`$f\`, then replay it with \`go test ./internal/$PACKAGE -run '$TARGET/$(basename "$f")'\`:"
+              echo
+              echo '````'
+              cat "$f"
+              echo '````'
+            done
+          } >"$RUNNER_TEMP/body.md"
+          bash tools/nightly-report.sh "Nightly fuzzing of $TARGET in internal/$PACKAGE failed" "$RUNNER_TEMP/body.md"

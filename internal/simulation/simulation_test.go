@@ -37,7 +37,10 @@ import (
 var (
 	seedFlag  = flag.Uint64("seed", 0, "run only this seed")
 	seedsFlag = flag.Int("seeds", 0, "run this many fresh seeds instead of the fixed ones")
+	forFlag   = flag.Duration("seeds-for", 0, "run fresh seeds for this long instead of the fixed ones")
 	stepsFlag = flag.Int("steps", defaultSteps, "random steps per seed, before the calm period")
+	// The nightly workflow turns the report into a GitHub issue.
+	reportFlag = flag.String("report", "", "write what the run found to this file, in Markdown")
 )
 
 const defaultSteps = 300
@@ -72,25 +75,51 @@ var fixedSeeds = []uint64{7, 26, 35, 64, 87}
 
 // TestSimulation runs each seed twice: the rules must hold in the first
 // run, and the second must tell the same story. The fixed seeds, all run
-// with the default steps, must also cover every event and setup.
+// with the default steps, must also cover every event and setup. Fresh
+// seeds stop at the first that fails, so a report names one seed.
 func TestSimulation(t *testing.T) {
-	seeds := fixedSeeds
-	fixed := *seedFlag == 0 && *seedsFlag <= 0 && *stepsFlag == defaultSteps
+	fresh := *seedFlag == 0 && (*seedsFlag > 0 || *forFlag > 0)
+	fixed := *seedFlag == 0 && !fresh && *stepsFlag == defaultSteps
+	started := time.Now()
+	base := uint64(started.UnixNano())
+	// nth names the i-th seed to run, until there are no more.
+	nth := func(i int) (uint64, bool) {
+		switch {
+		case *seedFlag != 0:
+			return *seedFlag, i == 0
+		case !fresh && i < len(fixedSeeds):
+			return fixedSeeds[i], true
+		case !fresh, *seedsFlag > 0 && i >= *seedsFlag, *forFlag > 0 && i > 0 && time.Since(started) >= *forFlag:
+			return 0, false
+		}
+		return base + uint64(i), true
+	}
+	if fresh {
+		t.Logf("fresh seeds from %d", base)
+	}
 	covered, ran := map[string]bool{}, 0
 	var all []string
-	switch {
-	case *seedFlag != 0:
-		seeds = []uint64{*seedFlag}
-	case *seedsFlag > 0:
-		base := uint64(time.Now().UnixNano())
-		t.Logf("fresh seeds from %d", base)
-		seeds = nil
-		for i := range *seedsFlag {
-			seeds = append(seeds, base+uint64(i))
-		}
+	var failure string
+	// The report waits for every check, the fixed seeds' coverage too. A
+	// test that failed without a seed's failure writes none, so the nightly
+	// workflow falls back to the log.
+	if *reportFlag != "" {
+		defer func() {
+			if failure != "" || !t.Failed() {
+				writeReport(t, ran, time.Since(started), failure)
+			}
+		}()
 	}
-	for _, seed := range seeds {
+	for i := 0; ; i++ {
+		seed, ok := nth(i)
+		if !ok {
+			break
+		}
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			fail := func(msg string) {
+				failure = msg
+				t.Fatal(msg)
+			}
 			first := run(t, seed, *stepsFlag)
 			ran++
 			all = first.all
@@ -102,16 +131,19 @@ func TestSimulation(t *testing.T) {
 				t.Log("covered: " + strings.Join(first.covered, "; "))
 			}
 			if first.failure != "" {
-				t.Fatal(first.failure)
+				fail(first.failure)
 			}
 			second := run(t, seed, *stepsFlag)
 			if second.failure != "" {
-				t.Fatalf("seed %d failed only on its second run, so it is not deterministic:\n%s", seed, second.failure)
+				fail(fmt.Sprintf("seed %d failed only on its second run, so it is not deterministic:\n%s", seed, second.failure))
 			}
 			if d := difference(first.trace, second.trace); d != "" {
-				t.Fatalf("seed %d is not deterministic; its runs first differ at\n%s", seed, d)
+				fail(fmt.Sprintf("seed %d is not deterministic; its runs first differ at\n%s", seed, d))
 			}
 		})
+		if fresh && t.Failed() {
+			break
+		}
 	}
 	// Only a full run of the fixed seeds tells; -run may pick some of them.
 	if !fixed || ran != len(fixedSeeds) || t.Failed() {
@@ -125,6 +157,30 @@ func TestSimulation(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Errorf("in no fixed seed did these change anything: %s\nchoose the fixed seeds again as the comment on fixedSeeds says", strings.Join(missing, "; "))
+	}
+}
+
+// writeReport sums up the run for -report: how many seeds passed, or the
+// failure with its replay command.
+func writeReport(t *testing.T, ran int, took time.Duration, failure string) {
+	steps := ""
+	if *stepsFlag != defaultSteps {
+		steps = fmt.Sprintf(" with %d steps", *stepsFlag)
+	}
+	seeds := fmt.Sprintf("%d seeds%s, each run twice,", ran, steps)
+	if ran == 1 {
+		seeds = "1 seed" + steps + ", run twice,"
+	}
+	report := fmt.Sprintf("%s passed in %s.\n", seeds, took.Round(time.Second))
+	if failure != "" {
+		what := fmt.Sprintf("A seed%s failed after %d passed", steps, ran-1)
+		if ran == 1 {
+			what = "The first seed" + steps + " failed"
+		}
+		report = fmt.Sprintf("%s, in %s:\n\n```\n%s\n```\n", what, took.Round(time.Second), failure)
+	}
+	if err := os.WriteFile(*reportFlag, []byte(report), 0o644); err != nil {
+		t.Errorf("report: %v", err)
 	}
 }
 
