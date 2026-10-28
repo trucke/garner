@@ -1,12 +1,12 @@
 # Garner
 
-Garner manages TV shows and anime for a self-hosted media library. It finds releases through [Prowlarr](https://prowlarr.com), downloads them with [SABnzbd](https://sabnzbd.org), checks every file with FFprobe, moves it into the library and confirms the import through [Jellyfin](https://jellyfin.org). You run the server, `garnerd`, next to those services and use it from a terminal interface, `garner`, on any machine.
+Garner manages TV shows and anime for a self-hosted media library. It finds releases through [Prowlarr](https://prowlarr.com), downloads them with [SABnzbd](https://sabnzbd.org), checks every file with FFprobe, moves it into the library and, if you use [Jellyfin](https://jellyfin.org), confirms the import through it. You run the server, `garnerd`, next to those services and use it from a terminal interface, `garner`, on any machine.
 
 ![The library in Garner's terminal interface](docs/screenshot.png)
 
 - **Watches your shows.** The monitor searches for new episodes, or every missing one, and downloads the best release that fits the show's rules. When the show's profile wants upgrades, it replaces a file below the first preference, such as 720p, when a better release turns up.
 - **Explains every decision.** Every release in a search gets a verdict and the reasons for it: which episode it holds, which language and resolution it has and why it ranks where it does.
-- **Checks files before they reach the library.** FFprobe confirms the audio language, resolution and runtime of each file. Jellyfin then has to identify the file as the intended episode.
+- **Checks files before they reach the library.** FFprobe confirms the audio language, resolution and runtime of each file. If you use Jellyfin, it then has to identify the file as the intended episode.
 - **Handles anime numbering.** Scene numbering and absolute episode numbers come from [TheXEM](https://thexem.info), so releases of long-running anime match the right episodes.
 - **Takes over the files you already have.** When you add a show, Garner adopts its existing files instead of downloading them again.
 
@@ -15,7 +15,8 @@ Garner is young: versions start with `0.`, and a new version can change how thin
 ## What you need
 
 - A Linux server with Podman or Docker. Release images are built for x86 (`linux/amd64`).
-- Prowlarr with at least one Newznab indexer, SABnzbd with a Usenet provider, and Jellyfin with the TheTVDB plugin.
+- Prowlarr with at least one Newznab indexer and SABnzbd with a Usenet provider.
+- Jellyfin with the TheTVDB plugin, if you want it. With Jellyfin, Garner waits until Jellyfin identifies each imported file as the intended episode, and finds a show's existing files in Jellyfin's folders too. Without it, Garner imports without that confirmation and looks for existing files only in its own folders.
 - One filesystem or share that holds both SABnzbd's completed downloads and the library. Garner moves files with a rename, which works only within one filesystem.
 
 Garner gets show and episode data from TheTVDB with its own key, which the release images bring along. To use a key of your own, set `TVDB_API_KEY`.
@@ -61,7 +62,7 @@ Garner manages one file per episode: the files it imports and the files it takes
 When you add a show, Garner looks for the show's video files before the monitor starts on it. It looks in two places:
 
 - Garner's folder for the show, such as `Harbor.Precinct.Night.Shift.2013.[tvdbid-42]`
-- every folder that Jellyfin holds the show in, found by the show's TVDB ID, whatever the folder is called
+- with Jellyfin, every folder that Jellyfin holds the show in, found by the show's TVDB ID, whatever the folder is called
 
 Garner takes over a file when its name clearly names episodes that have no file yet. FFprobe reads the file's audio languages and resolution, which say which preference of the profile the file meets, as for a download. A file that meets none, such as English audio under the German profile, ranks below every preference, so an upgrade replaces it. Of two files for one episode, Garner takes the one that meets the better preference, then the larger one. The terminal interface lists the files that Garner left alone, with the reason. To look again, for example after copying files into the library by hand, press `t` on the show's details page.
 
@@ -75,7 +76,7 @@ A taken-over file belongs to Garner from then on, like a file it imported:
 - Deleting the show with **Delete files** deletes the file. **Keep files** leaves it in place, and adding the show again takes it over again.
 - The file keeps its name and folder. After a take-over, the terminal interface asks whether to rename and move the files outside Garner's folder into that folder, named the way Garner names files. **Keep as they are** is preselected.
 
-Renaming moves the subtitle files along, never overwrites a file and tells Jellyfin about the moves. It removes the folders that the moves left empty. A folder that still holds other files, such as Jellyfin's `tvshow.nfo`, stays, and Jellyfin may still list it as a show. Garner moves files without copying them, so a file on another filesystem than Garner's folder stays where it is.
+Renaming moves the subtitle files along, never overwrites a file and, if you use Jellyfin, tells it about the moves. It removes the folders that the moves left empty. A folder that still holds other files, such as Jellyfin's `tvshow.nfo`, stays, and Jellyfin may still list it as a show. Garner moves files without copying them, so a file on another filesystem than Garner's folder stays where it is.
 
 ## Responsible use
 
