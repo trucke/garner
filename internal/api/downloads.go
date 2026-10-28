@@ -27,7 +27,9 @@ type Download struct {
 	Title        string `json:"title"`
 	Indexer      string `json:"indexer"`
 	// Link holds Prowlarr's API key; it is never sent to clients.
-	Link    string `json:"-"`
+	Link string `json:"-"`
+	// Posting is the candidate's Posting; internal, like Link.
+	Posting string `json:"-"`
 	Size    int64  `json:"size"`
 	Verdict string `json:"verdict"`
 	Tier    string `json:"tier,omitempty"`

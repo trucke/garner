@@ -345,6 +345,7 @@ func (s *releasesScreen) progressLines() string {
 // Column widths of the releases table, except the release name.
 const (
 	tierWidth  = len("English 1080p")
+	triedWidth = len("downloading")
 	audioWidth = len("DE, EN, JA")
 	sizeWidth  = len("99.9 GB")
 	ageWidth   = len("11mo")
@@ -357,12 +358,16 @@ func (s *releasesScreen) table(width, height int) string {
 		indexerWidth = max(indexerWidth, min(16, ansi.StringWidth(clean(c.Indexer))))
 	}
 	cols := releaseCols{audio: audioWidth, age: ageWidth, indexer: indexerWidth}
+	// Tried appears once Garner tried one of the postings.
+	if slices.ContainsFunc(all, func(c api.Candidate) bool { return c.Attempt != nil }) {
+		cols.tried = triedWidth
+	}
 	longest := len("Release")
 	for _, c := range all {
 		longest = max(longest, ansi.StringWidth(clean(c.Title)))
 	}
-	// Narrow: the names keep room; Indexer, then Age, then Audio go.
-	for _, col := range []*int{&cols.indexer, &cols.age, &cols.audio} {
+	// Narrow: the names keep room; Indexer, then Age, Audio and Tried go.
+	for _, col := range []*int{&cols.indexer, &cols.age, &cols.audio, &cols.tried} {
 		if width-cols.fixed() >= min(longest, minReleaseName) {
 			break
 		}
@@ -418,17 +423,18 @@ func (s *releasesScreen) table(width, height int) string {
 // minReleaseName is the room release names keep on a narrow terminal.
 const minReleaseName = 30
 
-// releaseCols sizes the releases table; Audio, Age and Indexer are 0 when
-// left out on a narrow terminal.
+// releaseCols sizes the releases table; Tried, Audio, Age and Indexer are
+// 0 when left out, on a narrow terminal or, for Tried, when Garner tried
+// none of the releases.
 type releaseCols struct {
-	name, audio, age, indexer int
+	name, tried, audio, age, indexer int
 }
 
 // fixed is the table's width without the release name: margins, gaps and
 // the columns shown.
 func (cols releaseCols) fixed() int {
 	n := 3 + 1 + 3 + 3 + tierWidth + 3 + sizeWidth + 3
-	for _, w := range []int{cols.audio, cols.age, cols.indexer} {
+	for _, w := range []int{cols.tried, cols.audio, cols.age, cols.indexer} {
 		if w > 0 {
 			n += w + 3
 		}
@@ -439,6 +445,9 @@ func (cols releaseCols) fixed() int {
 func (cols releaseCols) head() string {
 	head := func(t string, w int, right bool) string { return sSubtle.Render(fit(t, w, right)) + "   " }
 	line := "   " + " " + "   " + head("Release", cols.name, false) + head("Preference", tierWidth, false)
+	if cols.tried > 0 {
+		line += head("Tried", cols.tried, false)
+	}
 	if cols.audio > 0 {
 		line += head("Audio", cols.audio, false)
 	}
@@ -477,6 +486,10 @@ func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 	line := gap + bg(glyphStyle).Render(glyph) + gap +
 		bg(text).Render(fit(cutMiddle(clean(c.Title), cols.name), cols.name, false)) + gap +
 		bg(tierStyle).Render(fit(tier, tierWidth, false)) + gap
+	if cols.tried > 0 {
+		label, style := attemptLabel(c.Attempt)
+		line += bg(style).Render(fit(label, cols.tried, false)) + gap
+	}
 	if cols.audio > 0 {
 		line += bg(text).Render(fit(strings.Join(audio, ", "), cols.audio, false)) + gap
 	}
@@ -490,15 +503,94 @@ func (cols releaseCols) row(c api.Candidate, width int, selected bool) string {
 	return fill(line, width, bg)
 }
 
-// why explains the release under the cursor: its full name, then the
-// reasons that decided its verdict, then the facts.
+// why explains the release under the cursor: its full name and when it
+// was uploaded, which tells postings of the same name apart, what came of
+// Garner's last try of it, then the reasons that decided its verdict, then
+// the facts.
 func (s *releasesScreen) why(w int) []string {
 	c, ok := s.cursor()
 	if !ok {
 		return nil
 	}
-	lines := append([]string{sNormal.Render(clean(c.Title)), ""}, reasonLines(c.Verdict, c.Reasons, c.Decisive, w-8)...)
+	lines := []string{sNormal.Render(clean(c.Title))}
+	if c.Published != nil {
+		lines = append(lines, fact("Uploaded", c.Published.Local().Format("2 Jan 2006, 15:04")))
+	}
+	lines = append(lines, "")
+	if c.Attempt != nil {
+		lines = append(lines, attemptLines(*c.Attempt, w-8, time.Now())...)
+		lines = append(lines, "")
+	}
+	lines = append(lines, reasonLines(c.Verdict, c.Reasons, c.Decisive, w-8)...)
 	return strings.Split(indent(frame("why", lines, w), 3), "\n")
+}
+
+// attemptLabel is the Tried column: what came of Garner's last try of a
+// posting, in the library's words; empty when it never tried it.
+func attemptLabel(d *api.Download) (string, lipgloss.Style) {
+	if d == nil {
+		return "", sNormal
+	}
+	switch state := downloadState(*d); state {
+	case api.Cancelled:
+		return "cancelled", sSubtle
+	case api.EpisodeDownloading, api.EpisodeProcessing:
+		return "downloading", sAmber
+	case api.EpisodeImporting:
+		return "importing", sAmber
+	case api.EpisodeAttention:
+		return "needs you", sAmber
+	case api.EpisodeImported:
+		return "imported", sMint
+	}
+	if d.Import.State == api.ImportRejected {
+		return "rejected", sRed
+	}
+	return "failed", sRed
+}
+
+// attemptLines say what came of Garner's last try of a posting and when,
+// wrapped to w cells. A posting that failed or was cancelled is not picked
+// again on its own.
+func attemptLines(d api.Download, w int, now time.Time) []string {
+	label, style := attemptLabel(&d)
+	at := when(d.Updated, now)
+	var text string
+	switch label {
+	case "downloading":
+		text = "Downloading since " + when(d.Created, now)
+	case "importing":
+		text = "Downloaded " + at + "; importing"
+	case "needs you":
+		text = "Imported " + when(d.Import.Updated, now) + ": " + d.Import.Detail
+	case "imported":
+		text = "Imported " + when(d.Import.Updated, now)
+	case "cancelled":
+		text = "Cancelled " + at + "."
+	case "rejected":
+		text = "Rejected after download " + when(d.Import.Updated, now) + ": " + cmp.Or(d.Import.Detail, d.Failure) + "."
+	default:
+		if d.Import.State == api.ImportFailed {
+			text = "Import failed " + when(d.Import.Updated, now) + ": " + d.Import.Detail + "."
+		} else {
+			text = "Failed " + at + ": " + cmp.Or(d.FailureSummary, d.Failure) + "."
+		}
+	}
+	glyph := style.Render(map[string]string{"downloading": "◐", "importing": "●", "needs you": "▲", "imported": "✓"}[label])
+	if d.State == api.Failed || d.State == api.Cancelled || d.Import.State == api.ImportFailed {
+		glyph = style.Render("✗")
+	}
+	if d.State == api.Failed || d.State == api.Cancelled {
+		text += " Garner does not pick this upload again on its own."
+	}
+	var lines []string
+	for i, l := range strings.Split(ansi.Wrap(clean(text), max(10, w), ""), "\n") {
+		if i > 0 {
+			glyph = " "
+		}
+		lines = append(lines, glyph+" "+sNormal.Render(l))
+	}
+	return lines
 }
 
 // reasonLines marks the reasons that decided a verdict with its glyph and

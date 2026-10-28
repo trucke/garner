@@ -52,7 +52,7 @@ func (s *Store) StartDownload(ctx context.Context, d Download, now time.Time) (D
 	}
 	reasons, _ := json.Marshal(d.Reasons)
 	id, err := q.InsertDownload(ctx, query.InsertDownloadParams{
-		EpisodeID: d.EpisodeID, Title: d.Title, Indexer: d.Indexer, Link: d.Link, Size: d.Size, Verdict: d.Verdict,
+		EpisodeID: d.EpisodeID, Title: d.Title, Indexer: d.Indexer, Link: d.Link, Posting: d.Posting, Size: d.Size, Verdict: d.Verdict,
 		Tier: d.Tier, Reasons: string(reasons), Decisive: int64(d.Decisive), Manual: boolInt(d.Manual),
 		Replaces: d.Replaces, SearchSeason: int64(d.SearchSeason), CreatedAt: now.Unix(), UpdatedAt: now.Unix(),
 	})
@@ -170,12 +170,6 @@ func (s *Store) Activity(ctx context.Context, since time.Time) ([]ActivityItem, 
 	return out, nil
 }
 
-// FailedTitles lists the releases that failed or were cancelled for an
-// episode; Garner does not pick them again on its own.
-func (s *Store) FailedTitles(ctx context.Context, episodeID int64) ([]string, error) {
-	return s.q.ListFailedTitles(ctx, episodeID)
-}
-
 // FailedSince counts an episode's failed downloads since t.
 func (s *Store) FailedSince(ctx context.Context, episodeID int64, t time.Time) (int, error) {
 	n, err := s.q.CountFailedDownloadsSince(ctx, query.CountFailedDownloadsSinceParams{EpisodeID: episodeID, CreatedAt: t.Unix()})
@@ -191,8 +185,8 @@ func (s *Store) CandidateLinks(ctx context.Context, episodeID int64) ([]Candidat
 	}
 	out := make([]Candidate, len(rows))
 	for i, r := range rows {
-		out[i] = Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
-			Decisive: int(r.Decisive)}
+		out[i] = Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Posting: r.Posting, Size: r.Size, Verdict: r.Verdict,
+			Tier: r.Tier, Decisive: int(r.Decisive)}
 		if err := json.Unmarshal([]byte(r.Reasons), &out[i].Reasons); err != nil {
 			return nil, fmt.Errorf("candidate %d reasons: %w", r.ID, err)
 		}
@@ -231,8 +225,8 @@ func (s *Store) DownloadSearch(ctx context.Context, d Download) (Search, error) 
 	}
 	sr := Search{Season: d.SearchSeason, Searched: time.Unix(row.SearchedAt, 0), Candidates: make([]Candidate, 0, len(rows))}
 	for _, r := range rows {
-		c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
-			SearchSeason: d.SearchSeason, Decisive: int(r.Decisive)}
+		c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Posting: r.Posting, Size: r.Size, Verdict: r.Verdict,
+			Tier: r.Tier, SearchSeason: d.SearchSeason, Decisive: int(r.Decisive)}
 		if err := json.Unmarshal([]byte(r.Reasons), &c.Reasons); err != nil {
 			return Search{}, fmt.Errorf("season candidate %d reasons: %w", r.ID, err)
 		}
@@ -251,8 +245,8 @@ func (s *Store) CandidateLink(ctx context.Context, id int64) (Candidate, int64, 
 	if err != nil {
 		return Candidate{}, 0, err
 	}
-	c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
-		Decisive: int(r.Decisive)}
+	c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Posting: r.Posting, Size: r.Size, Verdict: r.Verdict,
+		Tier: r.Tier, Decisive: int(r.Decisive)}
 	if err := json.Unmarshal([]byte(r.Reasons), &c.Reasons); err != nil {
 		return Candidate{}, 0, fmt.Errorf("candidate %d reasons: %w", r.ID, err)
 	}
@@ -273,7 +267,8 @@ func downloadsFromRows(rows []query.Download) ([]Download, error) {
 
 func downloadFromRow(r query.Download) (Download, error) {
 	d := Download{
-		ID: r.ID, EpisodeID: r.EpisodeID, SearchSeason: int(r.SearchSeason), Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size,
+		ID: r.ID, EpisodeID: r.EpisodeID, SearchSeason: int(r.SearchSeason), Title: r.Title, Indexer: r.Indexer, Link: r.Link,
+		Posting: r.Posting, Size: r.Size,
 		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, Replaces: r.Replaces, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
 		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0,
 		Created: time.Unix(r.CreatedAt, 0), Updated: time.Unix(r.UpdatedAt, 0),

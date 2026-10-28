@@ -3,9 +3,9 @@ SELECT count(*) FROM downloads
 WHERE episode_id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing');
 
 -- name: InsertDownload :one
-INSERT INTO downloads (episode_id, title, indexer, link, size, verdict, tier, reasons, decisive, manual, replaces, search_season, state, detail,
-    progress, time_left, storage, failure, retryable, stages, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
+INSERT INTO downloads (episode_id, title, indexer, link, posting, size, verdict, tier, reasons, decisive, manual, replaces, search_season,
+    state, detail, progress, time_left, storage, failure, retryable, stages, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitting', '', 0, '', '', '', 0, '[]', ?, ?)
 RETURNING id;
 
 -- name: GetEpisodeFileTier :one
@@ -44,21 +44,17 @@ SELECT * FROM downloads
 ORDER BY state IN ('submitting', 'queued', 'downloading', 'processing') DESC, id DESC
 LIMIT ?;
 
--- Releases Garner does not pick again on its own: failed or cancelled.
--- name: ListFailedTitles :many
-SELECT title FROM downloads WHERE episode_id = ? AND state IN ('failed', 'cancelled');
-
 -- name: CountFailedDownloadsSince :one
 SELECT count(*) FROM downloads WHERE episode_id = ? AND state = 'failed' AND created_at >= ?;
 
 -- Candidates of the latest search with their download links, best first.
 -- name: ListCandidateLinks :many
-SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
+SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.posting, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id
 WHERE s.episode_id = ? ORDER BY c.rank;
 
 -- name: GetCandidateLink :one
-SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.size, c.verdict, c.tier, c.reasons, c.decisive
+SELECT c.id, s.episode_id, c.title, c.indexer, c.link, c.posting, c.size, c.verdict, c.tier, c.reasons, c.decisive
 FROM candidates c JOIN searches s ON s.id = c.search_id
 WHERE c.id = ?;
 

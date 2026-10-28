@@ -133,7 +133,7 @@ func TestUpgradeFromThePreviousMigration(t *testing.T) {
 	db := openAt(t, dir, from)
 	plain, hash, last4 := token.New()
 	exec(t, db, "INSERT INTO api_tokens (name, hash, last4, created_at) VALUES ('laptop', ?, ?, 1)", hash, last4)
-	seedShow(t, db)
+	seedShow(t, db, from)
 	db.Close()
 
 	st := upgrade(t, dir, from)
@@ -143,7 +143,7 @@ func TestUpgradeFromThePreviousMigration(t *testing.T) {
 	if d, err := st.LoadSeries(ctx, 42); err != nil || d.Series.Name != "Harbor Precinct" || len(d.Episodes) != 1 {
 		t.Errorf("show = %+v, %v", d.Series, err)
 	}
-	if d, err := st.GetDownload(ctx, 7); err != nil || d.Title != "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP" || d.State != Completed || d.SearchSeason != 0 {
+	if d, err := st.GetDownload(ctx, 7); err != nil || d.Title != "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP" || d.State != Completed || d.SearchSeason != 0 || d.Posting != "" {
 		t.Errorf("download = %+v, %v", d, err)
 	}
 	if f, found, err := st.EpisodeFile(ctx, 101); err != nil || !found || f.Path != showFile {
@@ -154,11 +154,16 @@ func TestUpgradeFromThePreviousMigration(t *testing.T) {
 const showFile = "/library/tv/Harbor.Precinct.[tvdbid-42]/Season.01/Harbor.Precinct.S01E01.mkv"
 
 // seedShow adds a show with one episode, a completed download of it and
-// the file the download brought, in the tables as migration 5 left them.
-func seedShow(t *testing.T, db *sql.DB) {
+// the file the download brought, in the tables as the migration version
+// left them: from 5 on, and with profiles in their own table from 19.
+func seedShow(t *testing.T, db *sql.DB, version int64) {
 	t.Helper()
-	exec(t, db, `INSERT INTO series (id, slug, name, original_language, original_country, status, default_order, tvdb_updated, added_at, fetched_at, profile)
-		VALUES (42, 'harbor-precinct', 'Harbor Precinct', 'eng', 'usa', 'Ended', 'official', '2026-01-01', 1, 1, 'tv')`)
+	profile := "profile) VALUES (42, 'harbor-precinct', 'Harbor Precinct', 'eng', 'usa', 'Ended', 'official', '2026-01-01', 1, 1, 'tv')"
+	if version >= 19 {
+		profile = `type, profile_id) VALUES (42, 'harbor-precinct', 'Harbor Precinct', 'eng', 'usa', 'Ended', 'official', '2026-01-01', 1, 1,
+			'tv', (SELECT id FROM profiles WHERE default_tv = 1))`
+	}
+	exec(t, db, `INSERT INTO series (id, slug, name, original_language, original_country, status, default_order, tvdb_updated, added_at, fetched_at, `+profile)
 	exec(t, db, "INSERT INTO episodes (id, series_id, is_movie) VALUES (101, 42, 0)")
 	exec(t, db, "INSERT INTO episode_numbers (episode_id, series_id, order_type, season, number) VALUES (101, 42, 'official', 1, 1)")
 	exec(t, db, `INSERT INTO downloads (id, episode_id, title, indexer, link, size, verdict, tier, manual, state, detail, progress,
@@ -173,7 +178,7 @@ func seedShow(t *testing.T, db *sql.DB) {
 func TestMigrationFileTier(t *testing.T) {
 	ctx := context.Background()
 	db := openAt(t, t.TempDir(), 14)
-	seedShow(t, db)
+	seedShow(t, db, 14)
 	exec(t, db, "INSERT INTO episodes (id, series_id, is_movie) VALUES (102, 42, 0)")
 	exec(t, db, "INSERT INTO episode_files (episode_id, path, size, imported_at) VALUES (102, '/library/tv/taken.mkv', 1, 1)")
 	p, err := migrator(db)

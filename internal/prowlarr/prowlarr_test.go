@@ -85,3 +85,36 @@ func TestSearch(t *testing.T) {
 		t.Errorf("error = %v", err)
 	}
 }
+
+// TestPostings tells postings of the same release apart by the indexer's
+// ID for them, not by the link Prowlarr encrypts anew for every search, and
+// keeps the ID itself, which may hold credentials, out of the result.
+func TestPostings(t *testing.T) {
+	const title = "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP"
+	posting := func(indexer int, guid, link string) string {
+		t.Helper()
+		it := strings.Replace(item(title), "<title>", "<guid>"+guid+"</guid><title>", 1)
+		it = strings.Replace(it, "link=X", "link="+link, 1)
+		results, err := parseFeed([]byte(feedOf(it)), indexer)
+		if err != nil || len(results) != 1 {
+			t.Fatalf("parse: %v, %d results", err, len(results))
+		}
+		if r := fmt.Sprintf("%+v", results[0]); strings.Contains(r, "SECRET-ID") {
+			t.Errorf("the result holds the indexer's ID: %s", r)
+		}
+		return results[0].Posting
+	}
+	first := posting(1, "https://indexer.invalid/details/a1?apikey=SECRET-ID", "L1")
+	switch {
+	case first == "":
+		t.Error("no posting")
+	case posting(1, "https://indexer.invalid/details/a1?apikey=SECRET-ID", "L2") != first:
+		t.Error("a new link made the same posting another one")
+	case posting(1, "https://indexer.invalid/details/b2?apikey=SECRET-ID", "L1") == first:
+		t.Error("two postings of the same release are one")
+	case posting(2, "https://indexer.invalid/details/a1?apikey=SECRET-ID", "L1") == first:
+		t.Error("the same ID at another indexer is the same posting")
+	case posting(1, "", "L1") == "" || posting(1, "", "L1") != posting(1, "", "L2"):
+		t.Error("without an ID, the name, size and time do not stand in")
+	}
+}

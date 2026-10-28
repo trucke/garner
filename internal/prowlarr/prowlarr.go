@@ -5,6 +5,8 @@ package prowlarr
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -102,7 +104,12 @@ type Result struct {
 	Title string
 	// Link downloads the NZB through Prowlarr. It holds Prowlarr's API key:
 	// never log it or return it to clients.
-	Link      string
+	Link string
+	// Posting tells NZB postings apart that share the release name: a
+	// fingerprint of the indexer and its ID for the posting. The link
+	// cannot, as Prowlarr encrypts it anew for every search; the ID can be
+	// a link with credentials, so only its fingerprint leaves this package.
+	Posting   string
 	Size      int64
 	Published time.Time
 	Grabs     int
@@ -130,7 +137,7 @@ func (c *Client) Search(ctx context.Context, indexer int, q Query) ([]Result, er
 		if err != nil {
 			return out, err
 		}
-		results, err := parseFeed(body)
+		results, err := parseFeed(body, indexer)
 		if err != nil {
 			return out, err
 		}
@@ -189,6 +196,7 @@ func (c *Client) wait(ctx context.Context) error {
 type feed struct {
 	Items []struct {
 		Title   string `xml:"title"`
+		GUID    string `xml:"guid"`
 		Link    string `xml:"link"`
 		Size    int64  `xml:"size"`
 		PubDate string `xml:"pubDate"`
@@ -199,7 +207,7 @@ type feed struct {
 	} `xml:"channel>item"`
 }
 
-func parseFeed(body []byte) ([]Result, error) {
+func parseFeed(body []byte, indexer int) ([]Result, error) {
 	var f feed
 	if err := xml.Unmarshal(body, &f); err != nil {
 		return nil, fmt.Errorf("unreadable indexer response: %w", err)
@@ -224,6 +232,13 @@ func parseFeed(body []byte) ([]Result, error) {
 				}
 			}
 		}
+		// Without the indexer's ID, the name, size and time stand in.
+		id := strings.TrimSpace(it.GUID)
+		if id == "" {
+			id = fmt.Sprintf("%s|%d|%d", r.Title, r.Size, r.Published.Unix())
+		}
+		sum := sha256.Sum256(fmt.Appendf(nil, "%d\n%s", indexer, id))
+		r.Posting = hex.EncodeToString(sum[:8])
 		if r.Title != "" && r.Link != "" {
 			out = append(out, r)
 		}

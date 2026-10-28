@@ -136,11 +136,8 @@ func TestAcknowledgeDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if stored.State != api.Failed || stored.Failure != d.Failure || !stored.Updated.Equal(d.Updated) || len(stored.Stages) != 1 {
+		// The failed state also keeps the posting from being picked again.
 		t.Error("clearing changed the failure, its evidence or its original timestamp")
-	}
-	titles, err := st.FailedTitles(ctx, 101)
-	if err != nil || !slices.Equal(titles, []string{d.Title}) {
-		t.Error("clearing removed the bad release from the failed-title exclusion")
 	}
 	if failures, err := st.FailedSince(ctx, 101, searched); err != nil || failures != 1 {
 		t.Errorf("retry budget after clearing: %d failures, %v; want 1", failures, err)

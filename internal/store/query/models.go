@@ -41,6 +41,7 @@ type Candidate struct {
 	Reasons   string
 	Episodes  string
 	Decisive  int64
+	Posting   string
 }
 
 type Download struct {
@@ -75,6 +76,7 @@ type Download struct {
 	Replaces        string
 	AcknowledgedAt  sql.NullInt64
 	SearchSeason    int64
+	Posting         string
 }
 
 type Episode struct {
@@ -170,6 +172,7 @@ type SeasonCandidate struct {
 	Reasons   string
 	Decisive  int64
 	Episodes  string
+	Posting   string
 }
 
 type SeasonSearch struct {

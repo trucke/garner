@@ -36,7 +36,11 @@ type Candidate struct {
 	Title        string `json:"title"`
 	// Link downloads the release through Prowlarr and holds its API key. It
 	// is stored but never loaded for or sent to clients.
-	Link      string     `json:"-"`
+	Link string `json:"-"`
+	// Posting tells NZB postings of the same release apart: a fingerprint
+	// of the indexer's ID for this one. Empty for candidates stored before
+	// Garner kept it. Never sent to clients.
+	Posting   string     `json:"-"`
 	Size      int64      `json:"size"`
 	Published *time.Time `json:"published,omitempty"`
 	Grabs     int        `json:"grabs"`
@@ -48,6 +52,19 @@ type Candidate struct {
 	// was rejected, or why it is only a last resort. The rest are facts.
 	Decisive int     `json:"decisive"`
 	Episodes []int64 `json:"episodes"`
+	// Attempt is the latest download of this posting for the episode the
+	// candidate is for; nil when Garner never tried it.
+	Attempt *Download `json:"attempt,omitempty"`
+}
+
+// SamePosting reports whether the download is of this candidate's NZB
+// posting: by the indexer's ID for it when both have one, otherwise, for
+// rows from before Garner kept it, by name and size.
+func (c Candidate) SamePosting(d Download) bool {
+	if c.Posting != "" && d.Posting != "" {
+		return c.Posting == d.Posting
+	}
+	return c.Title == d.Title && c.Size == d.Size
 }
 
 // SearchProgress is a running search: every indexer, and what it answered

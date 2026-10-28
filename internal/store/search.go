@@ -58,7 +58,7 @@ func (s *Store) SaveSearch(ctx context.Context, sr Search) error {
 			published = sql.NullInt64{Int64: c.Published.Unix(), Valid: true}
 		}
 		if err := q.InsertCandidate(ctx, query.InsertCandidateParams{
-			SearchID: id, Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link, Size: c.Size,
+			SearchID: id, Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link, Posting: c.Posting, Size: c.Size,
 			Published: published, Grabs: int64(c.Grabs), Verdict: c.Verdict, Tier: c.Tier,
 			Audio: strings.Join(c.Audio, ","), Reasons: string(reasons), Episodes: string(episodes),
 			Decisive: int64(c.Decisive),
@@ -69,7 +69,8 @@ func (s *Store) SaveSearch(ctx context.Context, sr Search) error {
 	return tx.Commit()
 }
 
-// LoadSearch returns the latest search for an episode, without download links.
+// LoadSearch returns the latest search for an episode, without download
+// links, with the latest download of each candidate's posting.
 func (s *Store) LoadSearch(ctx context.Context, episodeID int64) (Search, error) {
 	row, err := s.q.GetSearch(ctx, episodeID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -99,7 +100,7 @@ func (s *Store) LoadSearch(ctx context.Context, episodeID int64) (Search, error)
 	}
 	for _, c := range candidates {
 		cand := Candidate{
-			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Size: c.Size, Grabs: int(c.Grabs),
+			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Size: c.Size, Grabs: int(c.Grabs),
 			Verdict: c.Verdict, Tier: c.Tier, Audio: []string{}, Reasons: []string{}, Episodes: []int64{},
 			Decisive: int(c.Decisive),
 		}
@@ -118,5 +119,23 @@ func (s *Store) LoadSearch(ctx context.Context, episodeID int64) (Search, error)
 		}
 		sr.Candidates = append(sr.Candidates, cand)
 	}
+	downloads, err := s.EpisodeDownloads(ctx, episodeID)
+	if err != nil {
+		return sr, err
+	}
+	withAttempts(sr.Candidates, downloads)
 	return sr, nil
+}
+
+// withAttempts gives each candidate the latest of the downloads, newest
+// first, of its posting.
+func withAttempts(candidates []Candidate, downloads []Download) {
+	for i := range candidates {
+		for _, d := range downloads {
+			if candidates[i].SamePosting(d) {
+				candidates[i].Attempt = &d
+				break
+			}
+		}
+	}
 }

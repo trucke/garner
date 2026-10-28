@@ -257,6 +257,89 @@ func TestReplaceAccepted(t *testing.T) {
 	}
 }
 
+// TestSameTitlePostings fails one of two postings of the same release: the
+// other is tried before a release of a lower preference, the failed one
+// stays out after a new search, and the search shows each posting's own
+// attempt (GRR-43).
+func TestSameTitlePostings(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setup(t)
+	const german = show + "German.DL.1080p.WEB-GRP"
+	search := func(links string) {
+		t.Helper()
+		var candidates []store.Candidate
+		for _, c := range []struct {
+			title, posting string
+			size           int64
+		}{{german, "p1", 725}, {german, "p2", 698}, {show + "1080p.WEB-GRP", "p3", 900}} {
+			candidates = append(candidates, store.Candidate{Indexer: "One", Title: c.title, Posting: c.posting, Size: c.size,
+				Verdict: "accept", Link: "http://prowlarr/1/download?apikey=SECRET&" + links + c.posting})
+		}
+		if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now().Add(-time.Minute), Outcome: "found",
+			Candidates: candidates}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	search("first")
+
+	if d, err := svc.Best(ctx, 101); err != nil || d.Posting != "p1" {
+		t.Fatalf("Best = %+v, %v; want posting p1", d, err)
+	}
+	fake.finish("job-1", "Failed", "Aborted, cannot be completed", "")
+	svc.Poll(ctx)
+	if got := fake.submitted(); len(got) != 2 || got[1] != german {
+		t.Fatalf("submitted %q; want the other posting of %s next", got, german)
+	}
+	sr, err := st.LoadSearch(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []string
+	for _, c := range sr.Candidates {
+		state := "untried"
+		if c.Attempt != nil {
+			state = c.Attempt.State
+		}
+		states = append(states, state)
+	}
+	if want := []string{store.Failed, store.Queued, "untried"}; !slices.Equal(states, want) {
+		t.Errorf("attempts by posting = %q, want %q", states, want)
+	}
+
+	// A new search brings new links; the failed posting stays out.
+	fake.finish("job-2", "Completed", "", "/data/usenet/complete/tv/x")
+	svc.Poll(ctx)
+	search("second")
+	if d, err := svc.Best(ctx, 101); err != nil || d.Posting != "p2" {
+		t.Errorf("Best after a new search = %+v, %v; want posting p2", d, err)
+	}
+}
+
+// TestEarlierFailuresWithoutPosting covers downloads from before Garner
+// kept postings apart: one excludes the postings of its name and size only.
+func TestEarlierFailuresWithoutPosting(t *testing.T) {
+	ctx := context.Background()
+	st, svc, _ := setup(t)
+	const german = show + "German.DL.1080p.WEB-GRP"
+	d, err := st.StartDownload(ctx, store.Download{EpisodeID: 101, Title: german, Size: 725, Verdict: "accept", Link: "x"}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.State, d.Failure = store.Failed, "Aborted, cannot be completed"
+	if err := st.UpdateDownload(ctx, d, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now(), Outcome: "found", Candidates: []store.Candidate{
+		{Indexer: "One", Title: german, Posting: "p1", Size: 725, Verdict: "accept", Link: "y"},
+		{Indexer: "One", Title: german, Posting: "p2", Size: 698, Verdict: "accept", Link: "z"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := svc.Best(ctx, 101); err != nil || d.Posting != "p2" {
+		t.Errorf("Best = %+v, %v; want posting p2", d, err)
+	}
+}
+
 // TestRestart covers a crash between recording a download and SABnzbd's
 // answer: the job is found by name instead of submitted again, and a job
 // SABnzbd never got ends as failed.

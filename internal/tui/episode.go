@@ -445,7 +445,12 @@ func (s *episodeScreen) frames(row episodeRow, w int, now time.Time) []string {
 			default:
 				continue // an earlier version that was imported, or one still running
 			}
-			earlier = append(earlier, glyph+" "+sNormal.Render(clean(e.Title))+sSubtle.Render("  "+when(e.Created, now)),
+			// The size tells uploads of the same name apart.
+			meta := when(e.Created, now)
+			if sz := size(e.Size); sz != "" {
+				meta = sz + " · " + meta
+			}
+			earlier = append(earlier, glyph+" "+sNormal.Render(clean(e.Title))+sSubtle.Render("  "+meta),
 				"  "+sMuted.Render(why))
 		}
 	}

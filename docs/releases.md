@@ -12,7 +12,9 @@ Every release gets one of three verdicts, with the reasons for it. The terminal 
 | Last resort | Garner downloads it only when you choose it, when you ask for the best release of an episode and no accepted release is left to try, or to replace a failed release that was not accepted either. |
 | Rejected | Garner downloads it only when you choose it. |
 
-On its own, Garner never picks a release that already failed or was cancelled for the episode, not even after a new search. You can still choose it.
+Indexers often list a release more than once under the same name: separate uploads of it, which can differ in whether they still download completely. Garner tells them apart by the indexer's ID for each upload. On its own, it never picks an upload that already failed or was cancelled for the episode, not even after a new search, but another upload of the same release stays in the running. You can still choose any of them.
+
+In the terminal interface, the Tried column of the releases list shows what came of each upload Garner tried, and WHY shows when the selected one was uploaded.
 
 ## Always rejected
 
@@ -80,7 +82,7 @@ When Garner cannot read SABnzbd's folder or FFprobe does not run, the import sto
 Garner downloads another release when a download fails in a way another release may avoid: the file check rejected it, or SABnzbd reports a problem of the release itself, such as missing articles, a failed repair or a password. A failure of the disk, of permissions or one Garner does not recognize starts no other release.
 
 - Garner deletes the rejected download's folder when it can tell that the folder belongs to that download.
-- It takes the best release left in the latest results of the same search, the episode's or the season's, and skips releases that failed or were cancelled before.
+- It takes the best release left in the latest results of the same search, the episode's or the season's, and skips uploads that failed or were cancelled before. Another upload of the failed release is not skipped.
 - An accepted release is replaced by accepted releases only, which may meet a lower preference. After a release that was not accepted, a last resort may follow.
 - After the fourth failed download of the episode since that search, including downloads you chose by hand, Garner stops and leaves the choice to you.
 

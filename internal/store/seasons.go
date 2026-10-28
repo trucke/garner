@@ -45,7 +45,7 @@ func (s *Store) SaveSeasonSearch(ctx context.Context, seriesID int64, sr Search,
 		}
 		if err := q.InsertSeasonCandidate(ctx, query.InsertSeasonCandidateParams{
 			SearchID: id, EpisodeID: owners[i], Rank: int64(i + 1), Indexer: c.Indexer, Title: c.Title, Link: c.Link,
-			Size: c.Size, Published: published, Verdict: c.Verdict, Tier: c.Tier, Audio: strings.Join(c.Audio, ","),
+			Posting: c.Posting, Size: c.Size, Published: published, Verdict: c.Verdict, Tier: c.Tier, Audio: strings.Join(c.Audio, ","),
 			Reasons: string(reasons), Decisive: int64(c.Decisive), Episodes: string(episodes),
 		}); err != nil {
 			return fmt.Errorf("save season candidate %q: %w", c.Title, err)
@@ -54,7 +54,8 @@ func (s *Store) SaveSeasonSearch(ctx context.Context, seriesID int64, sr Search,
 	return tx.Commit()
 }
 
-// LoadSeasonSearch returns a season's latest search.
+// LoadSeasonSearch returns a season's latest search, with the latest
+// download of each pack's posting for the episode it belongs to.
 func (s *Store) LoadSeasonSearch(ctx context.Context, seriesID int64, season int) (Search, error) {
 	row, err := s.q.GetSeasonSearch(ctx, query.GetSeasonSearchParams{SeriesID: seriesID, Season: int64(season)})
 	if errors.Is(err, sql.ErrNoRows) {
@@ -72,10 +73,11 @@ func (s *Store) LoadSeasonSearch(ctx context.Context, seriesID int64, season int
 	if err != nil {
 		return sr, err
 	}
+	downloads := map[int64][]Download{} // by episode
 	for _, c := range rows {
 		cand := Candidate{
-			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Size: c.Size, Verdict: c.Verdict, Tier: c.Tier,
-			Audio: []string{}, Reasons: []string{}, Episodes: []int64{}, Decisive: int(c.Decisive),
+			ID: c.ID, Rank: int(c.Rank), Indexer: c.Indexer, Title: c.Title, Posting: c.Posting, Size: c.Size, Verdict: c.Verdict,
+			Tier: c.Tier, Audio: []string{}, Reasons: []string{}, Episodes: []int64{}, Decisive: int(c.Decisive),
 		}
 		if c.Published.Valid {
 			t := time.Unix(c.Published.Int64, 0)
@@ -90,7 +92,13 @@ func (s *Store) LoadSeasonSearch(ctx context.Context, seriesID int64, season int
 		if err := json.Unmarshal([]byte(c.Episodes), &cand.Episodes); err != nil {
 			return sr, fmt.Errorf("season candidate %d episodes: %w", c.ID, err)
 		}
+		if _, ok := downloads[c.EpisodeID]; !ok {
+			if downloads[c.EpisodeID], err = s.EpisodeDownloads(ctx, c.EpisodeID); err != nil {
+				return sr, err
+			}
+		}
 		sr.Candidates = append(sr.Candidates, cand)
+		withAttempts(sr.Candidates[len(sr.Candidates)-1:], downloads[c.EpisodeID])
 	}
 	return sr, nil
 }
@@ -105,8 +113,8 @@ func (s *Store) SeasonCandidateLink(ctx context.Context, id int64) (Candidate, i
 	if err != nil {
 		return Candidate{}, 0, err
 	}
-	c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Size: r.Size, Verdict: r.Verdict, Tier: r.Tier,
-		SearchSeason: int(r.Season), Decisive: int(r.Decisive)}
+	c := Candidate{ID: r.ID, Title: r.Title, Indexer: r.Indexer, Link: r.Link, Posting: r.Posting, Size: r.Size, Verdict: r.Verdict,
+		Tier: r.Tier, SearchSeason: int(r.Season), Decisive: int(r.Decisive)}
 	if err := json.Unmarshal([]byte(r.Reasons), &c.Reasons); err != nil {
 		return Candidate{}, 0, fmt.Errorf("season candidate %d reasons: %w", r.ID, err)
 	}

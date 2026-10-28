@@ -114,13 +114,16 @@ func (s *Service) pick(ctx context.Context, episodeID int64, verdicts ...string)
 }
 
 func (s *Service) pickFrom(ctx context.Context, episodeID int64, candidates []store.Candidate, verdicts ...string) (store.Candidate, error) {
-	failed, err := s.store.FailedTitles(ctx, episodeID)
+	downloads, err := s.store.EpisodeDownloads(ctx, episodeID)
 	if err != nil {
 		return store.Candidate{}, err
 	}
+	// A posting that failed or was cancelled stays out; another posting of
+	// the same release may well work (GRR-43).
+	given := slices.DeleteFunc(downloads, func(d store.Download) bool { return d.State != store.Failed && d.State != store.Cancelled })
 	for _, verdict := range verdicts {
 		for _, c := range candidates {
-			if c.Verdict == verdict && !slices.Contains(failed, c.Title) {
+			if c.Verdict == verdict && !slices.ContainsFunc(given, c.SamePosting) {
 				return c, nil
 			}
 		}
@@ -133,7 +136,7 @@ func (s *Service) pickFrom(ctx context.Context, episodeID int64, candidates []st
 // up by name instead of submitting it again.
 func (s *Service) submit(ctx context.Context, episodeID int64, c store.Candidate, manual bool) (store.Download, error) {
 	d, err := s.store.StartDownload(ctx, store.Download{
-		EpisodeID: episodeID, SearchSeason: c.SearchSeason, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Size: c.Size,
+		EpisodeID: episodeID, SearchSeason: c.SearchSeason, Title: c.Title, Indexer: c.Indexer, Link: c.Link, Posting: c.Posting, Size: c.Size,
 		Verdict: c.Verdict, Tier: c.Tier, Reasons: c.Reasons, Decisive: c.Decisive, Manual: manual,
 	}, s.Now())
 	if err != nil {
