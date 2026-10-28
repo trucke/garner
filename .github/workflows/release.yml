@@ -57,16 +57,18 @@ jobs:
             exit 1
           }
 
-      # Without them, GoReleaser would leave the macOS binaries unsigned.
-      - name: Check that the Apple signing secrets are set
+      # Without them, GoReleaser would leave the macOS binaries unsigned and
+      # the Homebrew cask out of date.
+      - name: Check that the signing and Homebrew secrets are set
         env:
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
           MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          HOMEBREW_TAP_KEY: ${{ secrets.HOMEBREW_TAP_KEY }}
         run: |
-          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID HOMEBREW_TAP_KEY; do
             [ -n "${!name}" ] || {
               echo "::error::the repository secret $name is missing"
               exit 1
@@ -74,7 +76,8 @@ jobs:
           done
 
       # latest names the newest version on main, which the Compose example
-      # pulls; a rerun of an older release leaves it alone.
+      # pulls, and only the newest updates the Homebrew cask; a rerun of an
+      # older release leaves both alone.
       - name: Choose the image tags
         id: tags
         run: |
@@ -82,6 +85,7 @@ jobs:
           tags="$IMAGE:$TAG"
           [ "$newest" != "$TAG" ] || tags="$tags,$IMAGE:latest"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "newest=$([ "$newest" = "$TAG" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Read the tool versions from mise.toml
         id: tools
@@ -136,6 +140,8 @@ jobs:
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          HOMEBREW_TAP_KEY: ${{ secrets.HOMEBREW_TAP_KEY }}
+          NEWEST_RELEASE: ${{ steps.tags.outputs.newest }}
 
       # The container registry is free for now; keeping twenty versions
       # (images and their build cache) stays small if that changes. The

@@ -42,6 +42,29 @@ checksum:
   extra_files:
     - glob: THIRD-PARTY-NOTICES.txt
 
+# A Homebrew cask in trucke/homebrew-tap, for brew install trucke/tap/garner
+# and brew upgrade. The release workflow sets the tap's deploy key and says
+# whether this is the newest release; otherwise the cask is only written
+# into dist/.
+homebrew_casks:
+  - name: garner
+    binaries: [garner]
+    homepage: https://github.com/trucke/garner
+    description: Terminal interface for Garner, a self-hosted TV and anime manager
+    license: MIT
+    commit_msg_template: "Update garner to {{ .Tag }}"
+    commit_author:
+      name: github-actions[bot]
+      email: 41898282+github-actions[bot]@users.noreply.github.com
+    skip_upload: '{{ if and (isEnvSet "HOMEBREW_TAP_KEY") (eq (envOrDefault "NEWEST_RELEASE" "") "true") }}false{{ else }}true{{ end }}'
+    repository:
+      owner: trucke
+      name: homebrew-tap
+      branch: main
+      git:
+        url: git@github.com:trucke/homebrew-tap.git
+        private_key: '{{ envOrDefault "HOMEBREW_TAP_KEY" "" }}'
+
 # The commits since the previous release, newest first, as git lists them.
 changelog:
   use: git

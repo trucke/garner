@@ -2,7 +2,8 @@
 # locally: formatting, vet, the generated database code, known
 # vulnerabilities, the tests on Linux as the container image builds Garner
 # and again with the race detector, and builds for every release platform.
-# The private real-case tests are not part of it.
+# It also runs install.sh against the newest release. The private
+# real-case tests are not part of it.
 name: Check
 
 on:
@@ -88,6 +89,13 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -race ./...
+
+      # The script users pipe into bash, against the newest release.
+      - name: Install script
+        run: |
+          shellcheck install.sh tools/*.sh
+          GARNER_INSTALL_DIR="$RUNNER_TEMP/bin" bash install.sh
+          "$RUNNER_TEMP/bin/garner" --version
 
       - name: Builds for the release platforms
         env:

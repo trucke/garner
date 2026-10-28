@@ -23,15 +23,19 @@ Garner gets show and episode data from TheTVDB with its own key, which the relea
 ## Get started
 
 1. Install the server: [docs/install.md](docs/install.md) walks through the configuration, the container and the first connection. To set up Garner, Prowlarr and SABnzbd together with Docker Compose, use the [Compose example](examples/compose) instead.
-2. Install the terminal interface on the machine you use it from. Download the file for that machine from the [latest release](https://github.com/trucke/garner/releases/latest): `garner-<version>-darwin-arm64` for a Mac with Apple silicon, `darwin-amd64` for an Intel Mac, `linux-amd64` for Linux on x86 or `linux-arm64` for Linux on ARM. Then move it into your path and make it executable. On a Mac with Apple silicon:
+2. Install the terminal interface on the machine you use it from, a Mac or a Linux machine:
 
    ```bash
-   mkdir -p ~/.local/bin
-   mv ~/Downloads/garner-*-darwin-arm64 ~/.local/bin/garner
-   chmod +x ~/.local/bin/garner
+   curl -fsSL https://raw.githubusercontent.com/trucke/garner/main/install.sh | bash
    ```
 
-   The first time you run it, macOS asks whether to open a program downloaded from the internet; choose **Open**. The file is signed with Garner's developer certificate and checked by Apple. On other machines, use their file instead. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`.
+   The [script](install.sh) downloads the newest release for your machine, checks it against the release's checksums and puts it into `~/.local/bin`; run it again to update. If your shell does not find `garner` afterwards, add `~/.local/bin` to your `PATH`, as the script says.
+
+   On a Mac with Homebrew, `brew install trucke/tap/garner` installs it instead, and `brew upgrade` updates it.
+
+   To install it by hand, download the file for your machine from the [latest release](https://github.com/trucke/garner/releases/latest), such as `garner-<version>-darwin-arm64` for a Mac with Apple silicon or `garner-<version>-linux-amd64` for Linux on x86, make it executable and move it into your path as `garner`.
+
+   Installed with Homebrew or downloaded in a browser, `garner` makes macOS ask once whether to open a program from the internet; choose **Open**. The macOS files are signed with Garner's developer certificate and checked by Apple.
 
 3. Run `garnerd token create <device>` on the server, run `garner` on your machine and paste the connection code. The terminal interface remembers the connection in `~/.config/garner/connection`.
 4. Press `a` to add a show. Press `?` on any screen for its keys.

@@ -123,6 +123,8 @@ Maintainers release with `mise run release vX.Y.Z [revision]`. The task tags a c
 
 GoReleaser signs the macOS binaries with Garner's Developer ID certificate and has Apple notarize them, so macOS opens them. The certificate and its password come from the repository secrets `MACOS_SIGN_P12` and `MACOS_SIGN_PASSWORD`, the App Store Connect key for notarizing from `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID` and `MACOS_NOTARY_ISSUER_ID`; the workflow fails without them. The maintainer keeps copies in Infisical (`garner`, `dev`, `/macos-signing`). The certificate expires on 27 November 2027; binaries signed before then stay valid, and later releases need a new certificate in both places.
 
+GoReleaser also updates the Homebrew cask in [`trucke/homebrew-tap`](https://github.com/trucke/homebrew-tap), with that repository's deploy key from the secret `HOMEBREW_TAP_KEY`; Infisical keeps a base64 copy in `/homebrew-tap`. `install.sh` in the repository root installs the newest release; GitHub's check runs it on every push.
+
 `goreleaser release --snapshot --clean` runs GoReleaser's part locally into `dist/` without publishing anything. The workflow keeps the twenty newest image versions, build cache included. Versions follow semantic versioning.
 
 Version tags cannot be deleted or moved. When the workflow fails, its version stays taken and nothing is published: fix the cause and release the next patch version, from the same commit if the cause lay outside the code.
