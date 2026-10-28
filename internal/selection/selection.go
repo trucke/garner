@@ -338,9 +338,11 @@ func judge(ctx Context, r Release) Evaluation {
 				info = append(info, fmt.Sprintf("meets %s, your %s preference; %s would be better", e.Tier, ordinal(tier+1), ctx.Profile.Tiers[0]))
 			}
 		}
-		if l := ctx.Profile.Tiers[tier].Language; l != ctx.Original && slices.Contains(audio, ctx.Original) {
-			info = append(info, fmt.Sprintf("dual audio: %s and %s", l.Name(), ctx.Original.Name()))
-			e.rank.dual = ctx.Profile.PreferDual
+		// The audio reason names the languages already; this one says only
+		// what the original audio does for the ranking.
+		if l := ctx.Profile.Tiers[tier].Language; l != ctx.Original && slices.Contains(audio, ctx.Original) && ctx.Profile.PreferDual {
+			info = append(info, fmt.Sprintf("also has the show's original %s audio, which the profile prefers", ctx.Original.Name()))
+			e.rank.dual = true
 		}
 	case ctx.Profile.UnnamedFallback && markers:
 		fallbacks = append(fallbacks, "audio languages not named; a last resort, checked after download")

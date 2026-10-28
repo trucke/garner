@@ -50,7 +50,7 @@ var evaluateTests = []struct {
 	reason    string
 }{
 	// Regular TV
-	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.1080p.BluRay.x264-GRP", nil, Accept, "German 1080p", "dual audio"},
+	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.1080p.BluRay.x264-GRP", nil, Accept, "German 1080p", "also has the show's original English audio, which the profile prefers"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP", nil, Accept, "German 720p", "German 1080p would be better"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.WEB.x264-GRP", nil, Fallback, "", "resolution not named"},
 	{TV, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DVDRip.x264-GRP", nil, Reject, "", "DVD source"},
@@ -71,7 +71,7 @@ var evaluateTests = []struct {
 	{english, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.1080p.WEB-DL-GRP", nil, Accept, "English 1080p", "English audio assumed"},
 	{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", nil, Reject, "", "no English audio named"},
 	{german1080, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.720p.WEB-GRP", nil, Reject, "", "720p is not among the profile's preferences: German 1080p"},
-	{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", []string{"English", "Japanese"}, Accept, "English 1080p", "dual audio: English and Japanese"},
+	{english, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.1080p.WEB-DL-GRP", []string{"English", "Japanese"}, Accept, "English 1080p", "also has the show's original Japanese audio"},
 
 	// Anime
 	{Anime, "Lantern Harbor", "ja", "Lantern.Harbor.S01E01.German.720p.WEB-GRP", nil, Accept, "German 720p", ""},
@@ -91,6 +91,24 @@ func TestEvaluate(t *testing.T) {
 				t.Errorf("%s\n got: %s %q %q\nwant: %s %q with %q", tc.name, e.Verdict, e.Tier, e.Reasons, tc.verdict, tc.tier, tc.reason)
 			}
 		})
+	}
+}
+
+// TestDualAudioReason names the show's original audio of a dual-audio
+// release in the audio reason, and once more only when the profile prefers
+// such releases (GRR-48).
+func TestDualAudioReason(t *testing.T) {
+	for _, tc := range []struct {
+		dual string
+		want int
+	}{{"prefer", 2}, {"ignore", 1}} {
+		p := fromText(`audio = ["de"]
+resolution = ["1080p"]
+dual_audio = "`+tc.dual+`"`, "en")
+		e := evaluate(p, "Harbor Precinct", "en", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP")
+		if n := strings.Count(strings.Join(e.Reasons, "\n"), "English"); e.Verdict != Accept || n != tc.want {
+			t.Errorf("dual_audio %s: %s, English named %d times in %q, want %d", tc.dual, e.Verdict, n, e.Reasons, tc.want)
+		}
 	}
 }
 
