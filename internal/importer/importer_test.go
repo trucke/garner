@@ -393,7 +393,7 @@ func TestImportTidies(t *testing.T) {
 }
 
 // TestImportKeepsUnassignedVideos leaves SABnzbd's folder in place when it
-// holds a video no episode could be matched to.
+// holds a video no episode could be matched to, and says which and why.
 func TestImportKeepsUnassignedVideos(t *testing.T) {
 	ctx := context.Background()
 	e, d := setup(t, german)
@@ -403,8 +403,9 @@ func TestImportKeepsUnassignedVideos(t *testing.T) {
 	os.WriteFile(filepath.Join(job, "Harbor.Precinct.Night.Shift.Making.Of.mkv"), make([]byte, 900), 0o644)
 	e.svc.Work(ctx)
 	got, _ := e.st.GetDownload(ctx, d.ID)
-	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || !strings.Contains(got.Import.Notes[0], "holds 1 video file that could not be assigned") {
-		t.Fatalf("import = %+v", got.Import)
+	want := `holds 1 video file that could not be assigned to an episode (Harbor.Precinct.Night.Shift.Making.Of.mkv: the title "Harbor Precinct Night Shift Making Of" does not match Harbor Precinct: Night Shift)`
+	if got.Import.State != store.ImportDone || len(got.Import.Notes) != 1 || !strings.Contains(got.Import.Notes[0], want) {
+		t.Fatalf("import = %+v, want a note that %s", got.Import, want)
 	}
 	if _, err := os.Stat(filepath.Join(job, "Harbor.Precinct.Night.Shift.Making.Of.mkv")); err != nil {
 		t.Error("the unassigned video was removed")

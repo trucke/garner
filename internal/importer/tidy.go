@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trucke/garner/internal/importer/guard"
+	"github.com/trucke/garner/internal/match"
 	"github.com/trucke/garner/internal/release"
 	"github.com/trucke/garner/internal/store"
 )
@@ -43,8 +44,7 @@ func (s *Service) tidy(ctx context.Context, d *store.Download, files []store.Imp
 	case err != nil:
 		return append(notes, fmt.Sprintf("SABnzbd's folder was left in place: %v", unwrapPath(err)))
 	case len(remaining) > 0:
-		return append(notes, fmt.Sprintf("SABnzbd's folder %s was left in place: it holds %s that could not be assigned to an episode",
-			dir, count(len(remaining), "video file")))
+		return append(notes, fmt.Sprintf("SABnzbd's folder %s was left in place: %s", dir, s.unassigned(ctx, d, remaining)))
 	}
 	if subs := subtitleFiles(dir); subs > 0 {
 		return append(notes, fmt.Sprintf("SABnzbd's folder %s was left in place: it holds %s that could not be moved", dir, count(subs, "subtitle file")))
@@ -57,6 +57,31 @@ func (s *Service) tidy(ctx context.Context, d *store.Download, files []store.Imp
 	}
 	s.log.Info("removed SABnzbd's folder", "download", d.ID, "dir", dir)
 	return notes
+}
+
+// unassigned says which videos the import left because no episode could be
+// matched to them, and why, as their names tell. The import logged the same
+// reasons; reading the names again also covers a retry or a restart.
+func (s *Service) unassigned(ctx context.Context, d *store.Download, files []store.ImportFile) string {
+	const shown = 3
+	c, err := s.context(ctx, d.EpisodeID)
+	var named []string
+	for i, f := range files {
+		if i == shown {
+			named = append(named, fmt.Sprintf("and %d more", len(files)-shown))
+			break
+		}
+		name := filepath.Base(f.Source)
+		if err == nil {
+			m := c.show.Match(release.Parse(strings.TrimSuffix(name, filepath.Ext(name))), time.Time{})
+			if m.Kind != match.Episodes && m.Reason != "" {
+				name += ": " + m.Reason
+			}
+		}
+		named = append(named, name)
+	}
+	return fmt.Sprintf("it holds %s that could not be assigned to an episode (%s)",
+		count(len(files), "video file"), strings.Join(named, "; "))
 }
 
 // discard removes the job folder of a rejected release.
