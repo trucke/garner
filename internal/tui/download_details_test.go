@@ -44,6 +44,10 @@ func TestFailedDownloadDetails(t *testing.T) {
 	if err := st.UpdateDownload(ctx, d, now); err != nil {
 		t.Fatal(err)
 	}
+	const stopped = "No other release meets German 1080p, and Garner does not switch to another preference on its own."
+	if err := st.StopReplacing(ctx, d.ID, stopped); err != nil {
+		t.Fatal(err)
+	}
 	items, err := st.Activity(ctx, now.Add(-time.Hour))
 	if err != nil || len(items) != 1 {
 		t.Fatalf("activity: %d items, %v", len(items), err)
@@ -66,7 +70,8 @@ func TestFailedDownloadDetails(t *testing.T) {
 		plain := ansi.Strip(view)
 		evidence := []string{"27 articles missing"}
 		if name == "episode" {
-			evidence = append(evidence, "Aborted, cannot be completed", "Downloaded in 12 seconds", "Age: 210d", "news.example.invalid=96 MB")
+			evidence = append(evidence, "Aborted, cannot be completed", "Downloaded in 12 seconds", "Age: 210d", "news.example.invalid=96 MB",
+				"No other release meets German 1080p") // why nothing else started
 		}
 		for _, want := range evidence {
 			if !strings.Contains(plain, want) {

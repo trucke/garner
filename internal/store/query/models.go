@@ -78,6 +78,7 @@ type Download struct {
 	AcknowledgedAt  sql.NullInt64
 	SearchSeason    int64
 	Posting         string
+	Stopped         string
 }
 
 type Episode struct {

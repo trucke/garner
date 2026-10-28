@@ -81,6 +81,12 @@ func (s *Store) UpdateDownload(ctx context.Context, d Download, now time.Time) e
 	return err
 }
 
+// StopReplacing records why Garner tried no other release after a failed
+// download.
+func (s *Store) StopReplacing(ctx context.Context, id int64, why string) error {
+	return s.q.SetDownloadStopped(ctx, query.SetDownloadStoppedParams{Stopped: why, ID: id})
+}
+
 // CancelDownload marks a running download cancelled. It returns
 // ErrNotRunning when the download has ended meanwhile.
 func (s *Store) CancelDownload(ctx context.Context, id int64, reason string, now time.Time) (Download, error) {
@@ -270,7 +276,7 @@ func downloadFromRow(r query.Download) (Download, error) {
 		ID: r.ID, EpisodeID: r.EpisodeID, SearchSeason: int(r.SearchSeason), Title: r.Title, Indexer: r.Indexer, Link: r.Link,
 		Posting: r.Posting, Size: r.Size,
 		Verdict: r.Verdict, Tier: r.Tier, Decisive: int(r.Decisive), Manual: r.Manual != 0, Replaces: r.Replaces, State: r.State, Detail: r.Detail, JobID: r.JobID.String,
-		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0,
+		Progress: r.Progress, TimeLeft: r.TimeLeft, Storage: r.Storage, Failure: r.Failure, Retryable: r.Retryable != 0, Stopped: r.Stopped,
 		Created: time.Unix(r.CreatedAt, 0), Updated: time.Unix(r.UpdatedAt, 0),
 	}
 	if r.AcknowledgedAt.Valid {

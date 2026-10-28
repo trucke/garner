@@ -55,10 +55,13 @@ type Download struct {
 	// more than Failure. Failure keeps SABnzbd's original report.
 	FailureSummary string `json:"failure_summary,omitempty"`
 	// Retryable means another release may succeed where this one failed.
-	Retryable bool      `json:"retryable,omitempty"`
-	Stages    []Stage   `json:"stages"`
-	Created   time.Time `json:"created"`
-	Updated   time.Time `json:"updated"`
+	Retryable bool `json:"retryable,omitempty"`
+	// Stopped says why Garner tried no other release after this one
+	// failed; empty when it tried one or did not have to.
+	Stopped string    `json:"stopped,omitempty"`
+	Stages  []Stage   `json:"stages"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
 	// Acknowledged is when the user cleared this attempt's warning. The
 	// failure, its original timestamps and its retry eligibility stay put.
 	Acknowledged time.Time `json:"acknowledged,omitzero"`

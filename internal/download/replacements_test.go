@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +37,7 @@ func setupSeasonReplacement(t *testing.T) (*store.Store, *Service, *fakeSAB) {
 
 // A season choice must not depend on whether its anchor episode happened
 // to have been searched too, or quietly turn into a single-episode retry.
+// Only another upload of the chosen release replaces it (GRR-64).
 func TestReplaceSeasonCandidate(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -51,28 +54,30 @@ func TestReplaceSeasonCandidate(t *testing.T) {
 			searched := time.Now().Add(-time.Hour)
 			const prefix = "Harbor.Precinct.S01.German.DL.1080p.WEB-"
 			const episodeTitle = "Harbor.Precinct.S01E01.German.DL.1080p.WEB-EPISODE"
-			first := store.Candidate{Title: prefix + "A", Verdict: "accept", Link: "https://indexer.invalid/pack-a", Episodes: []int64{101, 102}}
+			first := store.Candidate{Title: prefix + "A", Posting: "a1", Verdict: "accept", Link: "https://indexer.invalid/pack-a", Episodes: []int64{101, 102}}
 			if tc.episodeSearch {
 				// The first release is identical in both caches. Its title or
 				// link alone cannot say which results the user chose it from.
 				if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: searched, Candidates: []store.Candidate{
-					first, {Title: episodeTitle, Verdict: "accept", Link: "https://indexer.invalid/episode"},
+					first, {Title: episodeTitle, Posting: "e1", Verdict: "accept", Link: "https://indexer.invalid/episode"},
+					{Title: prefix + "A", Posting: "a-episode", Verdict: "accept", Link: "https://indexer.invalid/pack-a-episode"},
 				}}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if err := st.SaveSeasonSearch(ctx, 42, store.Search{Season: 1, Searched: searched, Candidates: []store.Candidate{
 				first,
-				{Title: prefix + "REJECTED", Verdict: "reject", Link: "https://indexer.invalid/rejected"},
-				{Title: "Harbor.Precinct.S01E02-E03.German.DL.1080p.WEB-OTHER", Verdict: "accept", Link: "https://indexer.invalid/other", Episodes: []int64{102, 103}},
-				{Title: prefix + "B", Verdict: "accept", Link: "https://indexer.invalid/pack-b", Episodes: []int64{101, 102}},
-				{Title: prefix + "FALLBACK", Verdict: "fallback", Link: "https://indexer.invalid/fallback"},
-			}}, []int64{101, 101, 102, 101, 101}); err != nil {
+				{Title: prefix + "REJECTED", Posting: "r1", Verdict: "reject", Link: "https://indexer.invalid/rejected"},
+				{Title: "Harbor.Precinct.S01E02-E03.German.DL.1080p.WEB-OTHER", Posting: "o1", Verdict: "accept", Link: "https://indexer.invalid/other", Episodes: []int64{102, 103}},
+				{Title: prefix + "B", Posting: "b1", Verdict: "accept", Link: "https://indexer.invalid/pack-b", Episodes: []int64{101, 102}},
+				{Title: prefix + "A", Posting: "a-season", Verdict: "accept", Link: "https://indexer.invalid/pack-a-season", Episodes: []int64{101, 102}},
+				{Title: prefix + "FALLBACK", Posting: "f1", Verdict: "fallback", Link: "https://indexer.invalid/fallback"},
+			}}, []int64{101, 101, 102, 101, 101, 101}); err != nil {
 				t.Fatal(err)
 			}
 			var d store.Download
 			var err error
-			want, source := prefix+"B", 1
+			want, source := "a-season", 1
 			if tc.fromSeason {
 				search, loadErr := st.LoadSeasonSearch(ctx, 42, 1)
 				if loadErr != nil {
@@ -85,25 +90,24 @@ func TestReplaceSeasonCandidate(t *testing.T) {
 					t.Fatal(loadErr)
 				}
 				d, err = svc.Candidate(ctx, search.Candidates[0].ID)
-				want, source = episodeTitle, 0
+				want, source = "a-episode", 0
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			fake.finish(d.JobID, "Failed", "Aborted, cannot be completed", "")
 			svc.Poll(ctx)
-			got := fake.submitted()
-			if len(got) != 2 || got[1] != want {
-				t.Fatalf("submitted %q; want the replacement %q from the original search scope", got, want)
-			}
 			attempts, err := st.EpisodeDownloads(ctx, 101)
-			if err != nil || len(attempts) != 2 || attempts[0].Manual || attempts[0].State != store.Queued || attempts[0].SearchSeason != source {
-				t.Fatal("the automatic replacement lost its stored search scope or queued state")
+			if err != nil || len(attempts) != 2 || attempts[0].Posting != want {
+				t.Fatalf("submitted %q; want the other upload %q of the chosen release, from the original search scope", fake.submitted(), want)
+			}
+			if !attempts[0].Manual || attempts[0].State != store.Queued || attempts[0].SearchSeason != source {
+				t.Fatal("the replacement lost the user's choice, its stored search scope or its queued state")
 			}
 			fake.finish(attempts[0].JobID, "Failed", "Aborted, cannot be completed", "")
 			svc.Poll(ctx)
 			if got := fake.submitted(); len(got) != 2 {
-				t.Errorf("submitted %q after exhausting accepted releases; rejected, failed, other-episode packs and last resorts must not replace them", got)
+				t.Errorf("submitted %q after both uploads of the choice failed; no other release may replace it", got)
 			}
 		})
 	}
@@ -121,8 +125,9 @@ func TestSeasonReplacementLimit(t *testing.T) {
 	var candidates []store.Candidate
 	var owners []int64
 	for i := range maxReplacements + 2 {
+		// Uploads of one release: a chosen pack is replaced by those only.
 		candidates = append(candidates, store.Candidate{
-			Title:   fmt.Sprintf("Harbor.Precinct.S01.German.DL.1080p.WEB-PACK%d", i),
+			Title: "Harbor.Precinct.S01.German.DL.1080p.WEB-PACK", Posting: fmt.Sprintf("p%d", i),
 			Verdict: "accept", Link: fmt.Sprintf("https://indexer.invalid/pack-%d", i), Episodes: []int64{101, 102},
 		})
 		owners = append(owners, 101)
@@ -160,5 +165,80 @@ func TestSeasonReplacementLimit(t *testing.T) {
 	active, err := st.ActiveDownloads(ctx)
 	if err != nil || len(active) != 0 {
 		t.Fatal("the season retry limit left another download running")
+	}
+	if attempts, _ := st.EpisodeDownloads(ctx, 101); !strings.HasSuffix(attempts[0].Stopped, "failed in a row, so Garner stopped trying others.") {
+		t.Errorf("stopped = %q", attempts[0].Stopped)
+	}
+}
+
+// A release chosen by hand stays the user's choice: when it fails, Garner
+// tries only other uploads of it, then stops, rather than download a
+// release the user did not choose (GRR-64).
+func TestReplaceKeepsTheChoice(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setupSeasonReplacement(t)
+	const chosen = "Harbor.Precinct.S01E01.German.DL.1080p.WEB-GRP"
+	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now().Add(-time.Hour), Candidates: []store.Candidate{
+		{Title: "Harbor.Precinct.S01E01.German.DL.1080p.BluRay-TOP", Posting: "top", Verdict: "accept", Tier: "German 1080p", Link: "https://indexer.invalid/top"},
+		{Title: chosen, Posting: "first", Verdict: "accept", Tier: "German 1080p", Link: "https://indexer.invalid/first"},
+		{Title: chosen, Posting: "second", Verdict: "accept", Tier: "German 1080p", Link: "https://indexer.invalid/second"},
+		{Title: "Harbor.Precinct.S01E01.German.DL.720p.WEB-GRP", Posting: "720p", Verdict: "accept", Tier: "German 720p", Link: "https://indexer.invalid/720p"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	search, err := st.LoadSearch(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := svc.Candidate(ctx, search.Candidates[1].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.finish(d.JobID, "Failed", "Aborted, cannot be completed", "")
+	svc.Poll(ctx)
+	attempts, err := st.EpisodeDownloads(ctx, 101)
+	if err != nil || len(attempts) != 2 || attempts[0].Posting != "second" || !attempts[0].Manual {
+		t.Fatalf("submitted %q; want the other upload of the chosen release, still the user's choice", fake.submitted())
+	}
+	fake.finish(attempts[0].JobID, "Failed", "Aborted, cannot be completed", "")
+	svc.Poll(ctx)
+	if got := fake.submitted(); len(got) != 2 {
+		t.Errorf("submitted %q after both uploads of the choice failed; want Garner to stop", got)
+	}
+	// The user learns why nothing else started.
+	if attempts, _ := st.EpisodeDownloads(ctx, 101); !strings.HasPrefix(attempts[0].Stopped, "No other upload of this release is left") {
+		t.Errorf("stopped = %q", attempts[0].Stopped)
+	}
+}
+
+// A release Garner chose on its own is replaced only by one that meets the
+// same preference: after both German 1080p releases fail, Garner stops
+// rather than fall back to German 720p or English (GRR-64).
+func TestReplaceKeepsThePreference(t *testing.T) {
+	ctx := context.Background()
+	st, svc, fake := setupSeasonReplacement(t)
+	if err := st.SaveSearch(ctx, store.Search{EpisodeID: 101, Searched: time.Now().Add(-time.Hour), Candidates: []store.Candidate{
+		{Title: "Harbor.Precinct.S01E01.German.DL.1080p.BluRay-ONE", Posting: "one", Verdict: "accept", Tier: "German 1080p", Link: "https://indexer.invalid/one"},
+		{Title: "Harbor.Precinct.S01E01.German.DL.1080p.WEB-TWO", Posting: "two", Verdict: "accept", Tier: "German 1080p", Link: "https://indexer.invalid/two"},
+		{Title: "Harbor.Precinct.S01E01.German.DL.720p.BluRay-ONE", Posting: "720p", Verdict: "accept", Tier: "German 720p", Link: "https://indexer.invalid/720p"},
+		{Title: "Harbor.Precinct.S01E01.1080p.BluRay-THREE", Posting: "english", Verdict: "accept", Tier: "English 1080p", Link: "https://indexer.invalid/english"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	d, err := svc.Accepted(ctx, 101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.finish(d.JobID, "Failed", "Aborted, cannot be completed", "")
+	svc.Poll(ctx)
+	fake.finish("job-2", "Failed", "Aborted, cannot be completed", "")
+	svc.Poll(ctx)
+	want := []string{"Harbor.Precinct.S01E01.German.DL.1080p.BluRay-ONE", "Harbor.Precinct.S01E01.German.DL.1080p.WEB-TWO"}
+	if got := fake.submitted(); !slices.Equal(got, want) {
+		t.Errorf("submitted %q; want only the German 1080p releases %q", got, want)
+	}
+	attempts, _ := st.EpisodeDownloads(ctx, 101)
+	if !strings.HasPrefix(attempts[0].Stopped, "No other release meets German 1080p") || attempts[1].Stopped != "" {
+		t.Errorf("stopped = %q, then %q; want why only on the last attempt", attempts[0].Stopped, attempts[1].Stopped)
 	}
 }

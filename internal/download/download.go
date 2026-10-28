@@ -348,9 +348,11 @@ func (s *Service) Cancel(ctx context.Context, d store.Download, reason string) (
 }
 
 // replace starts the next release after a failure another release may fix.
-// The replacement is never a step down: an accepted release, such as the
-// monitor's, is replaced by accepted ones only; last resorts follow only a
-// release that was not accepted.
+// It keeps what was asked for (GRR-64): a release the user chose is
+// replaced only by another upload of it, which stays the user's choice;
+// one Garner chose only by a release with the same verdict and tier, so
+// German 1080p stays German 1080p. When none is left, the failed download
+// records why Garner stopped.
 func (s *Service) replace(ctx context.Context, failed store.Download) {
 	sr, err := s.store.DownloadSearch(ctx, failed)
 	if err != nil {
@@ -358,22 +360,56 @@ func (s *Service) replace(ctx context.Context, failed store.Download) {
 		return
 	}
 	n, err := s.store.FailedSince(ctx, failed.EpisodeID, sr.Searched)
-	if err != nil || n > maxReplacements {
-		s.log.Warn("not trying another release", "episode", failed.EpisodeID, "failed", n, "err", err)
-		return
-	}
-	verdicts := []string{"accept", "fallback"}
-	if failed.Verdict == "accept" {
-		verdicts = verdicts[:1]
-	}
-	c, err := s.pickFrom(ctx, failed.EpisodeID, sr.Candidates, verdicts...)
 	if err != nil {
-		s.log.Info("no other release to try", "episode", failed.EpisodeID, "err", err)
+		s.log.Warn("not trying another release", "episode", failed.EpisodeID, "err", err)
 		return
 	}
-	if _, err := s.submit(ctx, failed.EpisodeID, c, false); err != nil {
+	if n > maxReplacements {
+		s.stopReplacing(ctx, failed, fmt.Sprintf("%d releases failed in a row, so Garner stopped trying others.", n))
+		return
+	}
+	like := func(c store.Candidate) bool { return c.Verdict == failed.Verdict && c.Tier == failed.Tier }
+	verdicts := []string{failed.Verdict}
+	if failed.Manual {
+		like = func(c store.Candidate) bool { return strings.EqualFold(c.Title, failed.Title) }
+		verdicts = []string{"accept", "fallback", "reject"}
+	}
+	c, err := s.pickFrom(ctx, failed.EpisodeID, slices.DeleteFunc(slices.Clone(sr.Candidates), func(c store.Candidate) bool { return !like(c) }), verdicts...)
+	if errors.Is(err, ErrNoCandidate) {
+		s.stopReplacing(ctx, failed, noneLike(failed))
+		return
+	}
+	if err != nil {
+		s.log.Warn("could not pick another release", "episode", failed.EpisodeID, "err", err)
+		return
+	}
+	if _, err := s.submit(ctx, failed.EpisodeID, c, failed.Manual); err != nil {
 		s.log.Warn("could not start the next release", "episode", failed.EpisodeID, "err", err)
 	}
+}
+
+// noneLike says that no release like the failed one is left to try, and
+// that Garner does not pick a different kind on its own.
+func noneLike(failed store.Download) string {
+	switch {
+	case failed.Manual:
+		return "No other upload of this release is left, and Garner does not swap a release you chose for another."
+	case failed.Verdict == "accept" && failed.Tier != "":
+		return fmt.Sprintf("No other release meets %s, and Garner does not switch to another preference on its own.", failed.Tier)
+	case failed.Verdict == "fallback":
+		return "No other last resort is left to try."
+	}
+	return "No other release like it is left to try."
+}
+
+func (s *Service) stopReplacing(ctx context.Context, failed store.Download, why string) {
+	s.log.Info("not trying another release", "episode", failed.EpisodeID, "download", failed.ID, "why", why)
+	if err := s.store.StopReplacing(ctx, failed.ID, why); err != nil {
+		s.log.Error("record why no other release was tried", "download", failed.ID, "err", err)
+		return
+	}
+	failed.Stopped = why
+	s.changed(failed)
 }
 
 func (s *Service) save(ctx context.Context, d store.Download) error {

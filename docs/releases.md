@@ -9,7 +9,7 @@ Every release gets one of three verdicts, with the reasons for it. The terminal 
 | Verdict | What Garner does |
 | --- | --- |
 | Accepted | The monitor downloads the best accepted release on its own. |
-| Last resort | Garner downloads it only when you choose it, when you ask for the best release of an episode and no accepted release is left to try, or to replace a failed release that was not accepted either. |
+| Last resort | Garner downloads it only when you choose it, when you ask for the best release of an episode and no accepted release is left to try, or to replace a failed last resort that Garner chose. |
 | Rejected | Garner downloads it only when you choose it. |
 
 Indexers often list a release more than once under the same name: separate uploads of it, which can differ in whether they still download completely. Garner tells them apart by the indexer's ID for each upload. On its own, it never picks an upload that already failed or was cancelled for the episode, not even after a new search, but another upload of the same release stays in the running. You can still choose any of them.
@@ -83,8 +83,9 @@ Garner downloads another release when a download fails in a way another release 
 
 - Garner deletes the rejected download's folder when it can tell that the folder belongs to that download.
 - It takes the best release left in the latest results of the same search, the episode's or the season's, and skips uploads that failed or were cancelled before. Another upload of the failed release is not skipped.
-- An accepted release is replaced by accepted releases only, which may meet a lower preference. After a release that was not accepted, a last resort may follow.
-- After the fourth failed download of the episode since that search, including downloads you chose by hand, Garner stops and leaves the choice to you.
+- It keeps what was asked for. A release you chose is replaced only by another upload of it, and the new download is still your choice. A release Garner chose is replaced only by one with the same verdict and preference: German 1080p by German 1080p, a last resort by a last resort.
+- After the fourth failed download of the episode since that search, including downloads you chose by hand, Garner stops.
+- When Garner stops, the episode's page says why, and the choice is yours. For a monitored show, a later search still downloads the best release the profile accepts, which may meet a lower preference.
 
 ## TV and anime
 

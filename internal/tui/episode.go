@@ -345,6 +345,13 @@ func (s *episodeScreen) view(width, height int) string {
 			for _, st := range pipeline(d, now) {
 				b.WriteString(st.render(w) + "\n")
 			}
+			// Why no other release started after this one failed.
+			if d.State == api.Failed && d.Stopped != "" {
+				b.WriteString("\n")
+				for _, l := range wrapAfter(clean(d.Stopped), " ", w-6) {
+					b.WriteString("   " + sMuted.Render(strings.TrimRight(l, " ")) + "\n")
+				}
+			}
 		}
 		for _, f := range s.frames(row, max(40, w-6), now) {
 			b.WriteString("\n" + indent(f, 3) + "\n")

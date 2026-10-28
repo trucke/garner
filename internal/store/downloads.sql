@@ -18,6 +18,9 @@ UPDATE downloads SET state = ?, detail = ?, job_id = ?, progress = ?, time_left 
     retryable = ?, stages = ?, updated_at = ?
 WHERE id = ? AND state != 'cancelled';
 
+-- name: SetDownloadStopped :exec
+UPDATE downloads SET stopped = ? WHERE id = ?;
+
 -- name: CancelDownload :execrows
 UPDATE downloads SET state = 'cancelled', failure = ?, retryable = 0, time_left = '', updated_at = ?
 WHERE id = ? AND state IN ('submitting', 'queued', 'downloading', 'processing');
