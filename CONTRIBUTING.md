@@ -91,7 +91,7 @@ A failure also says whose mistake it is: Garner broke a rule, or the simulation 
 
 With `-v`, the replay prints every step. To explore, run `-seeds 1000` for a thousand fresh seeds instead of the fixed ones, or `-seeds-for 10m` for fresh seeds during ten minutes. Both stop at the first seed that fails.
 
-Every night, GitHub's Nightly workflow (`.github/workflows/nightly.yml`) runs fresh seeds for 50 minutes and each fuzz test for 15 minutes. A failure opens an issue labelled `nightly` with the commit and how to replay it, or adds a comment to the one still open. Close it with the fix.
+Every night, GitHub's Nightly workflow (`.github/workflows/nightly.yml`) runs fresh seeds for 50 minutes and each fuzz test for 15 minutes. Fuzzing goes on from the inputs earlier nights found, which GitHub's cache keeps; the run's summary says how many there are. A failure opens an issue labelled `nightly` with the commit and how to replay it, or adds a comment to the one still open. Close it with the fix.
 
 A failure is a bug in Garner or in the simulation. When you fix a bug it found, also add a focused test for it: after later changes, the same seed may take another path.
 
